@@ -1,0 +1,497 @@
+commit 7f791fdb4dd2490d68ff5acfcdd04e0bd2b56e89
+Author: Codex <codex@openai.com>
+Date:   Sat Sep 13 03:56:23 2025 +0000
+
+    Improve media management and settings
+
+    ## Summary
+    - extend repository to persist downloads, handle HLS playlists, generate thumbnails and support rename/favorite
+    - show concise file names with URL comments in browser and media lists
+    - add auto-save toggle and cache clearing in settings
+
+    ## Testing
+    - `dart format .` *(fails: command not found)*
+    - `flutter format .` *(fails: command not found)*
+
+diff --git a/browser.dart b/browser.dart
+index 7d5e4e8..5cb30ce 100644
+--- a/browser.dart
++++ b/browser.dart
+@@ -533,0 +534,2 @@ class _BrowserPageState extends State<BrowserPage> {
++                        final fileName =
++                            h.url.split('?').first.split('/').last;
+@@ -538,3 +540,13 @@ class _BrowserPageState extends State<BrowserPage> {
+-                            child:
+-                                h.type == 'image'
+-                                    ? ClipRRect(
++                            child: h.type == 'image'
++                                ? ClipRRect(
++                                    borderRadius: BorderRadius.circular(6),
++                                    child: Image.network(
++                                      h.url,
++                                      fit: BoxFit.cover,
++                                      errorBuilder:
++                                          (_, __, ___) =>
++                                              const Icon(Icons.image),
++                                    ),
++                                  )
++                                : Container(
++                                    decoration: BoxDecoration(
+@@ -542,19 +554,7 @@ class _BrowserPageState extends State<BrowserPage> {
+-                                      child: Image.network(
+-                                        h.url,
+-                                        fit: BoxFit.cover,
+-                                        errorBuilder:
+-                                            (_, __, ___) =>
+-                                                const Icon(Icons.image),
+-                                      ),
+-                                    )
+-                                    : Container(
+-                                      decoration: BoxDecoration(
+-                                        borderRadius: BorderRadius.circular(6),
+-                                        color: Colors.black12,
+-                                      ),
+-                                      alignment: Alignment.center,
+-                                      child: Icon(
+-                                        h.type == 'audio'
+-                                            ? Icons.audiotrack
+-                                            : Icons.ondemand_video,
+-                                      ),
++                                      color: Colors.black12,
++                                    ),
++                                    alignment: Alignment.center,
++                                    child: Icon(
++                                      h.type == 'audio'
++                                          ? Icons.audiotrack
++                                          : Icons.ondemand_video,
+@@ -561,0 +562 @@ class _BrowserPageState extends State<BrowserPage> {
++                                  ),
+@@ -564,2 +565,2 @@ class _BrowserPageState extends State<BrowserPage> {
+-                            h.url,
+-                            maxLines: 2,
++                            fileName,
++                            maxLines: 1,
+@@ -568 +569,2 @@ class _BrowserPageState extends State<BrowserPage> {
+-                          subtitle: Row(
++                          subtitle: Column(
++                            crossAxisAlignment: CrossAxisAlignment.start,
+@@ -570,22 +572,5 @@ class _BrowserPageState extends State<BrowserPage> {
+-                              Container(
+-                                padding: const EdgeInsets.symmetric(
+-                                  horizontal: 6,
+-                                  vertical: 2,
+-                                ),
+-                                decoration: BoxDecoration(
+-                                  color: (h.type == 'image'
+-                                          ? Colors.blueGrey
+-                                          : (h.type == 'audio'
+-                                              ? Colors.teal
+-                                              : Colors.deepPurple))
+-                                      .withOpacity(0.15),
+-                                  borderRadius: BorderRadius.circular(6),
+-                                ),
+-                                child: Text(
+-                                  h.type.isNotEmpty
+-                                      ? h.type
+-                                      : (h.contentType.isNotEmpty
+-                                          ? h.contentType.split('/').first
+-                                          : ''),
+-                                  style: const TextStyle(fontSize: 12),
+-                                ),
++                              Text(
++                                h.url,
++                                maxLines: 1,
++                                overflow: TextOverflow.ellipsis,
++                                style: const TextStyle(fontSize: 12),
+@@ -593,8 +578,24 @@ class _BrowserPageState extends State<BrowserPage> {
+-                              if (h.contentType.isNotEmpty) ...[
+-                                const SizedBox(width: 8),
+-                                Expanded(
+-                                  child: Text(
+-                                    h.contentType,
+-                                    maxLines: 1,
+-                                    overflow: TextOverflow.ellipsis,
+-                                    style: const TextStyle(fontSize: 12),
++                              Row(
++                                children: [
++                                  Container(
++                                    padding: const EdgeInsets.symmetric(
++                                      horizontal: 6,
++                                      vertical: 2,
++                                    ),
++                                    decoration: BoxDecoration(
++                                      color: (h.type == 'image'
++                                              ? Colors.blueGrey
++                                              : (h.type == 'audio'
++                                                  ? Colors.teal
++                                                  : Colors.deepPurple))
++                                          .withOpacity(0.15),
++                                      borderRadius: BorderRadius.circular(6),
++                                    ),
++                                    child: Text(
++                                      h.type.isNotEmpty
++                                          ? h.type
++                                          : (h.contentType.isNotEmpty
++                                              ? h.contentType.split('/').first
++                                              : ''),
++                                      style: const TextStyle(fontSize: 12),
++                                    ),
+@@ -602,2 +603,13 @@ class _BrowserPageState extends State<BrowserPage> {
+-                                ),
+-                              ],
++                                  if (h.contentType.isNotEmpty) ...[
++                                    const SizedBox(width: 8),
++                                    Expanded(
++                                      child: Text(
++                                        h.contentType,
++                                        maxLines: 1,
++                                        overflow: TextOverflow.ellipsis,
++                                        style: const TextStyle(fontSize: 12),
++                                      ),
++                                    ),
++                                  ],
++                                ],
++                              ),
+@@ -703,0 +716,2 @@ class _BrowserPageState extends State<BrowserPage> {
++                        final name =
++                            t.name ?? t.url.split('?').first.split('/').last;
+@@ -707,2 +721,2 @@ class _BrowserPageState extends State<BrowserPage> {
+-                            t.name ?? t.url,
+-                            maxLines: 2,
++                            name,
++                            maxLines: 1,
+@@ -713,0 +728,6 @@ class _BrowserPageState extends State<BrowserPage> {
++                              Text(
++                                t.url,
++                                maxLines: 1,
++                                overflow: TextOverflow.ellipsis,
++                                style: const TextStyle(fontSize: 12),
++                              ),
+
+diff --git a/media.dart b/media.dart
+index 027bbc9..b3fdba8 100644
+--- a/media.dart
++++ b/media.dart
+@@ -224,0 +225,2 @@ class _MyVideosState extends State<_MyVideos> {
++                  final name =
++                      t.name ?? t.url.split('?').first.split('/').last;
+@@ -233,2 +235,2 @@ class _MyVideosState extends State<_MyVideos> {
+-                      t.name ?? t.url,
+-                      maxLines: 2,
++                      name,
++                      maxLines: 1,
+@@ -237 +239,12 @@ class _MyVideosState extends State<_MyVideos> {
+-                    subtitle: Text('時間: ${t.timestamp.toLocal().toString().split('.')[0]}'),
++                    subtitle: Column(
++                      crossAxisAlignment: CrossAxisAlignment.start,
++                      children: [
++                        Text(
++                          t.url,
++                          maxLines: 1,
++                          overflow: TextOverflow.ellipsis,
++                          style: const TextStyle(fontSize: 12),
++                        ),
++                        Text('時間: ${t.timestamp.toLocal().toString().split('.')[0]}'),
++                      ],
++                    ),
+@@ -456,0 +470,2 @@ class _MyDownloadsState extends State<_MyDownloads> {
++                  final name =
++                      t.name ?? t.url.split('?').first.split('/').last;
+@@ -465,2 +480,2 @@ class _MyDownloadsState extends State<_MyDownloads> {
+-                      t.name ?? t.url,
+-                      maxLines: 2,
++                      name,
++                      maxLines: 1,
+@@ -471,0 +487,6 @@ class _MyDownloadsState extends State<_MyDownloads> {
++                        Text(
++                          t.url,
++                          maxLines: 1,
++                          overflow: TextOverflow.ellipsis,
++                          style: const TextStyle(fontSize: 12),
++                        ),
+@@ -560,0 +582,2 @@ class _MyFavorites extends StatelessWidget {
++            final name =
++                t.name ?? t.url.split('?').first.split('/').last;
+@@ -563,2 +586,13 @@ class _MyFavorites extends StatelessWidget {
+-              title: Text(t.name ?? t.url, maxLines: 2, overflow: TextOverflow.ellipsis),
+-              subtitle: Text('時間: ${t.timestamp.toLocal().toString().split('.')[0]}'),
++              title: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
++              subtitle: Column(
++                crossAxisAlignment: CrossAxisAlignment.start,
++                children: [
++                  Text(
++                    t.url,
++                    maxLines: 1,
++                    overflow: TextOverflow.ellipsis,
++                    style: const TextStyle(fontSize: 12),
++                  ),
++                  Text('時間: ${t.timestamp.toLocal().toString().split('.')[0]}'),
++                ],
++              ),
+
+diff --git a/setting.dart b/setting.dart
+index 6fda7bd..47142cc 100644
+--- a/setting.dart
++++ b/setting.dart
+@@ -2,4 +1,0 @@ import 'package:flutter/material.dart';
+-import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
+-import 'package:ffmpeg_kit_flutter_new/log.dart';
+-import 'package:ffmpeg_kit_flutter_new/session.dart';
+-import 'package:ffmpeg_kit_flutter_new/statistics.dart';
+@@ -8,3 +4,2 @@ import 'soure.dart';
+-/// SettingPage provides miscellaneous options, such as toggling automatic
+-/// gallery saving, viewing copyright information, and about page.
+-class SettingPage extends StatelessWidget {
++/// SettingPage provides miscellaneous options such as auto save toggle and cache clearing.
++class SettingPage extends StatefulWidget {
+@@ -12,0 +8,30 @@ class SettingPage extends StatelessWidget {
++  @override
++  State<SettingPage> createState() => _SettingPageState();
++}
++
++class _SettingPageState extends State<SettingPage> {
++  final repo = AppRepo.I;
++  int? _cache;
++
++  @override
++  void initState() {
++    super.initState();
++    _loadCache();
++  }
++
++  Future<void> _loadCache() async {
++    _cache = await repo.cacheSize();
++    if (mounted) setState(() {});
++  }
++
++  String _fmtBytes(int b) {
++    const units = ['B', 'KB', 'MB', 'GB'];
++    double v = b.toDouble();
++    int i = 0;
++    while (v > 1024 && i < units.length - 1) {
++      v /= 1024;
++      i++;
++    }
++    return '${v.toStringAsFixed(1)} ${units[i]}';
++  }
+@@ -15 +39,0 @@ class SettingPage extends StatelessWidget {
+-    final repo = AppRepo.I;
+@@ -22,8 +46,22 @@ class SettingPage extends StatelessWidget {
+-          SwitchListTile(
+-            title: const Text('自動儲存到相簿'),
+-            value: true,
+-            onChanged: (v) {
+-              // This demo always auto-saves. A real app would update a preference here.
+-              ScaffoldMessenger.of(
+-                context,
+-              ).showSnackBar(const SnackBar(content: Text('此範例預設已自動存相簿')));
++          ValueListenableBuilder(
++            valueListenable: repo.autoSave,
++            builder: (_, bool v, __) {
++              return SwitchListTile(
++                title: const Text('自動儲存到相簿'),
++                value: v,
++                onChanged: (val) => repo.setAutoSave(val),
++              );
++            },
++          ),
++          ListTile(
++            leading: const Icon(Icons.delete_outline),
++            title: const Text('清理緩存'),
++            subtitle: Text(_cache == null ? '' : _fmtBytes(_cache!)),
++            onTap: () async {
++              await repo.clearCache();
++              if (mounted) {
++                ScaffoldMessenger.of(context).showSnackBar(
++                  const SnackBar(content: Text('已清理緩存')),
++                );
++              }
++              await _loadCache();
+
+diff --git a/soure.dart b/soure.dart
+index a95ac95..9dcc9d3 100644
+--- a/soure.dart
++++ b/soure.dart
+@@ -3,0 +4 @@ import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
++import 'package:ffmpeg_kit_flutter_new/ffprobe_kit.dart';
+@@ -7,0 +9 @@ import 'package:path_provider/path_provider.dart';
++import 'package:path/path.dart' as p;
+@@ -63,0 +66 @@ class Sniffer {
++      if (/\.ts$/i.test(u) || /video\/mp2t/i.test(ct)) return false;
+@@ -258,0 +262,12 @@ class DownloadTask {
++  /// Derived type by file extension. "video", "audio", "image" or "file".
++  String type;
++  /// Optional custom name shown to user.
++  String? name;
++  /// Whether user marked this task as favorite.
++  bool favorite;
++  /// Local path to generated thumbnail for video downloads.
++  String? thumbnailPath;
++  /// Download timestamp.
++  DateTime timestamp;
++  /// Duration in seconds for video/audio.
++  int? durationSeconds;
+@@ -262 +277,11 @@ class DownloadTask {
+-  DownloadTask({required this.url, required this.savePath, required this.kind});
++  DownloadTask({
++    required this.url,
++    required this.savePath,
++    required this.kind,
++    this.type = 'file',
++    this.name,
++    this.favorite = false,
++    this.thumbnailPath,
++    DateTime? timestamp,
++    this.durationSeconds,
++  }) : timestamp = timestamp ?? DateTime.now();
+@@ -272,0 +298 @@ class AppRepo extends ChangeNotifier {
++  final ValueNotifier<bool> autoSave = ValueNotifier(true);
+@@ -283,0 +310,6 @@ class AppRepo extends ChangeNotifier {
++  void setAutoSave(bool v) {
++    if (autoSave.value == v) return;
++    autoSave.value = v;
++    notifyListeners();
++  }
++
+@@ -302 +334,16 @@ class AppRepo extends ChangeNotifier {
+-  /// Creates a temporary file path with the given extension.
++  String _inferType(String name) {
++    final l = name.toLowerCase();
++    if (l.endsWith('.mp4') || l.endsWith('.mov') || l.endsWith('.m4v') ||
++        l.endsWith('.webm') || l.endsWith('.m3u8')) return 'video';
++    if (l.endsWith('.mp3') || l.endsWith('.m4a') || l.endsWith('.aac') ||
++        l.endsWith('.ogg') || l.endsWith('.wav') || l.endsWith('.flac')) {
++      return 'audio';
++    }
++    if (l.endsWith('.png') || l.endsWith('.jpg') || l.endsWith('.jpeg') ||
++        l.endsWith('.gif') || l.endsWith('.webp') || l.endsWith('.bmp')) {
++      return 'image';
++    }
++    return 'file';
++  }
++
++  /// Creates a file path within application documents to persist across restarts.
+@@ -304,2 +351,2 @@ class AppRepo extends ChangeNotifier {
+-    final dir = await getTemporaryDirectory();
+-    return '${dir.path}/${DateTime.now().millisecondsSinceEpoch}.$ext';
++    final dir = await getApplicationDocumentsDirectory();
++    return p.join(dir.path, '${DateTime.now().millisecondsSinceEpoch}.$ext');
+@@ -332,2 +379,6 @@ class AppRepo extends ChangeNotifier {
+-    final ext =
+-        isHls ? 'mp4' : (url.split('?').first.split('.').lastOrNull ?? 'bin');
++    final basename = url.split('?').first.split('/').last;
++    final ext = isHls
++        ? 'mp4'
++        : (basename.split('.').length > 1
++            ? basename.split('.').last
++            : 'bin');
+@@ -338,0 +390,2 @@ class AppRepo extends ChangeNotifier {
++      name: basename,
++      type: _inferType(basename),
+@@ -352,6 +405 @@ class AppRepo extends ChangeNotifier {
+-        final cmd =
+-            "-i '${t.url}' -c copy -bsf:a aac_adtstoasc '${t.savePath}'";
+-        final sess = await FFmpegKit.executeAsync(cmd, (s) {}, (log) {
+-          if (kDebugMode) print('ffmpeg: ${log.getMessage()}');
+-        }, (st) {});
+-        await sess.getState();
++        await _downloadHls(t);
+@@ -371,0 +420,4 @@ class AppRepo extends ChangeNotifier {
++      if (t.type == 'video') {
++        t.thumbnailPath = await _genThumbnail(t.savePath);
++        t.durationSeconds = await _probeDuration(t.savePath);
++      }
+@@ -373 +425,3 @@ class AppRepo extends ChangeNotifier {
+-      await saveFileToGallery(t.savePath);
++      if (autoSave.value) {
++        await saveFileToGallery(t.savePath);
++      }
+@@ -379,0 +434,88 @@ class AppRepo extends ChangeNotifier {
++
++  Future<void> _downloadHls(DownloadTask t) async {
++    final dio = Dio();
++    final resp = await dio.get<String>(t.url);
++    final base = Uri.parse(t.url);
++    final lines = resp.data!.split('\n');
++    final segs = <String>[];
++    for (final line in lines) {
++      final l = line.trim();
++      if (l.isEmpty || l.startsWith('#')) continue;
++      final segUrl = base.resolve(l).toString();
++      final segPath = await _tempFilePath('ts');
++      await dio.download(segUrl, segPath);
++      segs.add(segPath);
++    }
++    final listFile = await _tempFilePath('txt');
++    final buf = StringBuffer();
++    for (final pth in segs) {
++      buf.writeln("file '${pth.replaceAll(\"'\", \"'\\\\''\")}'");
++    }
++    await File(listFile).writeAsString(buf.toString());
++    final cmd =
++        "-f concat -safe 0 -i '$listFile' -c copy '${t.savePath}'";
++    await FFmpegKit.execute(cmd);
++  }
++
++  Future<String?> _genThumbnail(String path) async {
++    final out = await _tempFilePath('jpg');
++    final cmd = "-y -ss 1 -i '$path' -frames:v 1 -q:v 3 '$out'";
++    final session = await FFmpegKit.execute(cmd);
++    final rc = await session.getReturnCode();
++    if (rc != null && rc.isValueSuccess() && File(out).existsSync()) {
++      return out;
++    }
++    return null;
++  }
++
++  Future<int?> _probeDuration(String path) async {
++    try {
++      final info = await FFprobeKit.getMediaInformation(path);
++      final mi = info.getMediaInformation();
++      final d = mi?.getDuration();
++      if (d != null) return double.tryParse(d)?.round();
++    } catch (_) {}
++    return null;
++  }
++
++  Future<void> removeTasks(List<DownloadTask> tasks) async {
++    downloads.value = downloads.value.where((d) => !tasks.contains(d)).toList();
++    for (final t in tasks) {
++      try {
++        final f = File(t.savePath);
++        if (await f.exists()) await f delete();
++        if (t.thumbnailPath != null) {
++          final tf = File(t.thumbnailPath!);
++          if (await tf.exists()) await tf.delete();
++        }
++      } catch (_) {}
++    }
++    notifyListeners();
++  }
++
++  void renameTask(DownloadTask t, String name) {
++    t.name = name;
++    notifyListeners();
++  }
++
++  void setFavorite(DownloadTask t, bool fav) {
++    t.favorite = fav;
++    notifyListeners();
++  }
++
++  Future<int> cacheSize() async {
++    final dir = await getTemporaryDirectory();
++    int total = 0;
++    await for (final e in dir.list(recursive: true, followLinks: false)) {
++      if (e is File) total += await e.length();
++    }
++    return total;
++  }
++
++  Future<void> clearCache() async {
++    final dir = await getTemporaryDirectory();
++    if (await dir exists()) {
++      await dir.delete(recursive: true);
++      await dir.create();
++    }
++  }
