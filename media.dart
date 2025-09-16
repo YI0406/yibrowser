@@ -1232,6 +1232,11 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
 
   late final VolumeController _volc;
 
+  // Track the last known playing state so we can accurately decide whether
+  // playback should resume after leaving/returning from system PiP.
+  bool _lastKnownPlaying = false;
+  VoidCallback? _vcListener;
+
   // 控制列顯示邏輯
   bool _showControls = true;
   Timer? _autoHideTimer;
@@ -1314,6 +1319,19 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     } else {
       _vc = VideoPlayerController.file(File(widget.path));
     }
+
+    // Cache the playback state in real time. When iOS transitions the app to
+    // PiP it may momentarily pause the controller before the lifecycle
+    // callback fires. By remembering the last state reported by the controller
+    // we can restore playback correctly when the app is resumed from PiP.
+    _vcListener = () {
+      final playing = _vc.value.isPlaying;
+      if (playing != _lastKnownPlaying) {
+        _lastKnownPlaying = playing;
+      }
+    };
+    _vc.addListener(_vcListener!);
+
     _vc
       ..initialize().then((_) async {
         if (!mounted) return;
@@ -1353,6 +1371,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
         }
         // Start playing automatically when the video is ready.
         _vc.play();
+        _lastKnownPlaying = true;
         _startAutoHide();
         try {
           await FirebaseAnalytics.instance.logEvent(
@@ -1389,6 +1408,11 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     try {
       _resumePositions[widget.path] = _vc.value.position;
     } catch (_) {}
+    if (_vcListener != null) {
+      try {
+        _vc.removeListener(_vcListener!);
+      } catch (_) {}
+    }
     _vc.dispose();
     try {
       _volc.removeListener();
@@ -1407,7 +1431,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
         // iOS 會先進 inactive 再進背景
         if (mounted && _ready && !_autoPipArmed) {
           _autoPipArmed = true;
-          _wasPlayingBeforePip = _vc.value.isPlaying;
+          _wasPlayingBeforePip = _lastKnownPlaying;
           await _startSystemPip(); // ✅ 一定要帶 pipWidget
         }
       } else if (state == AppLifecycleState.resumed) {
@@ -1415,11 +1439,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
           await _stopSystemPip();
           if (mounted) {
             await _enterFullscreen();
-            if (_wasPlayingBeforePip) {
-              try {
-                await _vc.play();
-              } catch (_) {}
-            }
+            await _resumePlaybackAfterPip();
           }
           _autoPipArmed = false;
         }
@@ -1784,8 +1804,10 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     if (!_ready) return;
     if (_vc.value.isPlaying) {
       _vc.pause();
+      _lastKnownPlaying = false;
     } else {
       _vc.play();
+      _lastKnownPlaying = true;
       _startAutoHide();
     }
     setState(() {});
@@ -1798,11 +1820,41 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   }
 
   Future<void> _startSystemPip() async {
+    if (!_ready || !_vc.value.isInitialized) return;
+    final widget = _pipContent();
     try {
-      await _pip.start();
+      final controller = FlutterInAppPip();
+      final candidates = <void Function(dynamic)>[
+        (c) => c.setWidget?.call(widget),
+        (c) => c.setWidgetBuilder?.call(() => widget),
+        (c) => c.setPipWidget?.call(widget),
+        (c) => c.setPipWidgetBuilder?.call(() => widget),
+        (c) => c.updateWidget?.call(widget),
+        (c) => c.updateWidgetBuilder?.call(() => widget),
+      ];
+      for (final setter in candidates) {
+        try {
+          setter(controller as dynamic);
+        } catch (_) {}
+      }
+    } catch (_) {}
+    try {
+      // Some versions of the pip plugin require providing a dedicated widget
+      // for the system PiP window. Call through `dynamic` to keep compatibility
+      // if the named parameter is absent while still supplying the widget when
+      // supported.
+      await (_pip as dynamic).start(pipWidget: widget);
+      return;
     } catch (e) {
-      // ignore: avoid_print
-      print('[PIP] start failed: $e');
+      var started = false;
+      try {
+        await _pip.start();
+        started = true;
+      } catch (_) {}
+      if (!started) {
+        // ignore: avoid_print
+        print('[PIP] start failed: $e');
+      }
     }
   }
 
@@ -1810,6 +1862,28 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     try {
       await _pip.stop();
     } catch (_) {}
+  }
+
+  Future<void> _resumePlaybackAfterPip() async {
+    if (!_wasPlayingBeforePip) return;
+    // Give the platform view a short moment to reattach after leaving PiP.
+    for (var attempt = 0; attempt < 5; attempt++) {
+      try {
+        if (!_vc.value.isInitialized) {
+          await Future<void>.delayed(const Duration(milliseconds: 80));
+          continue;
+        }
+        if (!_vc.value.isPlaying) {
+          await _vc.play();
+        }
+        _lastKnownPlaying = true;
+        _startAutoHide();
+        if (mounted) setState(() {});
+        return;
+      } catch (_) {
+        await Future<void>.delayed(const Duration(milliseconds: 80));
+      }
+    }
   }
 
   void _startAutoHide() {
