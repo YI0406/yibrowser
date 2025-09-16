@@ -2789,11 +2789,15 @@ class SystemPip {
     }
   }
 
-  static Future<void> exit() async {
+  static Future<int?> exit() async {
     try {
-      await _ch.invokeMethod('exit');
+      final pos = await _ch.invokeMethod('exit');
+      if (pos is int) {
+        return pos;
+      }
     } catch (_) {}
     _lastUrl = null;
+    return null;
   }
 }
 
