@@ -1281,12 +1281,19 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   final Pip _pip = Pip();
   bool _autoPipArmed = false; // background trigger flag
   bool _wasPlayingBeforePip = false;
+  static const MethodChannel _nativePipChannel = MethodChannel('native_pip');
+  bool _nativePipAvailable = false;
+  bool _nativePipActive = false;
+  bool _usingNativePip = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _volc = VolumeController.instance;
+    if (Platform.isIOS) {
+      Future.microtask(_setupNativePipChannel);
+    }
     // 當系統音量變化時，同步到播放器音量與 UI（新版 API）
     _volc.showSystemUI = true; // 不顯示系統音量浮窗（需要時可改為 true）
     _volc.addListener((v) async {
@@ -1420,6 +1427,11 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     try {
       WidgetsBinding.instance.removeObserver(this);
     } catch (_) {}
+    if (Platform.isIOS) {
+      try {
+        _nativePipChannel.setMethodCallHandler(null);
+      } catch (_) {}
+    }
     super.dispose();
   }
 
@@ -1432,12 +1444,16 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
         if (mounted && _ready && !_autoPipArmed) {
           _autoPipArmed = true;
           _wasPlayingBeforePip = _lastKnownPlaying;
-          await _startSystemPip(); // ✅ 一定要帶 pipWidget
+          final started = await _startSystemPip(); // ✅ 一定要帶 pipWidget
+          if (!started) {
+            _autoPipArmed = false;
+          }
         }
       } else if (state == AppLifecycleState.resumed) {
         if (_autoPipArmed) {
+          final usedNative = _usingNativePip;
           await _stopSystemPip();
-          if (mounted) {
+          if (mounted && !usedNative) {
             await _enterFullscreen();
             await _resumePlaybackAfterPip();
           }
@@ -1813,14 +1829,123 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     setState(() {});
   }
 
+  Future<void> _setupNativePipChannel() async {
+    try {
+      _nativePipChannel.setMethodCallHandler(_handleNativePipCallback);
+      final available =
+          await _nativePipChannel.invokeMethod<bool>('isAvailable');
+      _nativePipAvailable = available ?? false;
+    } catch (_) {
+      _nativePipAvailable = false;
+    }
+  }
+
+  Future<void> _handleNativePipCallback(MethodCall call) async {
+    if (!Platform.isIOS) return;
+    switch (call.method) {
+      case 'onPipStarted':
+        _nativePipActive = true;
+        _usingNativePip = true;
+        break;
+      case 'onPipClosed':
+        final raw = call.arguments;
+        Map<String, Object?> data = const <String, Object?>{};
+        if (raw is Map) {
+          data = raw.cast<String, Object?>();
+        }
+        final posMs = (data['positionMs'] as int?) ?? 0;
+        final shouldResume =
+            (data['shouldResume'] as bool?) ?? _wasPlayingBeforePip;
+        _nativePipActive = false;
+        _usingNativePip = false;
+        _autoPipArmed = false;
+        if (!mounted) return;
+        await _enterFullscreen();
+        if (posMs > 0) {
+          final seekTo = Duration(milliseconds: posMs);
+          try {
+            await _vc.seekTo(seekTo);
+          } catch (_) {}
+        }
+        if (shouldResume && _ready) {
+          try {
+            await _vc.play();
+            _lastKnownPlaying = true;
+          } catch (_) {}
+          _startAutoHide();
+        } else {
+          _lastKnownPlaying = false;
+        }
+        setState(() {});
+        break;
+    }
+  }
+
+  Future<bool> _startNativePip() async {
+    final wasPlaying = _vc.value.isPlaying;
+    final positionMs = _vc.value.position.inMilliseconds;
+    final durationMs =
+        _vc.value.duration == Duration.zero ? 0 : _vc.value.duration.inMilliseconds;
+    final source = widget.path;
+    final isRemote = source.startsWith('http://') || source.startsWith('https://');
+
+    var pausedForNative = false;
+    if (wasPlaying) {
+      try {
+        await _vc.pause();
+        pausedForNative = true;
+        _lastKnownPlaying = false;
+      } catch (_) {}
+    }
+
+    final args = <String, Object?>{
+      'source': source,
+      'isRemote': isRemote,
+      'positionMs': positionMs,
+      'durationMs': durationMs,
+      'resume': wasPlaying,
+      'autoPlay': true,
+      'headers': const <String, String>{},
+      'title': widget.title,
+    };
+
+    try {
+      final started =
+          await _nativePipChannel.invokeMethod<bool>('start', args) ?? false;
+      if (started) {
+        _nativePipActive = true;
+        _usingNativePip = true;
+        _wasPlayingBeforePip = wasPlaying;
+        return true;
+      }
+    } catch (_) {}
+
+    if (pausedForNative && wasPlaying) {
+      try {
+        await _vc.play();
+        _lastKnownPlaying = true;
+      } catch (_) {}
+    }
+    _nativePipActive = false;
+    _usingNativePip = false;
+    return false;
+  }
+
   Widget _pipContent() {
     final ar =
         (_ready && _vc.value.aspectRatio != 0) ? _vc.value.aspectRatio : 16 / 9;
     return AspectRatio(aspectRatio: ar, child: VideoPlayer(_vc));
   }
 
-  Future<void> _startSystemPip() async {
-    if (!_ready || !_vc.value.isInitialized) return;
+  Future<bool> _startSystemPip() async {
+    if (!_ready || !_vc.value.isInitialized) return false;
+    if (Platform.isIOS && _nativePipAvailable) {
+      final nativeStarted = await _startNativePip();
+      if (nativeStarted) {
+        return true;
+      }
+    }
+
     final widget = _pipContent();
     try {
       final controller = FlutterInAppPip();
@@ -1838,33 +1963,42 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
         } catch (_) {}
       }
     } catch (_) {}
+
     try {
-      // Some versions of the pip plugin require providing a dedicated widget
-      // for the system PiP window. Call through `dynamic` to keep compatibility
-      // if the named parameter is absent while still supplying the widget when
-      // supported.
       await (_pip as dynamic).start(pipWidget: widget);
-      return;
+      _usingNativePip = false;
+      _nativePipActive = false;
+      return true;
     } catch (e) {
       var started = false;
       try {
         await _pip.start();
         started = true;
       } catch (_) {}
-      if (!started) {
-        // ignore: avoid_print
-        print('[PIP] start failed: $e');
+      if (started) {
+        _usingNativePip = false;
+        _nativePipActive = false;
+        return true;
       }
+      // ignore: avoid_print
+      print('[PIP] start failed: $e');
     }
+    return false;
   }
 
   Future<void> _stopSystemPip() async {
+    if (Platform.isIOS && (_nativePipAvailable || _nativePipActive || _usingNativePip)) {
+      try {
+        await _nativePipChannel.invokeMethod('stop');
+      } catch (_) {}
+    }
     try {
       await _pip.stop();
     } catch (_) {}
   }
 
   Future<void> _resumePlaybackAfterPip() async {
+    if (_usingNativePip) return;
     if (!_wasPlayingBeforePip) return;
     // Give the platform view a short moment to reattach after leaving PiP.
     for (var attempt = 0; attempt < 5; attempt++) {

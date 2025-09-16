@@ -15,6 +15,9 @@ import AVFoundation
     } catch {
       print("[PiP] AVAudioSession error: \(error)")
     }
+    if let controller = window?.rootViewController as? FlutterViewController {
+      NativePiPManager.shared.configure(with: controller.binaryMessenger)
+    }
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 }
