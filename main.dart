@@ -4,14 +4,29 @@ import 'home.dart';
 import 'media.dart';
 import 'setting.dart';
 import 'soure.dart';
+import 'package:flutter_in_app_pip/flutter_in_app_pip.dart';
 import 'package:video_player/video_player.dart';
 import 'dart:io';
 import 'dart:async';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_analytics/firebase_analytics.dart';
+import 'package:firebase_analytics/observer.dart';
 
 /// Entry point of the application. Initializes WebView debugging and sets up
 /// the root navigation with three tabs: browser, media, and settings.
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Initialize Firebase (uses GoogleService-Info.plist on iOS when no options provided).
+  try {
+    await Firebase.initializeApp();
+    // Log cold start
+    try {
+      await FirebaseAnalytics.instance.logAppOpen();
+    } catch (_) {}
+  } catch (_) {
+    // Keep app running even if Firebase is absent in non-Firebase builds.
+  }
   // Enable debugging for WebView content (useful during development).
   await Sniffer.initWebViewDebug();
   // Load any persisted downloads so media lists persist across restarts.
@@ -26,6 +41,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: navigatorKey,
       title: 'Sniffer Browser',
       // Follow system theme: use light/dark themes and rely on system setting.
       themeMode: ThemeMode.system,
@@ -39,6 +55,10 @@ class MyApp extends StatelessWidget {
         colorSchemeSeed: Colors.teal,
         brightness: Brightness.dark,
       ),
+      navigatorObservers: [
+        // Report navigation as screen_view 到 Firebase Analytics
+        FirebaseAnalyticsObserver(analytics: FirebaseAnalytics.instance),
+      ],
       home: const RootNav(),
     );
   }
@@ -95,18 +115,39 @@ class _RootNavState extends State<RootNav> {
       body: Stack(
         children: [
           IndexedStack(index: index, children: pages),
-          // Overlay the mini player when active. The mini player floats above
-          // the content and bottom navigation bar. When null, nothing is
-          // displayed.
+          // Overlay the mini player when active. Dock position can be top/
+          // middle/bottom and updates in real‑time.
           ValueListenableBuilder<MiniPlayerData?>(
             valueListenable: AppRepo.I.miniPlayer,
             builder: (context, mini, _) {
               if (mini == null) return const SizedBox.shrink();
-              return Positioned(
-                left: 8,
-                right: 8,
-                bottom: kBottomNavigationBarHeight + 8,
-                child: MiniPlayerWidget(data: mini),
+              return LayoutBuilder(
+                builder: (ctx, box) {
+                  final size = MediaQuery.of(ctx).size;
+                  return ValueListenableBuilder<Offset>(
+                    valueListenable: AppRepo.I.miniOffset,
+                    builder: (context, off, __) {
+                      // fallback to bottom-right if not yet positioned
+                      double left = off.dx;
+                      double top = off.dy;
+                      if (left == 0 && top == 0) {
+                        left = size.width - 280;
+                        top = size.height - (kBottomNavigationBarHeight + 180);
+                      }
+                      // Clamp inside screen
+                      left = left.clamp(8.0, size.width - 200.0);
+                      top = top.clamp(
+                        32.0,
+                        size.height - (kBottomNavigationBarHeight + 140.0),
+                      );
+                      return Positioned(
+                        left: left,
+                        top: top,
+                        child: MiniPlayerWidget(data: mini),
+                      );
+                    },
+                  );
+                },
               );
             },
           ),
@@ -120,10 +161,7 @@ class _RootNavState extends State<RootNav> {
             icon: Icon(Icons.video_library_outlined),
             label: '媒體',
           ),
-          NavigationDestination(
-            icon: Icon(Icons.home),
-            label: '主頁',
-          ),
+          NavigationDestination(icon: Icon(Icons.home), label: '主頁'),
           NavigationDestination(icon: Icon(Icons.public), label: '瀏覽器'),
           NavigationDestination(icon: Icon(Icons.settings), label: '設定'),
         ],
@@ -149,6 +187,8 @@ class _MiniPlayerWidgetState extends State<MiniPlayerWidget> {
   bool _ready = false;
   bool _showControls = true;
   Timer? _hideTimer;
+  double _dragDy = 0.0; // accumulate vertical drag distance
+  Offset? _dragStartPos;
 
   @override
   void initState() {
@@ -226,21 +266,49 @@ class _MiniPlayerWidgetState extends State<MiniPlayerWidget> {
         pos.inMilliseconds.toDouble().clamp(0.0, totalMs) as double;
 
     return GestureDetector(
-      onTap: () {
+      // Single tap toggles play/pause to mimic other apps' mini player
+      onTap: _togglePlay,
+      onLongPress: () {
         setState(() => _showControls = !_showControls);
         if (_showControls && _vc.value.isPlaying) _startAutoHide();
       },
+      // Free drag anywhere to reposition like AssistiveTouch
+      onPanStart: (d) {
+        _dragStartPos = d.globalPosition;
+        if (AppRepo.I.miniOffset.value == Offset.zero) {
+          try {
+            final box = context.findRenderObject() as RenderBox?;
+            if (box != null) {
+              final origin = box.localToGlobal(Offset.zero);
+              AppRepo.I.miniOffset.value = origin;
+            }
+          } catch (_) {}
+        }
+      },
+      onPanUpdate: (d) {
+        final cur = AppRepo.I.miniOffset.value;
+        // When offset is zero (not yet set), seed with current pointer
+        Offset base = cur == Offset.zero ? const Offset(0, 0) : cur;
+        AppRepo.I.miniOffset.value = Offset(
+          base.dx + d.delta.dx,
+          base.dy + d.delta.dy,
+        );
+      },
+      onPanEnd: (_) {
+        _dragStartPos = null;
+      },
       child: Material(
-        color: Colors.black.withOpacity(0.8),
+        color: Colors.black.withOpacity(0.75),
         borderRadius: BorderRadius.circular(8),
         child: Padding(
           padding: const EdgeInsets.all(8.0),
           child: Row(
+            mainAxisSize: MainAxisSize.min,
             children: [
               // Video preview area with fixed width maintaining aspect ratio
               Container(
-                width: 120,
-                height: 68,
+                width: 160,
+                height: 90,
                 color: Colors.black,
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(4),
@@ -254,73 +322,62 @@ class _MiniPlayerWidgetState extends State<MiniPlayerWidget> {
                 ),
               ),
               const SizedBox(width: 8),
-              // Expanded area with controls
-              Expanded(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      widget.data.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: Colors.white),
+              // Compact title + buttons (no slider/progress)
+              Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    widget.data.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                  if (_showControls)
+                    Row(
+                      children: [
+                        IconButton(
+                          icon: Icon(
+                            _vc.value.isPlaying
+                                ? Icons.pause
+                                : Icons.play_arrow,
+                            color: Colors.white,
+                          ),
+                          onPressed: _togglePlay,
+                        ),
+                        IconButton(
+                          icon: const Icon(
+                            Icons.fullscreen,
+                            color: Colors.white,
+                          ),
+                          tooltip: '放大',
+                          onPressed: () {
+                            // Capture the current playback position before closing
+                            final pos = _vc.value.position;
+                            // Close mini and reopen full page player with resume position.
+                            AppRepo.I.closeMiniPlayer();
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder:
+                                    (_) => VideoPlayerPage(
+                                      path: widget.data.path,
+                                      title: widget.data.title,
+                                      startAt: pos,
+                                    ),
+                              ),
+                            );
+                          },
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.close, color: Colors.white),
+                          tooltip: '關閉',
+                          onPressed: () {
+                            AppRepo.I.closeMiniPlayer();
+                          },
+                        ),
+                      ],
                     ),
-                    // Progress bar
-                    Slider(
-                      min: 0.0,
-                      max: totalMs,
-                      value: currentMs,
-                      onChanged: (v) async {
-                        final target = Duration(milliseconds: v.round());
-                        await _vc.seekTo(target);
-                      },
-                    ),
-                    if (_showControls)
-                      Row(
-                        children: [
-                          IconButton(
-                            icon: Icon(
-                              _vc.value.isPlaying
-                                  ? Icons.pause
-                                  : Icons.play_arrow,
-                              color: Colors.white,
-                            ),
-                            onPressed: _togglePlay,
-                          ),
-                          IconButton(
-                            icon: const Icon(
-                              Icons.fullscreen,
-                              color: Colors.white,
-                            ),
-                            tooltip: '放大',
-                            onPressed: () {
-                              // Capture the current playback position before closing
-                              final pos = _vc.value.position;
-                              // Close mini and reopen full page player with resume position.
-                              AppRepo.I.closeMiniPlayer();
-                              Navigator.of(context).push(
-                                MaterialPageRoute(
-                                  builder: (_) => VideoPlayerPage(
-                                    path: widget.data.path,
-                                    title: widget.data.title,
-                                    startAt: pos,
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.close, color: Colors.white),
-                            tooltip: '關閉',
-                            onPressed: () {
-                              AppRepo.I.closeMiniPlayer();
-                            },
-                          ),
-                        ],
-                      ),
-                  ],
-                ),
+                ],
               ),
             ],
           ),

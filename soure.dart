@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:ui' show Offset; // for mini player free-positioning
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
+import 'package:flutter/services.dart';
 import 'package:dio/dio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:collection/collection.dart';
@@ -17,6 +19,7 @@ import 'package:flutter/foundation.dart';
 import 'package:video_player/video_player.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 import 'package:flutter_hls_parser/flutter_hls_parser.dart';
+import 'package:firebase_analytics/firebase_analytics.dart';
 // NOTE: The `download` package targets Flutter Web (browser-triggered save). It is not
 // applicable to iOS/Android file-system saving. Kept here for web builds if needed.
 import 'package:download/download.dart' as web_download; // unused on mobile
@@ -399,6 +402,12 @@ class DownloadTask {
   /// Whether the task is paused (UI uses this to show ▶/⏸).
   bool paused;
 
+  /// Optional progress unit hint for special kinds. For HLS we set to
+  /// 'time-ms' to indicate that [received]/[total] are milliseconds of
+  /// processed media duration instead of bytes/segments, so UI can render
+  ///百分比與時間式進度。
+  String? progressUnit;
+
   DownloadTask({
     required this.url,
     required this.savePath,
@@ -413,6 +422,7 @@ class DownloadTask {
     this.thumbnailPath,
     this.duration,
     this.paused = false,
+    this.progressUnit,
   }) : timestamp = timestamp ?? DateTime.now();
 
   /// Construct a task from persisted JSON. Unknown fields are ignored.
@@ -437,6 +447,7 @@ class DownloadTask {
               ? Duration(milliseconds: json['duration'] as int)
               : null,
       paused: json['paused'] as bool? ?? false,
+      progressUnit: json['progressUnit'] as String?,
     );
   }
 
@@ -456,6 +467,7 @@ class DownloadTask {
     // store duration in milliseconds for portability
     'duration': duration?.inMilliseconds,
     'paused': paused,
+    'progressUnit': progressUnit,
   };
 }
 
@@ -479,6 +491,9 @@ class YtOption {
 /// It also handles downloading/ converting HLS media to MP4/MOV and saving
 /// downloaded files into the photo gallery.
 class AppRepo extends ChangeNotifier {
+  // --- HLS 探測參數（降低前置判斷時間） ---
+  static const int _hlsProbeTimeoutMs = 1800; // 每個候選最長 1.8s
+  static const int _hlsCandidateLimit = 8; // 最多嘗試 8 個候選
   /// When a YouTube URL is detected, this notifier exposes the available
   /// quality/type choices to the UI to show a picker. Set to null when idle.
   final ValueNotifier<List<YtOption>?> ytOptions =
@@ -922,10 +937,8 @@ class AppRepo extends ChangeNotifier {
           // fall through to try sibling/parent candidates
         }
 
-        // 3b) Looks like a trick-play / thumbnails list — try common sibling names
-        if (kDebugMode) {
-          print('[HLS ensure] suspected trick-play or invalid media at: $url');
-        }
+        // 3b) Looks like a trick-play / thumbnails list — try少量常見候選（限額制）
+
         final file = p.basename(baseUri.path);
         final dirUri = baseUri.replace(
           path: baseUri.path.substring(0, baseUri.path.length - file.length),
@@ -933,11 +946,13 @@ class AppRepo extends ChangeNotifier {
         String dir = dirUri.toString();
         if (!dir.endsWith('/')) dir = '$dir/';
 
-        // Build a set to avoid duplicates
-        final tried = <String>{};
-        final add = (String u) {
-          if (u.isNotEmpty) tried.add(u);
-        };
+        // 按優先順序收集候選，並限制數量
+        final List<String> candList = <String>[];
+        void add(String u) {
+          if (u.isEmpty) return;
+          if (candList.length >= _hlsCandidateLimit) return;
+          if (!candList.contains(u)) candList.add(u);
+        }
 
         // Same folder candidates
         void addCommonNamesAt(String base) {
@@ -949,15 +964,13 @@ class AppRepo extends ChangeNotifier {
             // collapse multiple slashes at the end to one
             b = b.replaceFirst(RegExp(r'/+$'), '/');
           }
+          // 優先嘗試最常見幾個檔名
           add('${b}index.m3u8');
-          add('${b}prog_index.m3u8');
           add('${b}master.m3u8');
           add('${b}playlist.m3u8');
-          add('${b}stream.m3u8');
-          add('${b}hls.m3u8');
-          add('${b}chunklist.m3u8');
+          add('${b}prog_index.m3u8');
+          // 保留少數備用名
           add('${b}media.m3u8');
-          add('${b}index-v1-a1.m3u8');
           add(
             baseUri.toString().replaceFirst(
               RegExp(r'video\.m3u8$', caseSensitive: false),
@@ -1014,29 +1027,26 @@ class AppRepo extends ChangeNotifier {
           ),
         );
 
-        for (final c in tried) {
-          // Debug trace
-          if (kDebugMode) print('[HLS ensure] try candidate: $c');
+        int attempts = 0;
+        for (final c in candList) {
+          attempts++;
+
           // Quick accept if looks like a media playlist
           if (await _looksPlayableMediaPlaylist(c, hdrs)) {
-            if (kDebugMode)
-              print('[HLS ensure] candidate is playable media: $c');
-            return c;
+            if (kDebugMode) return c;
           }
           // If it's not a media playlist, it might be a master. Try resolving via parser again.
           try {
             final resolved = await _pickBestHlsVariant(c);
             if (resolved != null && resolved != c) {
               if (kDebugMode)
-                print('[HLS ensure] candidate master resolved to: $resolved');
-              // Double check resolved media
-              if (await _looksPlayableMediaPlaylist(resolved, hdrs)) {
-                return resolved;
-              }
+                // Double check resolved media
+                if (await _looksPlayableMediaPlaylist(resolved, hdrs)) {
+                  return resolved;
+                }
             }
-          } catch (e) {
-            if (kDebugMode) print('[HLS ensure] resolve failed for $c: $e');
-          }
+          } catch (e) {}
+          if (attempts >= _hlsCandidateLimit) break;
         }
 
         // As a last resort, return the original url
@@ -1062,6 +1072,10 @@ class AppRepo extends ChangeNotifier {
           responseType: ResponseType.plain,
           headers: hdrs,
           followRedirects: true,
+          // 縮短探測逾時，避免前置等待過久
+          sendTimeout: Duration(milliseconds: _hlsProbeTimeoutMs),
+          receiveTimeout: Duration(milliseconds: _hlsProbeTimeoutMs),
+          receiveDataWhenStatusError: true,
         ),
       );
       final txt = r.data ?? '';
@@ -1181,8 +1195,10 @@ class AppRepo extends ChangeNotifier {
         addCommonAt(gp);
       }
 
+      int tries = 0;
       for (final cand in tried) {
-        if (kDebugMode) print('[deriveFromTs] try $cand');
+        tries++;
+        if (kDebugMode && tries <= 6) print('[deriveFromTs] try $cand');
         if (await _looksPlayableMediaPlaylist(cand, hdrs)) return cand;
         try {
           final resolved = await _pickBestHlsVariant(cand);
@@ -1191,6 +1207,7 @@ class AppRepo extends ChangeNotifier {
               return resolved;
           }
         } catch (_) {}
+        if (tries >= _hlsCandidateLimit) break;
       }
     } catch (_) {}
     return null;
@@ -1641,6 +1658,16 @@ class AppRepo extends ChangeNotifier {
   /// should display a floating mini player allowing background playback.
   final ValueNotifier<MiniPlayerData?> miniPlayer = ValueNotifier(null);
 
+  /// Mini player dock position: 'top' | 'middle' | 'bottom'. The root view
+  /// listens to this to place the mini player overlay for better ergonomics
+  /// on tablets. Defaults to bottom.
+  final ValueNotifier<String> miniDock = ValueNotifier<String>('bottom');
+
+  /// Mini player free position in pixels relative to the screen (left, top).
+  /// When set to non-zero, overrides [miniDock] and allows the user to place
+  /// the mini player like iOS 的小白點。由 UI 寫入此值；app 重建時沿用。
+  final ValueNotifier<Offset> miniOffset = ValueNotifier<Offset>(Offset.zero);
+
   /// A list of home screen shortcuts created by the user. These entries
   /// appear on the custom home page in the browser. Each item holds a URL
   /// and a user defined name. The order of items in this list is
@@ -1778,16 +1805,10 @@ class AppRepo extends ChangeNotifier {
       final bool isDash = lower0.contains('.mpd');
 
       if (isHls) {
-        // 先從 master 選最佳，再確保不是 trick-play（jpeg 清單）
-        try {
-          final best = await _pickBestHlsVariant(url);
-          if (best != null) url = best;
-          url = await _ensurePlayableHls(url);
-        } catch (e) {
-          if (kDebugMode) print('pick/ensure HLS failed: $e');
-        }
-        // 更新旗標（可能被改成真正 media 清單）
-        isHls = url.toLowerCase().contains('.m3u8');
+        // Fast-path: 移除過長、成效不佳的 master/variant/trick-play 驗證；
+        // 直接加入下載清單，交由 _runTaskHls() 內部的 probe/sanitize 與
+        // image-sequence 組裝流程處理（已能自動辨識純圖片 HLS 並組回影片）。
+        // 此處不更動 url、不等待任何 ensure 流程，以提升入列速度。
       }
 
       final kind = isHls ? 'hls' : (isDash ? 'dash' : 'file');
@@ -1808,6 +1829,18 @@ class AppRepo extends ChangeNotifier {
       downloads.value = [...downloads.value, task];
       await _saveState();
       notifyListeners();
+
+      // Analytics: 下載加入佇列
+      try {
+        await FirebaseAnalytics.instance.logEvent(
+          name: 'download_enqueue',
+          parameters: {
+            'kind': kind,
+            'type': type,
+            'host': _hostFromAny(url) ?? '',
+          },
+        );
+      } catch (_) {}
 
       // 背景執行下載
       _runTask(task);
@@ -1961,6 +1994,31 @@ class AppRepo extends ChangeNotifier {
     }
   }
 
+  /// 掃描 TS 檔案的二進位資料，尋找第一個有效的同步點 (0x47)。
+  /// 驗證方式：檢查 offset + 188、offset + 376... 是否也為 0x47。
+  /// 若連續至少 5 個封包符合，回傳 offset；否則回傳 -1。
+  int _findTsSyncOffset(List<int> data, {int minValidPackets = 5}) {
+    final int packetSize = 188;
+    for (int offset = 0; offset < data.length; offset++) {
+      if (data[offset] != 0x47) continue;
+
+      bool valid = true;
+      for (int i = 1; i < minValidPackets; i++) {
+        final int pos = offset + i * packetSize;
+        if (pos >= data.length || data[pos] != 0x47) {
+          valid = false;
+          break;
+        }
+      }
+
+      if (valid) return offset;
+    }
+    return -1; // 沒找到
+  }
+
+  /// 掃描 TS 檔案的二進位資料，尋找第一個有效的同步點 (0x47)。
+  /// 驗證方式：檢查 offset + 188、offset + 376... 是否也為 0x47。
+  /// 若連續至少 5 個封包符合，回傳 offset；否則回傳 -1。
   Future<String?> _sanitizeHlsToLocal(
     String url, {
     DownloadTask? progressTask,
@@ -2129,6 +2187,28 @@ class AppRepo extends ChangeNotifier {
           ),
         );
         final probeTxt = probe.data ?? '';
+        // Pre-calc total duration for progress: sum EXTINF durations if present
+        try {
+          int totalMs = 0;
+          for (final rawLine in probeTxt.split('\n')) {
+            final l = rawLine.trim();
+            if (l.startsWith('#EXTINF')) {
+              final part = l.split(':').skip(1).join(':');
+              final v = part.split(',').first.trim();
+              final sec = double.tryParse(v);
+              if (sec != null && sec > 0) {
+                totalMs += (sec * 1000).round();
+              }
+            }
+          }
+          if (totalMs > 0) {
+            t.total = totalMs;
+            t.received = 0;
+            t.progressUnit = 'time-ms';
+            _notifyDownloadsUpdated();
+            notifyListeners();
+          }
+        } catch (_) {}
         // Determine if this playlist contains jpeg/png/webp image segments and no TS segments.
         bool jpegish = false;
         bool hasTs = false;
@@ -2147,27 +2227,15 @@ class AppRepo extends ChangeNotifier {
         }
         // If the playlist contains only image segments (no TS/m4s) then process via image sequence
         if (jpegish && !hasTs) {
-          if (kDebugMode) {
-            print(
-              '[HLS] playlist contains only image segments, will reassemble images into video',
-            );
-          }
           // run dedicated image sequence processing and return early
           await _runTaskHlsImages(t, playlistText: probeTxt);
           return;
         }
         // If the playlist contains image segments but also TS segments, sanitize to remove images
         if (jpegish) {
-          if (kDebugMode)
-            print(
-              '[HLS] jpeg-ish segments detected, sanitizing to local playlist...',
-            );
           // Provide task so sanitizer can report progress to the UI
           final local = await _sanitizeHlsToLocal(t.url, progressTask: t);
-          if (local == null) {
-            if (kDebugMode)
-              print('[HLS] sanitize produced no playable segments.');
-          }
+          if (local == null) {}
           if (local != null) {
             inputUrl = local; // use local cleaned playlist
           }
@@ -2202,6 +2270,12 @@ class AppRepo extends ChangeNotifier {
             _notifyDownloadsUpdated();
             notifyListeners();
             await _generatePreview(t);
+            try {
+              await FirebaseAnalytics.instance.logEvent(
+                name: 'download_complete',
+                parameters: {'kind': 'hls', 'type': t.type, 'path': t.savePath},
+              );
+            } catch (_) {}
             if (autoSave.value) {
               try {
                 await saveFileToGallery(t.savePath);
@@ -2215,6 +2289,12 @@ class AppRepo extends ChangeNotifier {
               t.state = 'error';
               _notifyDownloadsUpdated();
               notifyListeners();
+              try {
+                await FirebaseAnalytics.instance.logEvent(
+                  name: 'download_error',
+                  parameters: {'kind': 'hls'},
+                );
+              } catch (_) {}
               // One-shot fallback retry via sanitize if remote playlist used and not already local
               if (!t.url.startsWith('file:') &&
                   !t.url.startsWith('/') &&
@@ -2225,8 +2305,6 @@ class AppRepo extends ChangeNotifier {
                     progressTask: t,
                   );
                   if (local != null) {
-                    if (kDebugMode)
-                      print('[HLS] retrying with sanitized local playlist...');
                     // Re-run FFmpeg on the sanitized local playlist
                     final h2 = await _headersFor(t.url);
                     final ua2 = (h2['User-Agent'] ?? '').replaceAll("'", "\'");
@@ -2269,9 +2347,7 @@ class AppRepo extends ChangeNotifier {
           }
           await _saveState();
         },
-        (log) {
-          if (kDebugMode) print('ffmpeg: ${log.getMessage()}');
-        },
+        (log) {},
         (stat) async {
           // During HLS conversion, refresh the UI based on the output file size.
           // FFmpeg statistics callbacks occur frequently. To provide a responsive
@@ -2294,6 +2370,19 @@ class AppRepo extends ChangeNotifier {
           } catch (_) {
             // Ignore probing errors
           }
+          // Update time-based progress if available
+          try {
+            final ms = stat.getTime();
+            if (ms != null &&
+                (t.progressUnit == 'time-ms') &&
+                (t.total ?? 0) > 0) {
+              final newMs = ms.clamp(0, t.total!);
+              if (newMs > t.received) {
+                t.received = newMs;
+                _notifyDownloadsUpdated();
+              }
+            }
+          } catch (_) {}
         },
       );
       final id = await session.getSessionId();
@@ -2303,7 +2392,7 @@ class AppRepo extends ChangeNotifier {
         t.state = 'error';
         _notifyDownloadsUpdated();
         notifyListeners();
-        if (kDebugMode) print('download error(hls): $e');
+
         await _saveState();
       }
     }
@@ -2393,7 +2482,6 @@ class AppRepo extends ChangeNotifier {
           final file = File(p.join(work.path, name));
           await file.writeAsBytes(bytes, flush: true);
         } catch (e) {
-          if (kDebugMode) print('Error downloading image segment: $e');
           // still create empty file to maintain sequence
           final ext = p.extension(uri.path).toLowerCase();
           final name = 'img_$i$ext';
@@ -2441,9 +2529,7 @@ class AppRepo extends ChangeNotifier {
             if (autoSave.value) {
               try {
                 await saveFileToGallery(t.savePath);
-              } catch (e) {
-                if (kDebugMode) print('Failed to save to gallery: $e');
-              }
+              } catch (e) {}
             }
           } else {
             t.state = 'error';
@@ -2504,6 +2590,49 @@ class AppRepo extends ChangeNotifier {
       // Inject UA/Referer/Cookie headers for direct file download
       final baseHeaders = await _headersFor(t.url);
       final hdrs = Map<String, String>.from(baseHeaders);
+      // 若未知總長，先以 HEAD 或 Range:0-0 試探取得總長，供 UI 顯示百分比
+      if (t.total == null || t.total == 0) {
+        try {
+          final head = await dio.head(
+            t.url,
+            options: Options(
+              headers: hdrs,
+              followRedirects: true,
+              validateStatus: (_) => true,
+            ),
+          );
+          final cl = head.headers.value(HttpHeaders.contentLengthHeader);
+          final n = int.tryParse(cl ?? '');
+          if (n != null && n > 0) {
+            t.total = n;
+            _notifyDownloadsUpdated();
+            notifyListeners();
+          } else {
+            // 部分站點不回 Content-Length；改用 Range 試探從 Content-Range 取總長
+            final hdrs2 = Map<String, String>.from(hdrs);
+            hdrs2[HttpHeaders.rangeHeader] = 'bytes=0-0';
+            final probe = await dio.get<ResponseBody>(
+              t.url,
+              options: Options(
+                headers: hdrs2,
+                responseType: ResponseType.stream,
+                followRedirects: true,
+                validateStatus: (_) => true,
+              ),
+            );
+            final cr = probe.headers.value(HttpHeaders.contentRangeHeader);
+            if (cr != null && cr.contains('/')) {
+              final totalStr = cr.split('/').last.trim();
+              final tot = int.tryParse(totalStr);
+              if (tot != null && tot > 0) {
+                t.total = tot;
+                _notifyDownloadsUpdated();
+                notifyListeners();
+              }
+            }
+          }
+        } catch (_) {}
+      }
       if (start > 0) hdrs[HttpHeaders.rangeHeader] = 'bytes=$start-';
       final opts = Options(
         responseType: ResponseType.stream,
@@ -2549,6 +2678,16 @@ class AppRepo extends ChangeNotifier {
       _notifyDownloadsUpdated();
       notifyListeners();
       await _generatePreview(t);
+      try {
+        await FirebaseAnalytics.instance.logEvent(
+          name: 'download_complete',
+          parameters: {
+            'kind': 'file',
+            'type': t.type,
+            'bytes': await File(t.savePath).length(),
+          },
+        );
+      } catch (_) {}
       if (autoSave.value) {
         try {
           await saveFileToGallery(t.savePath);
@@ -2564,12 +2703,73 @@ class AppRepo extends ChangeNotifier {
         notifyListeners();
         if (kDebugMode) print('download error(file): $e');
         await _saveState();
+        try {
+          await FirebaseAnalytics.instance.logEvent(
+            name: 'download_error',
+            parameters: {'kind': 'file'},
+          );
+        } catch (_) {}
         // NOTE: For Flutter Web builds, consider falling back to the `download` package:
         //   final bytes = await http.readBytes(Uri.parse(t.url));
         //   web_download.download(bytes, '${p.basename(t.savePath)}');
         // Mobile (iOS/Android) cannot use `download` for filesystem writes.
       }
     }
+  }
+}
+
+/// Simple wrapper for iOS 系統子母畫面（PiP）。
+/// 需在 iOS 原生端實作 MethodChannel 'app.pip' 的方法：
+/// - isAvailable -> bool
+/// - enter -> bool（啟動成功）
+/// - exit -> void
+/// 若未實作，這些方法會回傳 false 並不影響 App。
+class SystemPip {
+  static const MethodChannel _ch = MethodChannel('app.pip');
+  static String? _lastUrl;
+
+  static Future<bool> isAvailable() async {
+    try {
+      final ok = await _ch.invokeMethod('isAvailable');
+      // Avoid recursion: just log the value, do not call isAvailable() again.
+      print('[PiP] isAvailable -> $ok');
+      return ok == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<bool> enter({String? url, int? positionMs}) async {
+    try {
+      // If a new URL is provided and differs from the last PiP source, force-exit first.
+      if (url != null && _lastUrl != null && _lastUrl != url) {
+        try {
+          await _ch.invokeMethod('exit');
+        } catch (_) {}
+        // Small delay to let iOS detach the previous player from PiP.
+        await Future<void>.delayed(const Duration(milliseconds: 150));
+      }
+
+      final params = <String, dynamic>{
+        if (url != null) 'url': url,
+        if (positionMs != null) 'positionMs': positionMs,
+      };
+
+      final ok = await _ch.invokeMethod('enter', params);
+      if (ok == true && url != null) {
+        _lastUrl = url;
+      }
+      return ok == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<void> exit() async {
+    try {
+      await _ch.invokeMethod('exit');
+    } catch (_) {}
+    _lastUrl = null;
   }
 }
 

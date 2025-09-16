@@ -7,6 +7,7 @@ import 'package:ffmpeg_kit_flutter_new/session.dart';
 import 'soure.dart';
 import 'dart:convert';
 import 'dart:typed_data';
+import 'package:video_player/video_player.dart';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as path;
@@ -64,7 +65,12 @@ class _BrowserPageState extends State<BrowserPage> {
   final List<_TabData> _tabs = [];
   // Index of the currently active tab.
   int _currentTabIndex = 0;
-
+  // --- Mini player state ---
+  OverlayEntry? _miniEntry;
+  VideoPlayerController? _miniCtrl;
+  bool _miniVisible = false;
+  Offset _miniPos = const Offset(20, 80); // 初始位置（相對螢幕左上）
+  String? _miniUrl;
   // Focus node for the URL input. Used to determine whether to show the
   // clear button only when the field has focus and contains text.
   final FocusNode _urlFocus = FocusNode();
@@ -86,6 +92,175 @@ class _BrowserPageState extends State<BrowserPage> {
       default:
         return 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
     }
+  }
+
+  Future<void> _openMiniPlayer(String url) async {
+    // 關掉舊的
+    await _closeMiniPlayer();
+    _miniUrl = url;
+
+    try {
+      final ctrl = VideoPlayerController.networkUrl(Uri.parse(url));
+      _miniCtrl = ctrl;
+      await ctrl.initialize();
+      await ctrl.play();
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('無法開啟迷你播放器')));
+      }
+      return;
+    }
+
+    _miniEntry = OverlayEntry(
+      builder: (_) {
+        return StatefulBuilder(
+          builder: (context, setSB) {
+            final size = MediaQuery.of(context).size;
+            final dx = _miniPos.dx.clamp(0.0, size.width - 220.0);
+            final dy = _miniPos.dy.clamp(0.0, size.height - 140.0);
+            return Positioned(
+              left: dx,
+              top: dy,
+              child: Material(
+                color: Colors.transparent,
+                child: GestureDetector(
+                  onPanUpdate: (d) {
+                    setSB(
+                      () =>
+                          _miniPos = Offset(
+                            _miniPos.dx + d.delta.dx,
+                            _miniPos.dy + d.delta.dy,
+                          ),
+                    );
+                  },
+                  child: Container(
+                    width: 220,
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.surface.withOpacity(0.95),
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.2),
+                          blurRadius: 12,
+                          offset: const Offset(0, 6),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // 標題列 + 關閉鈕
+                        Row(
+                          children: [
+                            const Icon(Icons.smart_display, size: 16),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                _prettyFileName(url),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontSize: 12),
+                              ),
+                            ),
+                            InkWell(
+                              onTap: () async => await _closeMiniPlayer(),
+                              child: const Padding(
+                                padding: EdgeInsets.all(4.0),
+                                child: Icon(Icons.close, size: 16),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        // 迷你預覽（可拿掉，只留控制列也行）
+                        if (_miniCtrl != null && _miniCtrl!.value.isInitialized)
+                          AspectRatio(
+                            aspectRatio: _miniCtrl!.value.aspectRatio,
+                            child: VideoPlayer(_miniCtrl!),
+                          ),
+                        const SizedBox(height: 6),
+                        // 控制列：後退15、播放/暫停、快轉15
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.replay_10),
+                              tooltip: '後退 15 秒',
+                              onPressed: () async {
+                                final v = _miniCtrl;
+                                if (v == null) return;
+                                final cur = await v.position ?? Duration.zero;
+                                final targetMs = (cur.inMilliseconds - 15000)
+                                    .clamp(0, 1 << 31);
+                                await v.seekTo(
+                                  Duration(milliseconds: targetMs),
+                                );
+                              },
+                            ),
+                            IconButton(
+                              icon: Icon(
+                                (_miniCtrl?.value.isPlaying ?? false)
+                                    ? Icons.pause
+                                    : Icons.play_arrow,
+                              ),
+                              tooltip: '播放/暫停',
+                              onPressed: () async {
+                                final v = _miniCtrl;
+                                if (v == null) return;
+                                if (v.value.isPlaying) {
+                                  await v.pause();
+                                } else {
+                                  await v.play();
+                                }
+                                setSB(() {}); // 更新按鈕圖示
+                              },
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.forward_10),
+                              tooltip: '快轉 15 秒',
+                              onPressed: () async {
+                                final v = _miniCtrl;
+                                if (v == null) return;
+                                final dur = v.value.duration;
+                                final cur = await v.position ?? Duration.zero;
+                                var ms = cur.inMilliseconds + 15000;
+                                if (dur != null) {
+                                  ms = ms.clamp(0, dur.inMilliseconds);
+                                }
+                                await v.seekTo(Duration(milliseconds: ms));
+                              },
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    Overlay.of(context).insert(_miniEntry!);
+    setState(() => _miniVisible = true);
+  }
+
+  Future<void> _closeMiniPlayer() async {
+    _miniEntry?.remove();
+    _miniEntry = null;
+    try {
+      await _miniCtrl?.pause();
+    } catch (_) {}
+    await _miniCtrl?.dispose();
+    _miniCtrl = null;
+    if (mounted) setState(() => _miniVisible = false);
   }
 
   Future<void> _loadUaFromPrefs(BuildContext context) async {
@@ -225,7 +400,7 @@ class _BrowserPageState extends State<BrowserPage> {
     final m = (d % 3600) ~/ 60;
     final sec = d % 60;
     String two(int v) => v.toString().padLeft(2, '0');
-    return h > 0 ? '${two(h)}:${two(m)}:${two(sec)}' : '${two(m)}:${two(sec)}';
+    return '${two(h)}:${two(m)}:${two(sec)}';
   }
 
   /// Format bytes into a human friendly string.
@@ -411,18 +586,10 @@ class _BrowserPageState extends State<BrowserPage> {
 
   /// Launch the app’s built‑in media player for the given URL. The page
   /// title is derived from the URL to provide a reasonable default name.
-  /// This method also opens the mini player overlay so playback can
-  /// continue while browsing. It is used when playing media from long
-  /// press menus in the browser.
+  /// 直接啟動內建全螢幕播放器；如需背景瀏覽請使用 iOS 子母畫面（PiP）。
   void _playMedia(String url) {
     final title = _prettyFileName(url);
-    // Open the mini player overlay immediately so that background playback
-    // starts even if the full screen player is closed. The full screen
-    // player contains its own button to toggle the mini player, but
-    // launching it here improves discoverability.
-    AppRepo.I.openMiniPlayer(url, title);
-    // Push the full screen video player page. This page will handle
-    // streaming remote videos when necessary.
+    // 直接啟動內建全螢幕播放器；如需背景瀏覽請使用 iOS 子母畫面（PiP）。
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => VideoPlayerPage(path: url, title: title),
@@ -795,6 +962,7 @@ class _BrowserPageState extends State<BrowserPage> {
     for (final tab in _tabs) {
       tab.urlCtrl.dispose();
       tab.progress.dispose();
+      _closeMiniPlayer();
     }
     uaNotifier.removeListener(_onUaChanged);
     repo.ytOptions.removeListener(_onYtOptionsChanged);
@@ -1105,7 +1273,7 @@ class _BrowserPageState extends State<BrowserPage> {
                                         label: const Text('播放'),
                                         onPressed: () {
                                           Navigator.pop(context);
-                                          // Play the media using the app's built‑in player with mini player support.
+                                          // 使用內建播放器播放（支援 iOS 子母畫面 PiP）。
                                           _playMedia(link!);
                                         },
                                       ),
@@ -1158,243 +1326,261 @@ class _BrowserPageState extends State<BrowserPage> {
   Widget _toolbar() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 4.0),
-      child: Row(
-        children: [
-          IconButton(
-            icon: const Icon(Icons.arrow_back),
-            tooltip: '返回',
-            onPressed: () {
-              if (_tabs.isNotEmpty) {
-                final tab = _tabs[_currentTabIndex];
-                tab.controller?.goBack();
-              }
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.arrow_forward),
-            tooltip: '前進',
-            onPressed: () {
-              if (_tabs.isNotEmpty) {
-                final tab = _tabs[_currentTabIndex];
-                tab.controller?.goForward();
-              }
-            },
-          ),
-          // Sniffer enable/disable toggle
-          ValueListenableBuilder<bool>(
-            valueListenable: repo.snifferEnabled,
-            builder: (context, on, _) {
-              return IconButton(
-                icon: Icon(on ? Icons.visibility : Icons.visibility_off),
-                color: on ? Colors.green : null,
-                tooltip: on ? '嗅探：開啟' : '嗅探：關閉',
-                onPressed: () async {
-                  final next = !on;
-                  repo.setSnifferEnabled(next);
-                  // apply to current page
+      child: LayoutBuilder(
+        builder: (context, box) {
+          final shortest = MediaQuery.of(context).size.shortestSide;
+          final bool tablet = shortest >= 600;
+          return Row(
+            mainAxisAlignment:
+                tablet
+                    ? MainAxisAlignment.spaceEvenly
+                    : MainAxisAlignment.start,
+            children: [
+              IconButton(
+                icon: const Icon(Icons.arrow_back),
+                tooltip: '返回',
+                onPressed: () {
                   if (_tabs.isNotEmpty) {
                     final tab = _tabs[_currentTabIndex];
-                    if (tab.controller != null) {
-                      await tab.controller!.evaluateJavascript(
-                        source: Sniffer.jsSetEnabled(next),
-                      );
+                    tab.controller?.goBack();
+                  }
+                },
+              ),
+              IconButton(
+                icon: const Icon(Icons.arrow_forward),
+                tooltip: '前進',
+                onPressed: () {
+                  if (_tabs.isNotEmpty) {
+                    final tab = _tabs[_currentTabIndex];
+                    tab.controller?.goForward();
+                  }
+                },
+              ),
+              // Sniffer enable/disable toggle
+              ValueListenableBuilder<bool>(
+                valueListenable: repo.snifferEnabled,
+                builder: (context, on, _) {
+                  return IconButton(
+                    icon: Icon(on ? Icons.visibility : Icons.visibility_off),
+                    color: on ? Colors.green : null,
+                    tooltip: on ? '嗅探：開啟' : '嗅探：關閉',
+                    onPressed: () async {
+                      final next = !on;
+                      repo.setSnifferEnabled(next);
+                      // apply to current page
+                      if (_tabs.isNotEmpty) {
+                        final tab = _tabs[_currentTabIndex];
+                        if (tab.controller != null) {
+                          await tab.controller!.evaluateJavascript(
+                            source: Sniffer.jsSetEnabled(next),
+                          );
+                        }
+                      }
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text(next ? '已開啟嗅探' : '已關閉嗅探')),
+                        );
+                      }
+                    },
+                  );
+                },
+              ),
+              // Detected resources icon with badge
+              ValueListenableBuilder<List<MediaHit>>(
+                valueListenable: repo.hits,
+                builder: (context, list, _) {
+                  final int detected = list.length;
+                  return Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.search),
+                        tooltip: '偵測到的資源',
+                        onPressed: _openDetectedSheet,
+                      ),
+                      if (detected > 0)
+                        Positioned(
+                          right: 0,
+                          top: 2,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 4,
+                              vertical: 1,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.redAccent,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text(
+                              '$detected',
+                              style: const TextStyle(
+                                fontSize: 10,
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  );
+                },
+              ),
+              // Favourite current page button (filled if current page is favourited)
+              ValueListenableBuilder<List<String>>(
+                valueListenable: repo.favorites,
+                builder: (context, favs, _) {
+                  String? curUrl;
+                  if (_tabs.isNotEmpty) {
+                    curUrl = _tabs[_currentTabIndex].currentUrl;
+                  }
+                  final isFav = curUrl != null && favs.contains(curUrl);
+                  return IconButton(
+                    icon: Icon(isFav ? Icons.favorite : Icons.favorite_border),
+                    color: isFav ? Colors.redAccent : null,
+                    tooltip: isFav ? '取消收藏' : '收藏',
+                    onPressed: () {
+                      final url =
+                          (_tabs.isNotEmpty)
+                              ? _tabs[_currentTabIndex].currentUrl
+                              : null;
+                      if (url != null) {
+                        repo.toggleFavoriteUrl(url);
+                        setState(() {});
+                      }
+                    },
+                  );
+                },
+              ),
+              // Downloads list with badge; shows how many download tasks exist.
+              ValueListenableBuilder<List<DownloadTask>>(
+                valueListenable: repo.downloads,
+                builder: (context, list, _) {
+                  final count = list.length;
+                  return Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.file_download),
+                        tooltip: '下載清單',
+                        onPressed: _openDownloadsSheet,
+                      ),
+                      if (count > 0)
+                        Positioned(
+                          right: 0,
+                          top: 2,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 4,
+                              vertical: 1,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.redAccent,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text(
+                              '$count',
+                              style: const TextStyle(
+                                fontSize: 10,
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  );
+                },
+              ),
+              // Add current page to home screen
+              IconButton(
+                icon: const Icon(Icons.add),
+                tooltip: '加入主頁',
+                onPressed: _showAddToHomeDialog,
+              ),
+              // Navigate to the home screen via callback
+              Padding(
+                padding: const EdgeInsets.only(right: 4.0), // adjust spacing
+                child: IconButton(
+                  icon: const Icon(Icons.home),
+                  tooltip: '主頁',
+                  onPressed: () {
+                    if (widget.onGoHome != null) {
+                      widget.onGoHome!();
+                    }
+                  },
+                ),
+              ),
+              // Custom tab count button
+              GestureDetector(
+                onTap: _openTabManager,
+                onLongPress: () async {
+                  final overlay =
+                      Overlay.of(context).context.findRenderObject()
+                          as RenderBox;
+                  final box =
+                      _tabButtonKey.currentContext?.findRenderObject()
+                          as RenderBox?;
+                  if (box == null) return;
+                  final position = RelativeRect.fromRect(
+                    Rect.fromPoints(
+                      box.localToGlobal(Offset.zero, ancestor: overlay),
+                      box.localToGlobal(
+                        box.size.bottomRight(Offset.zero),
+                        ancestor: overlay,
+                      ),
+                    ),
+                    Offset.zero & overlay.size,
+                  );
+                  final action = await showMenu<String>(
+                    context: context,
+                    position: position,
+                    items: const [
+                      PopupMenuItem<String>(
+                        value: 'clear',
+                        child: ListTile(
+                          leading: Icon(Icons.delete_sweep),
+                          title: Text('清除全部分頁'),
+                        ),
+                      ),
+                    ],
+                  );
+                  if (action == 'clear') {
+                    _clearAllTabs();
+                    if (mounted) {
+                      ScaffoldMessenger.of(
+                        context,
+                      ).showSnackBar(const SnackBar(content: Text('已清除全部分頁')));
                     }
                   }
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text(next ? '已開啟嗅探' : '已關閉嗅探')),
-                    );
-                  }
                 },
-              );
-            },
-          ),
-          // Detected resources icon with badge
-          ValueListenableBuilder<List<MediaHit>>(
-            valueListenable: repo.hits,
-            builder: (context, list, _) {
-              final int detected = list.length;
-              return Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.search),
-                    tooltip: '偵測到的資源',
-                    onPressed: _openDetectedSheet,
-                  ),
-                  if (detected > 0)
-                    Positioned(
-                      right: 0,
-                      top: 2,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 4,
-                          vertical: 1,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.redAccent,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          '$detected',
-                          style: const TextStyle(
-                            fontSize: 10,
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
+                child: Container(
+                  key: _tabButtonKey,
+                  width: 28,
+                  height: 28,
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surfaceVariant,
+                    border: Border.all(
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.outline.withOpacity(0.8),
+                      width: 1.2,
                     ),
-                ],
-              );
-            },
-          ),
-          // Favourite current page button (filled if current page is favourited)
-          ValueListenableBuilder<List<String>>(
-            valueListenable: repo.favorites,
-            builder: (context, favs, _) {
-              String? curUrl;
-              if (_tabs.isNotEmpty) {
-                curUrl = _tabs[_currentTabIndex].currentUrl;
-              }
-              final isFav = curUrl != null && favs.contains(curUrl);
-              return IconButton(
-                icon: Icon(isFav ? Icons.favorite : Icons.favorite_border),
-                color: isFav ? Colors.redAccent : null,
-                tooltip: isFav ? '取消收藏' : '收藏',
-                onPressed: () {
-                  final url =
-                      (_tabs.isNotEmpty)
-                          ? _tabs[_currentTabIndex].currentUrl
-                          : null;
-                  if (url != null) {
-                    repo.toggleFavoriteUrl(url);
-                    setState(() {});
-                  }
-                },
-              );
-            },
-          ),
-          // Downloads list with badge; shows how many download tasks exist.
-          ValueListenableBuilder<List<DownloadTask>>(
-            valueListenable: repo.downloads,
-            builder: (context, list, _) {
-              final count = list.length;
-              return Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.file_download),
-                    tooltip: '下載清單',
-                    onPressed: _openDownloadsSheet,
+                    borderRadius: BorderRadius.circular(6),
                   ),
-                  if (count > 0)
-                    Positioned(
-                      right: 0,
-                      top: 2,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 4,
-                          vertical: 1,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.redAccent,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          '$count',
-                          style: const TextStyle(
-                            fontSize: 10,
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
+                  alignment: Alignment.center,
+                  child: Text(
+                    '${_tabs.length}',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      color: Theme.of(context).colorScheme.onSurface,
                     ),
-                ],
-              );
-            },
-          ),
-          // Add current page to home screen
-          IconButton(
-            icon: const Icon(Icons.add),
-            tooltip: '加入主頁',
-            onPressed: _showAddToHomeDialog,
-          ),
-          // Navigate to the home screen via callback
-          Padding(
-            padding: const EdgeInsets.only(right: 4.0), // adjust spacing
-            child: IconButton(
-              icon: const Icon(Icons.home),
-              tooltip: '主頁',
-              onPressed: () {
-                if (widget.onGoHome != null) {
-                  widget.onGoHome!();
-                }
-              },
-            ),
-          ),
-          // Custom tab count button
-          GestureDetector(
-            onTap: _openTabManager,
-            onLongPress: () async {
-              final overlay =
-                  Overlay.of(context).context.findRenderObject() as RenderBox;
-              final box =
-                  _tabButtonKey.currentContext?.findRenderObject()
-                      as RenderBox?;
-              if (box == null) return;
-              final position = RelativeRect.fromRect(
-                Rect.fromPoints(
-                  box.localToGlobal(Offset.zero, ancestor: overlay),
-                  box.localToGlobal(
-                    box.size.bottomRight(Offset.zero),
-                    ancestor: overlay,
                   ),
                 ),
-                Offset.zero & overlay.size,
-              );
-              final action = await showMenu<String>(
-                context: context,
-                position: position,
-                items: const [
-                  PopupMenuItem<String>(
-                    value: 'clear',
-                    child: ListTile(
-                      leading: Icon(Icons.delete_sweep),
-                      title: Text('清除全部分頁'),
-                    ),
-                  ),
-                ],
-              );
-              if (action == 'clear') {
-                _clearAllTabs();
-                if (mounted) {
-                  ScaffoldMessenger.of(
-                    context,
-                  ).showSnackBar(const SnackBar(content: Text('已清除全部分頁')));
-                }
-              }
-            },
-            child: Container(
-              key: _tabButtonKey,
-              width: 28,
-              height: 28,
-              decoration: BoxDecoration(
-                border: Border.all(color: Colors.black54, width: 1.5),
-                borderRadius: BorderRadius.circular(4),
               ),
-              alignment: Alignment.center,
-              child: Text(
-                '${_tabs.length}',
-                style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-          ),
-        ],
+            ],
+          );
+        },
       ),
     );
   }
@@ -1537,7 +1723,7 @@ class _BrowserPageState extends State<BrowserPage> {
                       label: const Text('播放'),
                       onPressed: () {
                         Navigator.pop(context);
-                        // Play the media using the app’s video player with mini player support.
+                        // 使用內建播放器播放（支援 iOS 子母畫面 PiP）。
                         _playMedia(h.url);
                       },
                     ),
@@ -2135,6 +2321,11 @@ class _BrowserPageState extends State<BrowserPage> {
       if (totalSegs > 0) {
         progressPercent = t.received / totalSegs;
       }
+    } else if (isHls &&
+        t.progressUnit == 'time-ms' &&
+        t.total != null &&
+        t.total! > 0) {
+      progressPercent = t.received / (t.total!.toDouble());
     } else if (!isHls &&
         t.state == 'downloading' &&
         t.total != null &&
@@ -2210,6 +2401,30 @@ class _BrowserPageState extends State<BrowserPage> {
           ),
         );
       }
+    } else if (isHls &&
+        t.progressUnit == 'time-ms' &&
+        t.total != null &&
+        t.total! > 0) {
+      final cur = Duration(milliseconds: t.received);
+      final tot = Duration(milliseconds: t.total!);
+      subtitleWidgets.add(
+        Text(
+          '進度: ${_fmtDur(cur.inSeconds.toDouble())}/${_fmtDur(tot.inSeconds.toDouble())} (${((progressPercent ?? 0) * 100).toStringAsFixed(1)}%)',
+          style: const TextStyle(fontSize: 12),
+        ),
+      );
+      // 顯示目前檔案大小（可選）
+      try {
+        final f = File(t.savePath);
+        if (f.existsSync()) {
+          subtitleWidgets.add(
+            Text(
+              '大小: ${_fmtSize(f.lengthSync())}',
+              style: const TextStyle(fontSize: 12),
+            ),
+          );
+        }
+      } catch (_) {}
     }
     // During conversion of an HLS task, show the current output file size to
     // provide some sense of progress. Since FFmpeg does not expose a
@@ -2239,12 +2454,22 @@ class _BrowserPageState extends State<BrowserPage> {
     // final size when finished or errored.
     if (!isHls) {
       if (t.state == 'downloading') {
+        final hasTotal = t.total != null && t.total! > 0;
+        final sizeStr =
+            hasTotal
+                ? '大小: ${_fmtSize(t.received)} / ${_fmtSize(t.total!)}'
+                : '大小: ${_fmtSize(t.received)}';
         subtitleWidgets.add(
-          Text(
-            '大小: ${_fmtSize(t.received)}',
-            style: const TextStyle(fontSize: 12),
-          ),
+          Text(sizeStr, style: const TextStyle(fontSize: 12)),
         );
+        if (progressPercent != null) {
+          subtitleWidgets.add(
+            Text(
+              '進度: ${(progressPercent * 100).toStringAsFixed(1)}%',
+              style: const TextStyle(fontSize: 12),
+            ),
+          );
+        }
       } else if (t.state == 'done' || t.state == 'error') {
         try {
           final f = File(t.savePath);
@@ -2287,54 +2512,71 @@ class _BrowserPageState extends State<BrowserPage> {
       );
     }
 
-    // Build and return the ListTile. Action buttons for pause/resume/delete
-    // remain unchanged. Progress indicators adapt based on the computed
-    // progressPercent.
-    return ListTile(
-      leading: leading,
-      title: Text(
-        t.name ?? path.basename(t.savePath),
-        maxLines: 2,
-        overflow: TextOverflow.ellipsis,
-      ),
-      subtitle: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          ...subtitleWidgets,
-          if (t.state == 'downloading')
-            (progressPercent == null)
-                ? const LinearProgressIndicator()
-                : LinearProgressIndicator(value: progressPercent),
-        ],
-      ),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (t.state == 'downloading' && !t.paused)
+    // 對於 HLS 轉換中，使用小型 ticker 讓大小文字即時刷新
+    final needsTicker = isConverting;
+
+    Widget buildTile() {
+      // Build and return the ListTile. Action buttons for pause/resume/delete
+      // remain unchanged. Progress indicators adapt based on the computed
+      // progressPercent.
+      return ListTile(
+        isThreeLine: true,
+        dense: false,
+        minVerticalPadding: 8,
+        leading: leading,
+        title: Text(
+          t.name ?? path.basename(t.savePath),
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+        ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ...subtitleWidgets,
+            if (t.state == 'downloading')
+              (progressPercent == null)
+                  ? const LinearProgressIndicator()
+                  : LinearProgressIndicator(value: progressPercent),
+          ],
+        ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (t.state == 'downloading' && !t.paused)
+              IconButton(
+                icon: const Icon(Icons.pause),
+                tooltip: '暫停',
+                onPressed: () {
+                  AppRepo.I.pauseTask(t);
+                },
+              ),
+            if (t.state == 'paused' || t.paused)
+              IconButton(
+                icon: const Icon(Icons.play_arrow),
+                tooltip: '繼續',
+                onPressed: () {
+                  AppRepo.I.resumeTask(t);
+                },
+              ),
             IconButton(
-              icon: const Icon(Icons.pause),
-              tooltip: '暫停',
-              onPressed: () {
-                AppRepo.I.pauseTask(t);
+              icon: const Icon(Icons.delete_outline),
+              tooltip: '刪除',
+              onPressed: () async {
+                await AppRepo.I.removeTasks([t]);
               },
             ),
-          if (t.state == 'paused' || t.paused)
-            IconButton(
-              icon: const Icon(Icons.play_arrow),
-              tooltip: '繼續',
-              onPressed: () {
-                AppRepo.I.resumeTask(t);
-              },
-            ),
-          IconButton(
-            icon: const Icon(Icons.delete_outline),
-            tooltip: '刪除',
-            onPressed: () async {
-              await AppRepo.I.removeTasks([t]);
-            },
-          ),
-        ],
+          ],
+        ),
+      );
+    }
+
+    if (!needsTicker) return buildTile();
+    return StreamBuilder<DateTime>(
+      stream: Stream.periodic(
+        const Duration(milliseconds: 700),
+        (_) => DateTime.now(),
       ),
+      builder: (_, __) => buildTile(),
     );
   }
 }

@@ -1,16 +1,23 @@
 import 'package:flutter/material.dart';
+// Global navigator key for overlay access outside BuildContext
+import 'package:pip/pip.dart';
 import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
+import 'package:flutter_in_app_pip/flutter_in_app_pip.dart';
 import 'package:ffmpeg_kit_flutter_new/log.dart';
 import 'package:ffmpeg_kit_flutter_new/session.dart';
 import 'package:ffmpeg_kit_flutter_new/statistics.dart';
 import 'soure.dart';
+import 'browser.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'dart:io';
 import 'package:video_player/video_player.dart';
 import 'package:path/path.dart' as path;
 import 'package:volume_controller/volume_controller.dart';
+import 'package:firebase_analytics/firebase_analytics.dart';
+
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 /// MediaPage displays two tabs: 媒體 (ongoing downloads + completed files) and 我的收藏.
 ///
@@ -37,18 +44,22 @@ class _MediaPageState extends State<MediaPage>
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('媒體'),
-        bottom: TabBar(
-          controller: _tab,
-          tabs: const [Tab(text: '媒體'), Tab(text: '我的收藏')],
+    return Stack(
+      children: [
+        Scaffold(
+          appBar: AppBar(
+            title: const Text('媒體'),
+            bottom: TabBar(
+              controller: _tab,
+              tabs: const [Tab(text: '媒體'), Tab(text: '我的收藏')],
+            ),
+          ),
+          body: TabBarView(
+            controller: _tab,
+            children: const [_MediaAll(), _MyFavorites()],
+          ),
         ),
-      ),
-      body: TabBarView(
-        controller: _tab,
-        children: const [_MediaAll(), _MyFavorites()],
-      ),
+      ],
     );
   }
 }
@@ -62,6 +73,8 @@ class _MediaAll extends StatefulWidget {
 }
 
 class _MediaAllState extends State<_MediaAll> {
+  Timer? _convertTicker;
+
   /// Formats a byte count as a human readable string (KB, MB, GB, etc).
   String _fmtSize(int bytes) {
     const kb = 1024;
@@ -146,16 +159,31 @@ class _MediaAllState extends State<_MediaAll> {
     });
   }
 
-  /// Formats a [Duration] as a human readable string. If the duration has
-  /// hours, the format is hh:mm:ss; otherwise mm:ss.
+  @override
+  void dispose() {
+    _convertTicker?.cancel();
+    super.dispose();
+  }
+
+  void _ensureConvertTicker(bool active) {
+    if (active) {
+      if (_convertTicker == null) {
+        _convertTicker = Timer.periodic(const Duration(milliseconds: 700), (_) {
+          if (mounted) setState(() {});
+        });
+      }
+    } else {
+      _convertTicker?.cancel();
+      _convertTicker = null;
+    }
+  }
+
+  /// Formats a [Duration] as hh:mm:ss (always include hours).
   String _fmtDuration(Duration d) {
     final h = d.inHours;
     final m = d.inMinutes % 60;
     final s = d.inSeconds % 60;
-    if (h > 0) {
-      return '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
-    }
-    return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+    return '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
   }
 
   void _toggleSelect(DownloadTask t) {
@@ -363,22 +391,42 @@ class _MediaAllState extends State<_MediaAll> {
                     itemBuilder: (_, i) {
                       final t = tasksDedup[i];
                       final selected = _selected.contains(t);
-                  final bool isHls = t.kind == 'hls';
-                  final int totalSegs = t.total ?? 0;
-                  final bool isDownloadingSegments =
-                      isHls && t.state == 'downloading' && totalSegs > 0 && t.received < totalSegs;
-                  final bool isConverting =
-                      isHls && t.state == 'downloading' && totalSegs > 0 && t.received >= totalSegs;
-                  // For non‑HLS tasks, prefer the current received bytes (which may
-                  // read from the file when t.received is zero). For HLS we use
-                  // t.received directly as it represents segment count.
-                  final int receivedNow = isHls ? t.received : _currentReceived(t);
-                  double? prog;
-                  if (isHls && totalSegs > 0) {
-                    prog = t.received / totalSegs;
-                  } else if (!isHls && t.state == 'downloading' && t.total != null && t.total! > 0) {
-                    prog = receivedNow / (t.total!.toDouble());
-                  }
+                      final bool isHls = t.kind == 'hls';
+                      final int totalSegs = t.total ?? 0;
+                      final bool isDownloadingSegments =
+                          isHls &&
+                          t.state == 'downloading' &&
+                          totalSegs > 0 &&
+                          t.received < totalSegs;
+                      final bool isConverting =
+                          isHls &&
+                          t.state == 'downloading' &&
+                          totalSegs > 0 &&
+                          t.received >= totalSegs;
+                      // For non‑HLS tasks, prefer the current received bytes (which may
+                      // read from the file when t.received is zero). For HLS we use
+                      // t.received directly as it represents segment count.
+                      final int receivedNow =
+                          isHls ? t.received : _currentReceived(t);
+                      double? prog;
+                      if (isHls && totalSegs > 0) {
+                        prog = t.received / totalSegs;
+                      } else if (!isHls &&
+                          t.state == 'downloading' &&
+                          t.total != null &&
+                          t.total! > 0) {
+                        prog = receivedNow / (t.total!.toDouble());
+                      }
+                      // 若列表中存在 HLS 轉換中的任務，開啟輕量週期重建，讓檔案大小能即時刷新
+                      _ensureConvertTicker(
+                        tasksDedup.any(
+                          (e) =>
+                              e.kind == 'hls' &&
+                              e.state == 'downloading' &&
+                              (e.total ?? 0) > 0 &&
+                              e.received >= (e.total ?? 0),
+                        ),
+                      );
                       return GestureDetector(
                         onTap: () {
                           if (_selectMode) {
@@ -537,146 +585,274 @@ class _MediaAllState extends State<_MediaAll> {
                                           style: const TextStyle(fontSize: 16),
                                         ),
                                         const SizedBox(height: 4),
-                                   // Build status and details based on task kind/state
-                                   Builder(
-                                     builder: (_) {
-                                       final List<Widget> lines = [];
-                                       // Status line
-                                       lines.add(
-                                         Text(
-                                           '狀態: ${_stateLabel(t)}',
-                                           style: const TextStyle(fontSize: 12),
-                                         ),
-                                       );
-                                       if (isHls) {
-                                         if (isDownloadingSegments) {
-                                           // Show segment count and percent
-                                           lines.add(
-                                             Text(
-                                               '片段: ${t.received}/${t.total}',
-                                               style: const TextStyle(fontSize: 12),
-                                             ),
-                                           );
-                                           final String pctStr = prog != null
-                                               ? (prog * 100).toStringAsFixed(1)
-                                               : '0.0';
-                                           lines.add(
-                                             Text(
-                                               '進度: ${pctStr}%',
-                                               style: const TextStyle(fontSize: 12),
-                                             ),
-                                           );
-                                         } else if (isConverting) {
-                                           // Show current file size during conversion
-                                           int fileLen = 0;
-                                           try {
-                                             final f = File(t.savePath);
-                                             if (f.existsSync()) {
-                                               fileLen = f.lengthSync();
-                                             }
-                                           } catch (_) {}
-                                           lines.add(
-                                             Text(
-                                               fileLen > 0
-                                                   ? '大小: ${_fmtSize(fileLen)}'
-                                                   : '大小: 轉換中…',
-                                               style: const TextStyle(fontSize: 12),
-                                             ),
-                                           );
-                                         } else {
-                                           // Completed or error: show final size if available
-                                           int fileLen = 0;
-                                           try {
-                                             final f = File(t.savePath);
-                                             if (f.existsSync()) {
-                                               fileLen = f.lengthSync();
-                                             }
-                                           } catch (_) {}
-                                           if (fileLen > 0) {
-                                             lines.add(
-                                               Text(
-                                                 '大小: ${_fmtSize(fileLen)}',
-                                                 style: const TextStyle(fontSize: 12),
-                                               ),
-                                             );
-                                           }
-                                         }
-                                       } else {
-                                         // Non‑HLS file tasks
-                                         if (t.state == 'downloading') {
-                                           // Show bytes downloaded so far
-                                           lines.add(
-                                             Text(
-                                               '大小: ${_fmtSize(receivedNow)}',
-                                               style: const TextStyle(fontSize: 12),
-                                             ),
-                                           );
-                                           if (prog != null) {
-                                             final String pctStr =
-                                                 (prog * 100).toStringAsFixed(1);
-                                             lines.add(
-                                               Text(
-                                                 '進度: ${pctStr}%',
-                                                 style: const TextStyle(fontSize: 12),
-                                               ),
-                                             );
-                                           }
-                                         } else {
-                                           // Completed or error: show final file size
-                                           int fileLen = 0;
-                                           try {
-                                             final f = File(t.savePath);
-                                             if (f.existsSync()) {
-                                               fileLen = f.lengthSync();
-                                             }
-                                           } catch (_) {}
-                                           if (fileLen > 0) {
-                                             lines.add(
-                                               Text(
-                                                 '大小: ${_fmtSize(fileLen)}',
-                                                 style: const TextStyle(fontSize: 12),
-                                               ),
-                                             );
-                                           }
-                                         }
-                                       }
-                                       // Add timestamp and duration when not actively downloading segments
-                                       final bool showTimeAndDur = !(t.state == 'downloading' && (isHls && isDownloadingSegments || (!isHls && t.total != null && t.total! > 0)));
-                                       if (showTimeAndDur) {
-                                         lines.add(
-                                           Text(
-                                             '時間: ${t.timestamp.toLocal().toString().split('.')[0]}',
-                                             style: const TextStyle(fontSize: 12),
-                                           ),
-                                         );
-                                         if (t.duration != null) {
-                                           lines.add(
-                                             Text(
-                                               '時長: ${_fmtDuration(t.duration!)}',
-                                               style: const TextStyle(fontSize: 12),
-                                             ),
-                                           );
-                                         } else if (t.type == 'video' || t.type == 'audio') {
-                                           lines.add(
-                                             const Text(
-                                               '時長: 解析中…',
-                                               style: TextStyle(fontSize: 12),
-                                             ),
-                                           );
-                                         }
-                                       }
-                                       return Column(
-                                         crossAxisAlignment:
-                                             CrossAxisAlignment.start,
-                                         children: lines,
-                                       );
-                                     },
-                                   ),
-                                   // Show a progress bar for tasks actively downloading (HLS segments or files)
-                                   if ((isHls && isDownloadingSegments) || (!isHls && t.state == 'downloading'))
-                                     LinearProgressIndicator(
-                                       value: prog == null ? null : prog.clamp(0.0, 1.0),
-                                     ),
+                                        // Build status and details based on task kind/state
+                                        Builder(
+                                          builder: (_) {
+                                            final List<Widget> lines = [];
+                                            // Status line
+                                            lines.add(
+                                              Text(
+                                                '狀態: ${_stateLabel(t)}',
+                                                style: const TextStyle(
+                                                  fontSize: 12,
+                                                ),
+                                              ),
+                                            );
+                                            if (isHls) {
+                                              if (t.progressUnit == 'time-ms' &&
+                                                  t.total != null &&
+                                                  t.total! > 0) {
+                                                // 轉換階段：只顯示百分比，不顯示時間
+                                                final String pctStr =
+                                                    prog != null
+                                                        ? (prog * 100)
+                                                            .toStringAsFixed(1)
+                                                        : '';
+                                                if (pctStr.isNotEmpty) {
+                                                  lines.add(
+                                                    Text(
+                                                      '進度: ${pctStr}%',
+                                                      style: const TextStyle(
+                                                        fontSize: 12,
+                                                      ),
+                                                    ),
+                                                  );
+                                                }
+                                                // 顯示目前輸出檔案大小（若可得）
+                                                int fileLen = 0;
+                                                try {
+                                                  final f = File(t.savePath);
+                                                  if (f.existsSync()) {
+                                                    fileLen = f.lengthSync();
+                                                  }
+                                                } catch (_) {}
+                                                if (fileLen > 0) {
+                                                  lines.add(
+                                                    Text(
+                                                      '大小: ${_fmtSize(fileLen)}',
+                                                      style: const TextStyle(
+                                                        fontSize: 12,
+                                                      ),
+                                                    ),
+                                                  );
+                                                }
+                                              } else if (isDownloadingSegments) {
+                                                // Show segment count and percent
+                                                lines.add(
+                                                  Text(
+                                                    '片段: ${t.received}/${t.total}',
+                                                    style: const TextStyle(
+                                                      fontSize: 12,
+                                                    ),
+                                                  ),
+                                                );
+                                                final String pctStr =
+                                                    prog != null
+                                                        ? (prog * 100)
+                                                            .toStringAsFixed(1)
+                                                        : '0.0';
+                                                lines.add(
+                                                  Text(
+                                                    '進度: ${pctStr}%',
+                                                    style: const TextStyle(
+                                                      fontSize: 12,
+                                                    ),
+                                                  ),
+                                                );
+                                              } else if (isConverting) {
+                                                // Show current file size during conversion
+                                                int fileLen = 0;
+                                                try {
+                                                  final f = File(t.savePath);
+                                                  if (f.existsSync()) {
+                                                    fileLen = f.lengthSync();
+                                                  }
+                                                } catch (_) {}
+                                                lines.add(
+                                                  Text(
+                                                    fileLen > 0
+                                                        ? '大小: ${_fmtSize(fileLen)}'
+                                                        : '大小: 轉換中…',
+                                                    style: const TextStyle(
+                                                      fontSize: 12,
+                                                    ),
+                                                  ),
+                                                );
+                                              } else {
+                                                // Completed or error: show final size if available
+                                                int fileLen = 0;
+                                                try {
+                                                  final f = File(t.savePath);
+                                                  if (f.existsSync()) {
+                                                    fileLen = f.lengthSync();
+                                                  }
+                                                } catch (_) {}
+                                                if (fileLen > 0) {
+                                                  lines.add(
+                                                    Text(
+                                                      '大小: ${_fmtSize(fileLen)}',
+                                                      style: const TextStyle(
+                                                        fontSize: 12,
+                                                      ),
+                                                    ),
+                                                  );
+                                                }
+                                              }
+                                            } else {
+                                              // Non‑HLS file tasks
+                                              if (t.state == 'downloading') {
+                                                // 進度行改為顯示大小與百分比，不顯示時間
+                                                final hasTotal =
+                                                    t.total != null &&
+                                                    t.total! > 0;
+                                                String progressText;
+                                                if (hasTotal) {
+                                                  final pct =
+                                                      prog != null
+                                                          ? (prog * 100)
+                                                              .toStringAsFixed(
+                                                                1,
+                                                              )
+                                                          : '';
+                                                  progressText =
+                                                      '進度: ${_fmtSize(receivedNow)} / ${_fmtSize(t.total!)}${pct.isNotEmpty ? ' ($pct%)' : ''}';
+                                                } else {
+                                                  progressText =
+                                                      '進度: ${_fmtSize(receivedNow)}';
+                                                }
+                                                lines.add(
+                                                  Text(
+                                                    progressText,
+                                                    style: const TextStyle(
+                                                      fontSize: 12,
+                                                    ),
+                                                  ),
+                                                );
+                                              } else {
+                                                // Completed or error: show final file size
+                                                int fileLen = 0;
+                                                try {
+                                                  final f = File(t.savePath);
+                                                  if (f.existsSync()) {
+                                                    fileLen = f.lengthSync();
+                                                  }
+                                                } catch (_) {}
+                                                if (fileLen > 0) {
+                                                  lines.add(
+                                                    Text(
+                                                      '大小: ${_fmtSize(fileLen)}',
+                                                      style: const TextStyle(
+                                                        fontSize: 12,
+                                                      ),
+                                                    ),
+                                                  );
+                                                }
+                                              }
+                                            }
+                                            // Add timestamp and duration when not actively downloading segments
+                                            final bool showTimeAndDur =
+                                                !(t.state == 'downloading' &&
+                                                    (isHls &&
+                                                            isDownloadingSegments ||
+                                                        (!isHls &&
+                                                            t.total != null &&
+                                                            t.total! > 0)));
+                                            if (showTimeAndDur) {
+                                              lines.add(
+                                                Text(
+                                                  '時間: ${t.timestamp.toLocal().toString().split('.')[0]}',
+                                                  style: const TextStyle(
+                                                    fontSize: 12,
+                                                  ),
+                                                ),
+                                              );
+                                              if (t.duration != null) {
+                                                lines.add(
+                                                  Text(
+                                                    '時長: ${_fmtDuration(t.duration!)}',
+                                                    style: const TextStyle(
+                                                      fontSize: 12,
+                                                    ),
+                                                  ),
+                                                );
+                                              } else if (t.type == 'video' ||
+                                                  t.type == 'audio') {
+                                                lines.add(
+                                                  const Text(
+                                                    '時長: 解析中…',
+                                                    style: TextStyle(
+                                                      fontSize: 12,
+                                                    ),
+                                                  ),
+                                                );
+                                              }
+                                            }
+                                            return Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: lines,
+                                            );
+                                          },
+                                        ),
+                                        // 將進度條也放入 lines（避免某些版面下被擠掉）
+                                        Builder(
+                                          builder: (_) {
+                                            if (isHls &&
+                                                t.progressUnit == 'time-ms' &&
+                                                t.total != null &&
+                                                t.total! > 0) {
+                                              return Column(
+                                                children: [
+                                                  const SizedBox(height: 4),
+                                                  LinearProgressIndicator(
+                                                    minHeight: 4,
+                                                    value: prog?.clamp(
+                                                      0.0,
+                                                      1.0,
+                                                    ),
+                                                  ),
+                                                ],
+                                              );
+                                            }
+                                            if (isHls &&
+                                                isDownloadingSegments) {
+                                              return Column(
+                                                children: const [
+                                                  SizedBox(height: 4),
+                                                  LinearProgressIndicator(
+                                                    minHeight: 4,
+                                                  ),
+                                                ],
+                                              );
+                                            }
+                                            if (isHls && isConverting) {
+                                              return Column(
+                                                children: const [
+                                                  SizedBox(height: 4),
+                                                  LinearProgressIndicator(
+                                                    minHeight: 4,
+                                                  ),
+                                                ],
+                                              );
+                                            }
+                                            if (!isHls &&
+                                                t.state == 'downloading') {
+                                              return Column(
+                                                children: [
+                                                  const SizedBox(height: 4),
+                                                  LinearProgressIndicator(
+                                                    minHeight: 4,
+                                                    value: prog?.clamp(
+                                                      0.0,
+                                                      1.0,
+                                                    ),
+                                                  ),
+                                                ],
+                                              );
+                                            }
+                                            return const SizedBox.shrink();
+                                          },
+                                        ),
                                       ],
                                     ),
                                   ),
@@ -1036,7 +1212,20 @@ class FileViewerPage extends StatelessWidget {
   }
 }
 
-class _VideoPlayerPageState extends State<VideoPlayerPage> {
+class _VideoPlayerPageState extends State<VideoPlayerPage>
+    with WidgetsBindingObserver {
+  // Mini player size (can be pinch-zoomed)
+  double _miniWidth = 300;
+  double _miniHeight = 190;
+  bool _miniShowCtrls = true; // tap video to toggle overlay controls
+  double? _miniScaleStartW;
+  double? _miniScaleStartH;
+  String _short(String s, {int max = 96}) {
+    if (s.length <= max) return s;
+    final head = s.substring(0, max - 3);
+    return head + '...';
+  }
+
   static final Map<String, Duration> _resumePositions = {};
   late VideoPlayerController _vc;
   bool _ready = false;
@@ -1050,6 +1239,11 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
   // 進度拖曳
   bool _dragging = false;
   Duration _dragPos = Duration.zero;
+
+  // 畫面水平拖動快轉/快退（帶秒數浮層）
+  bool _scrubActive = false;
+  Duration _scrubTarget = Duration.zero;
+  static const double _secPerPx = 0.15; // 每像素 0.15 秒（約 7px/秒）
 
   // 音量
   double _volume = 1.0;
@@ -1069,9 +1263,24 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
   static const _tick = Duration(milliseconds: 200);
   static const _stepFast = Duration(milliseconds: 400); // 0.4s/0.2s ≈ 2X
 
+  // --- Mini player (local to VideoPlayerPage) ---
+  OverlayEntry? _miniEntry;
+
+  bool _miniVisibleMini = false;
+  Offset _miniPos = const Offset(20, 80);
+  VideoPlayerController?
+  _miniCtrl; // mini player's own controller (persists after leaving page)
+
+  // --- iOS PiP integration ---
+  // --- System PiP via `pip` plugin ---
+  final Pip _pip = Pip();
+  bool _autoPipArmed = false; // background trigger flag
+  bool _wasPlayingBeforePip = false;
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _volc = VolumeController.instance;
     // 當系統音量變化時，同步到播放器音量與 UI（新版 API）
     _volc.showSystemUI = true; // 不顯示系統音量浮窗（需要時可改為 true）
@@ -1083,6 +1292,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
       } catch (_) {}
       if (mounted) setState(() {});
     });
+
     // 讀取目前系統音量並套到播放器
     Future.microtask(() async {
       try {
@@ -1108,11 +1318,24 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
       ..initialize().then((_) async {
         if (!mounted) return;
         setState(() => _ready = true);
+        // Make sure we are in fullscreen for the desired behavior
+        try {
+          await _enterFullscreen();
+        } catch (_) {}
         await _vc.setPlaybackSpeed(_speed);
+        // Analytics: 進入播放器
+        try {
+          await FirebaseAnalytics.instance.logEvent(
+            name: 'video_open',
+            parameters: {
+              'path': _short(widget.path),
+              'title': _short(widget.title),
+            },
+          );
+        } catch (_) {}
         // Determine a starting position for playback. Priority:
         // 1. explicit startAt passed to this page
         // 2. saved resume position for this file
-        // 3. mini player startAt value (when handing off from mini)
         Duration? seekTo;
         if (widget.startAt != null && widget.startAt! > Duration.zero) {
           seekTo = widget.startAt;
@@ -1120,13 +1343,6 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
           final saved = _resumePositions[widget.path];
           if (saved != null && saved > Duration.zero) {
             seekTo = saved;
-          } else {
-            final mp = AppRepo.I.miniPlayer.value;
-            if (mp != null &&
-                mp.startAt != null &&
-                mp.startAt! > Duration.zero) {
-              seekTo = mp.startAt;
-            }
           }
         }
         if (seekTo != null) {
@@ -1138,6 +1354,15 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
         // Start playing automatically when the video is ready.
         _vc.play();
         _startAutoHide();
+        try {
+          await FirebaseAnalytics.instance.logEvent(
+            name: 'video_play',
+            parameters: {
+              'path': _short(widget.path),
+              'position_ms': _vc.value.position.inMilliseconds,
+            },
+          );
+        } catch (_) {}
       });
 
     // Listen to changes in the video controller to update the UI (e.g. progress).
@@ -1151,6 +1376,12 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
   @override
   void dispose() {
     _autoHideTimer?.cancel();
+    () async {
+      await _stopSystemPip();
+      try {
+        await _pip.dispose();
+      } catch (_) {}
+    }();
     _ffTimer?.cancel();
     _rwTimer?.cancel();
     if (_fullscreen) _exitFullscreen();
@@ -1162,7 +1393,391 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
     try {
       _volc.removeListener();
     } catch (_) {}
+    try {
+      WidgetsBinding.instance.removeObserver(this);
+    } catch (_) {}
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) async {
+    if (!Platform.isIOS) return;
+    try {
+      if (state == AppLifecycleState.inactive) {
+        // iOS 會先進 inactive 再進背景
+        if (mounted && _ready && !_autoPipArmed) {
+          _autoPipArmed = true;
+          _wasPlayingBeforePip = _vc.value.isPlaying;
+          await _startSystemPip(); // ✅ 一定要帶 pipWidget
+        }
+      } else if (state == AppLifecycleState.resumed) {
+        if (_autoPipArmed) {
+          await _stopSystemPip();
+          if (mounted) {
+            await _enterFullscreen();
+            if (_wasPlayingBeforePip) {
+              try {
+                await _vc.play();
+              } catch (_) {}
+            }
+          }
+          _autoPipArmed = false;
+        }
+      }
+    } catch (_) {}
+  }
+
+  void _openMiniFromPlayer() async {
+    // If already open, remove and recreate to bring to front
+    _miniEntry?.remove();
+    _miniEntry = null;
+
+    // Create a dedicated controller for the mini player so it can outlive this page
+    try {
+      final pos = _vc.value.position;
+      final isRemote =
+          widget.path.startsWith('http://') ||
+          widget.path.startsWith('https://');
+      _miniCtrl =
+          isRemote
+              ? VideoPlayerController.network(widget.path)
+              : VideoPlayerController.file(File(widget.path));
+      await _miniCtrl!.initialize();
+      if (pos > Duration.zero &&
+          (_miniCtrl!.value.duration == Duration.zero ||
+              pos < _miniCtrl!.value.duration)) {
+        await _miniCtrl!.seekTo(pos);
+      }
+      await _miniCtrl!.play();
+    } catch (_) {
+      // Fallback: toast
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('迷你播放器初始化失敗')));
+      }
+      return;
+    }
+
+    // If in fullscreen (i.e., this page is pushed as fullscreen), pop it first to leave fullscreen.
+    if (Navigator.of(context).canPop()) {
+      Navigator.of(context).pop();
+      await Future.delayed(const Duration(milliseconds: 350));
+    }
+
+    // Use global navigatorKey to access overlay
+    final overlay = navigatorKey.currentState?.overlay;
+    _miniEntry = OverlayEntry(
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setSB) => _buildMiniPlayer(ctx, setSB),
+        );
+      },
+    );
+    if (overlay != null) {
+      overlay.insert(_miniEntry!);
+      if (mounted) setState(() => _miniVisibleMini = true);
+    }
+  }
+
+  Widget _buildMiniPlayer(BuildContext ctx, StateSetter setSB) {
+    final size = MediaQuery.of(ctx).size;
+    // Clamp left/top so the mini player stays on screen even as it is resized
+    final left = _miniPos.dx.clamp(0.0, size.width - _miniWidth);
+    final top = _miniPos.dy.clamp(0.0, size.height - _miniHeight);
+    return Positioned(
+      left: left,
+      top: top,
+      child: Material(
+        color: Colors.transparent,
+        child: GestureDetector(
+          // Support move (one-finger drag) and resize (two-finger pinch)
+          onScaleStart: (details) {
+            _miniScaleStartW = _miniWidth;
+            _miniScaleStartH = _miniHeight;
+          },
+          onScaleUpdate: (details) {
+            // Pinch to resize when scale changes
+            if (details.scale != 1.0 &&
+                _miniScaleStartW != null &&
+                _miniScaleStartH != null) {
+              final newW = (_miniScaleStartW! * details.scale).clamp(
+                220.0,
+                520.0,
+              );
+              final newH = (_miniScaleStartH! * details.scale).clamp(
+                124.0,
+                320.0,
+              );
+              setSB(() {
+                _miniWidth = newW;
+                _miniHeight = newH;
+                // After resizing, also clamp position so it stays on screen
+                _miniPos = Offset(
+                  _miniPos.dx.clamp(0.0, size.width - _miniWidth),
+                  _miniPos.dy.clamp(0.0, size.height - _miniHeight),
+                );
+              });
+            } else {
+              // One-finger drag to move
+              setSB(() {
+                _miniPos = Offset(
+                  (_miniPos.dx + details.focalPointDelta.dx).clamp(
+                    0.0,
+                    size.width - _miniWidth,
+                  ),
+                  (_miniPos.dy + details.focalPointDelta.dy).clamp(
+                    0.0,
+                    size.height - _miniHeight,
+                  ),
+                );
+              });
+            }
+          },
+          onTap: () {
+            setSB(() => _miniShowCtrls = !_miniShowCtrls);
+          },
+          child: Stack(
+            children: [
+              Container(
+                width: _miniWidth,
+                height: _miniHeight,
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.85),
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.25),
+                      blurRadius: 10,
+                      offset: const Offset(0, 6),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // (Header row removed - now floating overlay)
+                    if (_miniCtrl != null && _miniCtrl!.value.isInitialized)
+                      // Video with floating controls overlayed
+                      Expanded(
+                        child: Stack(
+                          children: [
+                            Positioned.fill(
+                              child: AspectRatio(
+                                aspectRatio:
+                                    _miniCtrl!.value.aspectRatio == 0
+                                        ? 16 / 9
+                                        : _miniCtrl!.value.aspectRatio,
+                                child: VideoPlayer(_miniCtrl!),
+                              ),
+                            ),
+                            // Top overlay: fullscreen (left) + close (right), floating over video
+                            if (_miniShowCtrls)
+                              Positioned(
+                                left: 6,
+                                right: 6,
+                                top: 6,
+                                child: Row(
+                                  children: [
+                                    // Fullscreen button (top-left)
+                                    InkWell(
+                                      onTap: () async {
+                                        final pos =
+                                            await _miniCtrl?.position ??
+                                            Duration.zero;
+                                        _closeMiniFromPlayer();
+                                        navigatorKey.currentState?.push(
+                                          MaterialPageRoute(
+                                            builder:
+                                                (_) => VideoPlayerPage(
+                                                  path: widget.path,
+                                                  title: widget.title,
+                                                  startAt: pos,
+                                                ),
+                                          ),
+                                        );
+                                      },
+                                      child: Container(
+                                        decoration: BoxDecoration(
+                                          color: Colors.black54,
+                                          borderRadius: BorderRadius.circular(
+                                            18,
+                                          ),
+                                        ),
+                                        padding: const EdgeInsets.all(6),
+                                        child: const Icon(
+                                          Icons.fullscreen,
+                                          color: Colors.white,
+                                          size: 18,
+                                        ),
+                                      ),
+                                    ),
+                                    const Spacer(),
+                                    // Close button (top-right)
+                                    InkWell(
+                                      onTap: _closeMiniFromPlayer,
+                                      child: Container(
+                                        decoration: BoxDecoration(
+                                          color: Colors.black54,
+                                          borderRadius: BorderRadius.circular(
+                                            18,
+                                          ),
+                                        ),
+                                        padding: const EdgeInsets.all(6),
+                                        child: const Icon(
+                                          Icons.close,
+                                          color: Colors.white,
+                                          size: 18,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            if (_miniShowCtrls)
+                              Positioned(
+                                left: 0,
+                                right: 0,
+                                bottom: 6,
+                                child: Center(
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 4,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: Colors.black54,
+                                      borderRadius: BorderRadius.circular(24),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        IconButton(
+                                          icon: const Icon(
+                                            Icons.replay_10,
+                                            color: Colors.white,
+                                          ),
+                                          tooltip: '後退15秒',
+                                          onPressed: () async {
+                                            final v = _miniCtrl;
+                                            if (v == null) return;
+                                            final cur =
+                                                await v.position ??
+                                                Duration.zero;
+                                            final target = Duration(
+                                              milliseconds:
+                                                  (cur.inMilliseconds - 15000)
+                                                      .clamp(0, 1 << 31),
+                                            );
+                                            await v.seekTo(target);
+                                          },
+                                        ),
+                                        IconButton(
+                                          icon: Icon(
+                                            (_miniCtrl?.value.isPlaying ??
+                                                    false)
+                                                ? Icons.pause
+                                                : Icons.play_arrow,
+                                            color: Colors.white,
+                                          ),
+                                          tooltip: '播放/暫停',
+                                          onPressed: () async {
+                                            final v = _miniCtrl;
+                                            if (v == null) return;
+                                            if (v.value.isPlaying) {
+                                              await v.pause();
+                                            } else {
+                                              await v.play();
+                                            }
+                                            setSB(() {});
+                                          },
+                                        ),
+                                        IconButton(
+                                          icon: const Icon(
+                                            Icons.forward_10,
+                                            color: Colors.white,
+                                          ),
+                                          tooltip: '快轉15秒',
+                                          onPressed: () async {
+                                            final v = _miniCtrl;
+                                            if (v == null) return;
+                                            final dur = v.value.duration;
+                                            final cur =
+                                                await v.position ??
+                                                Duration.zero;
+                                            var ms = cur.inMilliseconds + 15000;
+                                            if (dur != null) {
+                                              ms = ms.clamp(
+                                                0,
+                                                dur.inMilliseconds,
+                                              );
+                                            }
+                                            await v.seekTo(
+                                              Duration(milliseconds: ms),
+                                            );
+                                          },
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              // --- Restore resize handle as floating overlay when controls are visible ---
+              if (_miniShowCtrls)
+                Positioned(
+                  right: 6,
+                  bottom: 6,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.translucent,
+                    onPanUpdate: (details) {
+                      setSB(() {
+                        _miniWidth = (_miniWidth + details.delta.dx).clamp(
+                          220.0,
+                          520.0,
+                        );
+                        _miniHeight = (_miniHeight + details.delta.dy).clamp(
+                          124.0,
+                          320.0,
+                        );
+                      });
+                    },
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.black54,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      padding: const EdgeInsets.all(4),
+                      child: const Icon(
+                        Icons.open_in_full,
+                        size: 16,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _closeMiniFromPlayer() {
+    _miniEntry?.remove();
+    _miniEntry = null;
+    try {
+      _miniCtrl?.pause();
+    } catch (_) {}
+    _miniCtrl?.dispose();
+    _miniCtrl = null;
+    if (mounted) setState(() => _miniVisibleMini = false);
   }
 
   void _togglePlay() {
@@ -1174,6 +1789,27 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
       _startAutoHide();
     }
     setState(() {});
+  }
+
+  Widget _pipContent() {
+    final ar =
+        (_ready && _vc.value.aspectRatio != 0) ? _vc.value.aspectRatio : 16 / 9;
+    return AspectRatio(aspectRatio: ar, child: VideoPlayer(_vc));
+  }
+
+  Future<void> _startSystemPip() async {
+    try {
+      await _pip.start();
+    } catch (e) {
+      // ignore: avoid_print
+      print('[PIP] start failed: $e');
+    }
+  }
+
+  Future<void> _stopSystemPip() async {
+    try {
+      await _pip.stop();
+    } catch (_) {}
   }
 
   void _startAutoHide() {
@@ -1321,188 +1957,219 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
       duration: const Duration(milliseconds: 200),
       child: IgnorePointer(
         ignoring: !_showControls,
-        child: Container(
-          color: Colors.black26,
-          child: Column(
-            children: [
-              // 上方標題/返回列（非必要可隱藏）
-              SafeArea(
-                bottom: false,
-                child: Row(
-                  children: [
-                    IconButton(
-                      color: Colors.white,
-                      icon: const Icon(Icons.arrow_back),
-                      onPressed: () => Navigator.pop(context),
-                    ),
-                    Expanded(
-                      child: Text(
-                        widget.title,
-                        style: const TextStyle(color: Colors.white),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    IconButton(
-                      color: Colors.white,
-                      icon: const Icon(Icons.picture_in_picture_alt),
-                      tooltip: '迷你播放',
-                      onPressed: () {
-                        final pos = _vc.value.position;
-                        // Save to local resume map
-                        _resumePositions[widget.path] = pos;
-                        // Also push the latest startAt into repo to ensure the mini player picks it up even if rebuilt
-                        AppRepo.I.updateMiniPlayerStartAt(pos);
-                        // Open the mini player with explicit startAt
-                        AppRepo.I.openMiniPlayer(
-                          widget.path,
-                          widget.title,
-                          startAt: pos,
-                        );
-                        Navigator.pop(context);
-                      },
-                    ),
-                  ],
-                ),
-              ),
-
-              const Spacer(),
-
-              // 中間主控（播放/暫停、快進鈕）
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  IconButton(
-                    color: Colors.white,
-                    iconSize: 36,
-                    icon: const Icon(Icons.replay_30),
-                    onPressed:
-                        () => _seekRelative(const Duration(seconds: -30)),
-                  ),
-                  const SizedBox(width: 12),
-                  InkWell(
-                    onTap: _togglePlay,
-                    child: CircleAvatar(
-                      backgroundColor: Colors.black54,
-                      radius: 28,
-                      child: Icon(
-                        _vc.value.isPlaying ? Icons.pause : Icons.play_arrow,
+        child: GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onTap: _toggleControls, // 讓可見時也能點空白處立即隱藏
+          onHorizontalDragStart: (_) {
+            _scrubActive = true;
+            _scrubTarget = _vc.value.position;
+            setState(() {});
+          },
+          onHorizontalDragUpdate: (d) {
+            final deltaS = d.delta.dx * _secPerPx;
+            final now =
+                _scrubTarget + Duration(milliseconds: (deltaS * 1000).round());
+            _scrubTarget = _clamp(now, Duration.zero, _vc.value.duration);
+            setState(() {});
+          },
+          onHorizontalDragEnd: (_) async {
+            final dst = _scrubTarget;
+            _scrubActive = false;
+            await _vc.seekTo(dst);
+            if (_vc.value.isPlaying) _startAutoHide();
+            setState(() {});
+          },
+          child: Container(
+            color: Colors.black26,
+            child: Column(
+              children: [
+                // 上方標題/返回列（非必要可隱藏）
+                SafeArea(
+                  bottom: false,
+                  child: Row(
+                    children: [
+                      IconButton(
                         color: Colors.white,
-                        size: 36,
+                        icon: const Icon(Icons.arrow_back),
+                        onPressed: () => Navigator.pop(context),
+                      ),
+                      Expanded(
+                        child: Text(
+                          widget.title,
+                          style: const TextStyle(color: Colors.white),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      // 迷你播放器按鈕
+                    ],
+                  ),
+                ),
+
+                const Spacer(),
+
+                // 中間主控（播放/暫停、快進鈕）
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    IconButton(
+                      color: Colors.white,
+                      iconSize: 36,
+                      icon: const Icon(Icons.replay_30),
+                      onPressed:
+                          () => _seekRelative(const Duration(seconds: -30)),
+                    ),
+                    const SizedBox(width: 12),
+                    InkWell(
+                      onTap: _togglePlay,
+                      child: CircleAvatar(
+                        backgroundColor: Colors.black54,
+                        radius: 28,
+                        child: Icon(
+                          _vc.value.isPlaying ? Icons.pause : Icons.play_arrow,
+                          color: Colors.white,
+                          size: 36,
+                        ),
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 12),
-                  IconButton(
-                    color: Colors.white,
-                    iconSize: 36,
-                    icon: const Icon(Icons.forward_30),
-                    onPressed: () => _seekRelative(const Duration(seconds: 30)),
-                  ),
-                ],
-              ),
-
-              const SizedBox(height: 12),
-
-              // 進度與秒數＋工具列
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                child: Column(
-                  children: [
-                    // 進度條（可拖動，顯示秒數）
-                    Row(
-                      children: [
-                        Text(
-                          _fmt(_dragging ? _dragPos : pos),
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontFeatures: [FontFeature.tabularFigures()],
-                          ),
-                        ),
-                        Expanded(
-                          child: Slider(
-                            min: 0.0,
-                            max: totalMs,
-                            value: currentMs,
-                            onChangeStart: (_) => _onDragStart(),
-                            onChanged: (v) => _onDragUpdate(v),
-                            onChangeEnd: (v) => _onDragEnd(v),
-                          ),
-                        ),
-                        Text(
-                          _fmt(dur),
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontFeatures: [FontFeature.tabularFigures()],
-                          ),
-                        ),
-                      ],
-                    ),
-
-                    // 下方工具列：音量（靜音/滑桿）、快進 1m/5m、速度選擇
-                    Row(
-                      children: [
-                        // 音量：靜音切換 + 動態圖示
-                        IconButton(
-                          tooltip: _muted ? '取消靜音' : '靜音',
-                          icon: Icon(
-                            (_muted || _volume == 0.0)
-                                ? Icons.volume_off
-                                : (_volume < 0.33
-                                    ? Icons.volume_mute
-                                    : (_volume < 0.66
-                                        ? Icons.volume_down
-                                        : Icons.volume_up)),
-                            color: Colors.white,
-                          ),
-                          onPressed: _toggleMute,
-                        ),
-                        // 音量滑桿（0.0 ~ 1.0），與系統音量雙向同步
-                        Expanded(
-                          child: Slider(
-                            min: 0.0,
-                            max: 1.0,
-                            value: _muted ? 0.0 : _volume.clamp(0.0, 1.0),
-                            onChanged: (v) => _setVolume(v),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          '${((_muted ? 0.0 : _volume) * 100).round()}%',
-                          style: const TextStyle(color: Colors.white),
-                        ),
-                        const Spacer(),
-                        TextButton(
-                          onPressed:
-                              () => _seekRelative(const Duration(minutes: 1)),
-                          child: const Text('+1m'),
-                        ),
-                        const SizedBox(width: 6),
-                        TextButton(
-                          onPressed:
-                              () => _seekRelative(const Duration(minutes: 5)),
-                          child: const Text('+5m'),
-                        ),
-                        const SizedBox(width: 6),
-                        PopupMenuButton<double>(
-                          initialValue: _speed,
-                          icon: const Icon(Icons.speed, color: Colors.white),
-                          onSelected: (v) => _setSpeed(v),
-                          itemBuilder:
-                              (_) => const [
-                                PopupMenuItem(value: 0.5, child: Text('0.5x')),
-                                PopupMenuItem(value: 1.0, child: Text('1.0x')),
-                                PopupMenuItem(value: 1.5, child: Text('1.5x')),
-                                PopupMenuItem(value: 2.0, child: Text('2.0x')),
-                              ],
-                        ),
-                      ],
+                    const SizedBox(width: 12),
+                    IconButton(
+                      color: Colors.white,
+                      iconSize: 36,
+                      icon: const Icon(Icons.forward_30),
+                      onPressed:
+                          () => _seekRelative(const Duration(seconds: 30)),
                     ),
                   ],
                 ),
-              ),
-              const SizedBox(height: 8),
-              SafeArea(top: false, child: const SizedBox(height: 0)),
-            ],
+
+                const SizedBox(height: 12),
+
+                // 進度與秒數＋工具列
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: Column(
+                    children: [
+                      // 進度條（可拖動，顯示秒數）
+                      Row(
+                        children: [
+                          Text(
+                            _fmt(_dragging ? _dragPos : pos),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontFeatures: [FontFeature.tabularFigures()],
+                            ),
+                          ),
+                          Expanded(
+                            child: Slider(
+                              min: 0.0,
+                              max: totalMs,
+                              value: currentMs,
+                              onChangeStart: (_) => _onDragStart(),
+                              onChanged: (v) => _onDragUpdate(v),
+                              onChangeEnd: (v) => _onDragEnd(v),
+                            ),
+                          ),
+                          Text(
+                            _fmt(dur),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontFeatures: [FontFeature.tabularFigures()],
+                            ),
+                          ),
+                        ],
+                      ),
+
+                      // 下方工具列：音量（靜音/滑桿）、快進 1m/5m、速度選擇
+                      Row(
+                        children: [
+                          // 音量：靜音切換 + 動態圖示
+                          IconButton(
+                            tooltip: _muted ? '取消靜音' : '靜音',
+                            icon: Icon(
+                              (_muted || _volume == 0.0)
+                                  ? Icons.volume_off
+                                  : (_volume < 0.33
+                                      ? Icons.volume_mute
+                                      : (_volume < 0.66
+                                          ? Icons.volume_down
+                                          : Icons.volume_up)),
+                              color: Colors.white,
+                            ),
+                            onPressed: _toggleMute,
+                          ),
+                          // 音量滑桿（0.0 ~ 1.0），與系統音量雙向同步
+                          Expanded(
+                            child: Slider(
+                              min: 0.0,
+                              max: 1.0,
+                              value: _muted ? 0.0 : _volume.clamp(0.0, 1.0),
+                              onChanged: (v) => _setVolume(v),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            '${((_muted ? 0.0 : _volume) * 100).round()}%',
+                            style: const TextStyle(color: Colors.white),
+                          ),
+                          const Spacer(),
+                          TextButton(
+                            onPressed:
+                                () => _seekRelative(const Duration(minutes: 1)),
+                            child: const Text('+1m'),
+                          ),
+                          const SizedBox(width: 6),
+                          TextButton(
+                            onPressed:
+                                () => _seekRelative(const Duration(minutes: 5)),
+                            child: const Text('+5m'),
+                          ),
+                          const SizedBox(width: 6),
+                          PopupMenuButton<double>(
+                            initialValue: _speed,
+                            icon: const Icon(Icons.speed, color: Colors.white),
+                            onSelected: (v) => _setSpeed(v),
+                            itemBuilder:
+                                (_) => const [
+                                  PopupMenuItem(
+                                    value: 0.5,
+                                    child: Text('0.5x'),
+                                  ),
+                                  PopupMenuItem(
+                                    value: 1.0,
+                                    child: Text('1.0x'),
+                                  ),
+                                  PopupMenuItem(
+                                    value: 1.5,
+                                    child: Text('1.5x'),
+                                  ),
+                                  PopupMenuItem(
+                                    value: 2.0,
+                                    child: Text('2.0x'),
+                                  ),
+                                ],
+                          ),
+                          if (Platform.isIOS) ...[
+                            const SizedBox(width: 6),
+
+                            const SizedBox(width: 6),
+                            IconButton(
+                              tooltip: '迷你播放器',
+                              icon: const Icon(
+                                Icons.picture_in_picture_alt,
+                                color: Colors.white,
+                              ),
+                              onPressed: _openMiniFromPlayer,
+                            ),
+                          ],
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+                SafeArea(top: false, child: const SizedBox(height: 0)),
+              ],
+            ),
           ),
         ),
       ),
@@ -1519,6 +2186,26 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: _toggleControls,
+            onHorizontalDragStart: (_) {
+              _scrubActive = true;
+              _scrubTarget = _vc.value.position;
+              setState(() {});
+            },
+            onHorizontalDragUpdate: (d) {
+              final deltaS = d.delta.dx * _secPerPx;
+              final now =
+                  _scrubTarget +
+                  Duration(milliseconds: (deltaS * 1000).round());
+              _scrubTarget = _clamp(now, Duration.zero, _vc.value.duration);
+              setState(() {});
+            },
+            onHorizontalDragEnd: (_) async {
+              final dst = _scrubTarget;
+              _scrubActive = false;
+              await _vc.seekTo(dst);
+              if (_vc.value.isPlaying) _startAutoHide();
+              setState(() {});
+            },
             onLongPressStart: (d) {
               final dx = d.localPosition.dx;
               if (dx < width / 2) {
@@ -1551,6 +2238,29 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
             Positioned.fill(child: gestureLayer),
             // 控制層
             Positioned.fill(child: overlay),
+            if (_scrubActive)
+              Positioned(
+                top: null,
+                bottom: MediaQuery.of(context).size.height * 0.35,
+                left: 0,
+                right: 0,
+                child: Center(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.black87,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      '${_fmt(_scrubTarget)}/${_fmt(dur)}',
+                      style: const TextStyle(color: Colors.white, fontSize: 16),
+                    ),
+                  ),
+                ),
+              ),
           ],
         ),
       ),
@@ -1582,8 +2292,5 @@ String formatDuration(Duration d) {
   final h = d.inHours;
   final m = d.inMinutes % 60;
   final s = d.inSeconds % 60;
-  if (h > 0) {
-    return '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
-  }
-  return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+  return '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
 }
