@@ -2752,6 +2752,20 @@ class SystemPip {
   static const MethodChannel _ch = MethodChannel('app.pip');
   static String? _lastUrl;
 
+  /// 只準備原生播放器（不啟動 PiP）
+  static Future<bool> prepare({required String url, int? positionMs}) async {
+    try {
+      final params = <String, dynamic>{
+        'url': url,
+        if (positionMs != null) 'positionMs': positionMs,
+      };
+      final ok = await _ch.invokeMethod('prepare', params);
+      return ok == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   static Future<bool> isAvailable() async {
     try {
       final ok = await _ch.invokeMethod('isAvailable');

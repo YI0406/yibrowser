@@ -1,6 +1,7 @@
 import AVFoundation
 import AVKit
 import Flutter
+import UIKit
 
 /// Native iOS picture-in-picture controller that is driven via the
 /// `MethodChannel('app.pip')` channel from Dart. The Dart side only supplies
@@ -64,6 +65,19 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
       self?.handle(call: call, result: result)
     }
     channel = methodChannel
+
+    NotificationCenter.default.addObserver(
+      self,
+      selector: #selector(self.onWillResignActive),
+      name: UIApplication.willResignActiveNotification,
+      object: nil
+    )
+    NotificationCenter.default.addObserver(
+      self,
+      selector: #selector(self.onDidBecomeActive),
+      name: UIApplication.didBecomeActiveNotification,
+      object: nil
+    )
   }
 
   private func handle(call: FlutterMethodCall, result: @escaping FlutterResult) {
@@ -71,6 +85,17 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
     case "isAvailable":
       DispatchQueue.main.async {
         result(AVPictureInPictureController.isPictureInPictureSupported())
+      }
+    case "prepare":
+      let args = call.arguments as? [String: Any]
+      let url = args?["url"] as? String
+      let positionMs = args?["positionMs"] as? Int
+      let ok = self.preparePlayer(with: url ?? "")
+      if ok {
+        if let ms = positionMs { self.seek(toMilliseconds: ms) }
+        result(true)
+      } else {
+        result(false)
       }
     case "enter":
       let args = call.arguments as? [String: Any]
@@ -230,6 +255,12 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
     guard let controller = pipController else { return }
     guard pendingStartResult != nil else { return }
 
+    // Only start when the scene is active to avoid AVKit -1001 errors.
+    if let scene = flutterController?.view.window?.windowScene,
+       scene.activationState != .foregroundActive {
+      return
+    }
+
     if controller.isPictureInPictureActive {
       completePendingStart(success: true)
       return
@@ -315,6 +346,26 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
     currentUrl = nil
     pendingSeek = nil
     lastKnownPosition = .zero
+  }
+
+  @objc private func onWillResignActive() {
+    // Start PiP right before we lose foreground-active state, if possible.
+    guard let controller = pipController else { return }
+    guard let scene = flutterController?.view.window?.windowScene,
+          scene.activationState == .foregroundActive else { return }
+    if controller.isPictureInPictureActive { return }
+    if controller.isPictureInPicturePossible {
+      if pendingStartResult == nil {
+        // Ensure Dart receives a completion even if no 'enter' call is pending.
+        pendingStartResult = { _ in }
+      }
+      controller.startPictureInPicture()
+    }
+  }
+
+  @objc private func onDidBecomeActive() {
+    // If a start was deferred, try again now that we're foreground active.
+    startPiPWhenPossible()
   }
 
   // MARK: - AVPictureInPictureControllerDelegate

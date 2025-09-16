@@ -1255,8 +1255,6 @@ class VideoPlayerPage extends StatefulWidget {
   State<VideoPlayerPage> createState() => _VideoPlayerPageState();
 }
 
-bool _nativePipInUse = false;
-
 /// A simple page for previewing non-video media files such as images and
 /// documents. Images are displayed directly; other file types are loaded
 /// via an embedded WebView using a `file://` URL. If the file cannot be
@@ -1311,14 +1309,6 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     if (s.length <= max) return s;
     final head = s.substring(0, max - 3);
     return head + '...';
-  }
-
-  String _systemPipSource() {
-    if (widget.path.startsWith('http://') ||
-        widget.path.startsWith('https://')) {
-      return widget.path;
-    }
-    return Uri.file(widget.path).toString();
   }
 
   static final Map<String, Duration> _resumePositions = {};
@@ -1998,22 +1988,6 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
 
   Future<void> _startSystemPip() async {
     if (!_ready || !_vc.value.isInitialized) return;
-    try {
-      if (await SystemPip.isAvailable()) {
-        final started = await SystemPip.enter(
-          url: _systemPipSource(),
-          positionMs: _vc.value.position.inMilliseconds,
-        );
-        if (started) {
-          _nativePipInUse = true;
-          if (_vc.value.isPlaying) {
-            await _vc.pause();
-          }
-          return;
-        }
-      }
-    } catch (_) {}
-    _nativePipInUse = false;
     final widget = _pipContent();
     try {
       // Some versions of the pip plugin require providing a dedicated widget
@@ -2058,20 +2032,6 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   }
 
   Future<void> _stopSystemPip() async {
-    if (_nativePipInUse) {
-      try {
-        final pos = await SystemPip.exit();
-        if (pos != null && _vc.value.isInitialized) {
-          final target = Duration(milliseconds: pos);
-          final dur = _vc.value.duration;
-          if (dur == Duration.zero || target <= dur) {
-            await _vc.seekTo(target);
-          }
-        }
-      } catch (_) {}
-      _nativePipInUse = false;
-      return;
-    }
     try {
       await _pip.stop();
     } catch (_) {}
