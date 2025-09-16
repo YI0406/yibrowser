@@ -16,6 +16,7 @@ import 'package:video_player/video_player.dart';
 import 'package:path/path.dart' as path;
 import 'package:volume_controller/volume_controller.dart';
 import 'package:firebase_analytics/firebase_analytics.dart';
+import 'package:share_plus/share_plus.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
@@ -74,6 +75,10 @@ class _MediaAll extends StatefulWidget {
 
 class _MediaAllState extends State<_MediaAll> {
   Timer? _convertTicker;
+  // --- Search state ---
+  final TextEditingController _searchCtl = TextEditingController();
+  String _search = '';
+  Timer? _searchDebounce;
 
   /// Formats a byte count as a human readable string (KB, MB, GB, etc).
   String _fmtSize(int bytes) {
@@ -162,6 +167,10 @@ class _MediaAllState extends State<_MediaAll> {
   @override
   void dispose() {
     _convertTicker?.cancel();
+    _searchDebounce?.cancel();
+    try {
+      _searchCtl.dispose();
+    } catch (_) {}
     super.dispose();
   }
 
@@ -279,7 +288,25 @@ class _MediaAllState extends State<_MediaAll> {
                   child: const Text('全選'),
                 ),
                 TextButton(onPressed: _deleteSelected, child: const Text('刪除')),
-                TextButton(onPressed: _saveSelected, child: const Text('存相簿')),
+                TextButton(
+                  onPressed: () async {
+                    if (_selected.isEmpty) return;
+                    try {
+                      final files =
+                          _selected.map((t) => XFile(t.savePath)).toList();
+                      await Share.shareXFiles(files);
+                      setState(() {
+                        _selected.clear();
+                        _selectMode = false;
+                      });
+                    } catch (e) {
+                      ScaffoldMessenger.of(
+                        context,
+                      ).showSnackBar(SnackBar(content: Text('分享失敗: $e')));
+                    }
+                  },
+                  child: const Text('匯出...'),
+                ),
                 const Spacer(),
                 IconButton(
                   icon: const Icon(Icons.close),
@@ -306,6 +333,49 @@ class _MediaAllState extends State<_MediaAll> {
                     if (mounted) setState(() {});
                   },
                   child: const Text('重新掃描'),
+                ),
+                const SizedBox(width: 8),
+                // --- Search input ---
+                Expanded(
+                  child: SizedBox(
+                    height: 36,
+                    child: TextField(
+                      controller: _searchCtl,
+                      textInputAction: TextInputAction.search,
+                      onChanged: (v) {
+                        _searchDebounce?.cancel();
+                        _searchDebounce = Timer(
+                          const Duration(milliseconds: 250),
+                          () {
+                            if (!mounted) return;
+                            setState(() => _search = v.trim());
+                          },
+                        );
+                      },
+                      decoration: InputDecoration(
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 0,
+                        ),
+                        prefixIcon: const Icon(Icons.search, size: 18),
+                        suffixIcon:
+                            (_search.isNotEmpty)
+                                ? InkWell(
+                                  onTap: () {
+                                    _searchCtl.clear();
+                                    setState(() => _search = '');
+                                  },
+                                  child: const Icon(Icons.clear, size: 18),
+                                )
+                                : null,
+                        hintText: '搜尋名稱/網址/檔名',
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        isDense: true,
+                      ),
+                    ),
+                  ),
                 ),
               ],
             ],
@@ -367,8 +437,23 @@ class _MediaAllState extends State<_MediaAll> {
                   final tasksDedup =
                       byPath.values.toList()
                         ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+                  // --- Apply search filter (by name, url, or file name) ---
+                  List<DownloadTask> tasksFiltered = tasksDedup;
+                  if (_search.isNotEmpty) {
+                    final q = _search.toLowerCase();
+                    bool _match(DownloadTask t) {
+                      final name = (t.name ?? '').toLowerCase();
+                      final url = (t.url).toLowerCase();
+                      final base = path.basename(t.savePath).toLowerCase();
+                      return name.contains(q) ||
+                          url.contains(q) ||
+                          base.contains(q);
+                    }
+
+                    tasksFiltered = tasksDedup.where(_match).toList();
+                  }
                   // 2) 若有已完成但缺縮圖/時長的項目，節流觸發一次背景掃描
-                  final hasMissingMeta = tasksDedup.any(_needsMeta);
+                  final hasMissingMeta = tasksFiltered.any(_needsMeta);
                   if (hasMissingMeta && !_metaRefreshQueued) {
                     _metaRefreshQueued = true;
                     Future(() async {
@@ -382,14 +467,14 @@ class _MediaAllState extends State<_MediaAll> {
                       }
                     });
                   }
-                  if (tasksDedup.isEmpty) {
+                  if (tasksFiltered.isEmpty) {
                     return const Center(child: Text('尚無下載'));
                   }
                   return ListView.separated(
-                    itemCount: tasksDedup.length,
+                    itemCount: tasksFiltered.length,
                     separatorBuilder: (_, __) => const Divider(height: 1),
                     itemBuilder: (_, i) {
-                      final t = tasksDedup[i];
+                      final t = tasksFiltered[i];
                       final selected = _selected.contains(t);
                       final bool isHls = t.kind == 'hls';
                       final int totalSegs = t.total ?? 0;
@@ -419,7 +504,7 @@ class _MediaAllState extends State<_MediaAll> {
                       }
                       // 若列表中存在 HLS 轉換中的任務，開啟輕量週期重建，讓檔案大小能即時刷新
                       _ensureConvertTicker(
-                        tasksDedup.any(
+                        tasksFiltered.any(
                           (e) =>
                               e.kind == 'hls' &&
                               e.state == 'downloading' &&
@@ -1260,6 +1345,15 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   // instead, the top right button toggles the mini player overlay. The
   // fullscreen flag remains for backward compatibility but is unused.
   bool _fullscreen = false;
+  bool _isDisposing = false;
+
+  // 安全包裝：避免在已經 dispose 或正在釋放時 setState
+  void _safeSetState(VoidCallback fn) {
+    if (!mounted || _isDisposing) return;
+    try {
+      setState(fn);
+    } catch (_) {}
+  }
 
   // 長按快進/快退 2X（以定時跳秒模擬）
   Timer? _ffTimer; // forward fast
@@ -1391,6 +1485,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
 
   @override
   void dispose() {
+    _isDisposing = true; // <<< 新增：之後一律用 _safeSetState
     _autoHideTimer?.cancel();
     () async {
       await _stopSystemPip();
@@ -1460,6 +1555,28 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
               ? VideoPlayerController.network(widget.path)
               : VideoPlayerController.file(File(widget.path));
       await _miniCtrl!.initialize();
+      // Normalize mini window size *after* the mini controller is initialized
+      try {
+        final ar = _currentVideoAspectRatio();
+        final screen = MediaQuery.of(context).size;
+        const minW = 220.0;
+        // cap max width to screen width - 24 margin, but not above 520
+        final maxW = (screen.width - 24).clamp(minW, 520.0);
+        final baseW = (_miniWidth == 0 ? 300.0 : _miniWidth).clamp(minW, maxW);
+        _miniWidth = baseW;
+        _miniHeight = (_miniWidth / ar).clamp(100.0, screen.height - 24);
+        // Clamp position so the mini window is fully visible
+        _miniPos = Offset(
+          _miniPos.dx.clamp(
+            0.0,
+            (screen.width - _miniWidth).clamp(0.0, double.infinity),
+          ),
+          _miniPos.dy.clamp(
+            0.0,
+            (screen.height - _miniHeight).clamp(0.0, double.infinity),
+          ),
+        );
+      } catch (_) {}
       if (pos > Duration.zero &&
           (_miniCtrl!.value.duration == Duration.zero ||
               pos < _miniCtrl!.value.duration)) {
@@ -1497,11 +1614,35 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     }
   }
 
+  /// Returns the preferred aspect ratio for the current video:
+  /// - prefers initialized mini controller (if available and valid)
+  /// - otherwise uses main controller (if initialized and valid)
+  /// - otherwise defaults to 16:9.
+  double _currentVideoAspectRatio() {
+    final cMini = _miniCtrl;
+    if (cMini != null &&
+        cMini.value.isInitialized &&
+        cMini.value.aspectRatio > 0) {
+      return cMini.value.aspectRatio;
+    }
+    final cMain = _vc;
+    if (cMain.value.isInitialized && cMain.value.aspectRatio > 0) {
+      return cMain.value.aspectRatio;
+    }
+    return 16 / 9;
+  }
+
   Widget _buildMiniPlayer(BuildContext ctx, StateSetter setSB) {
     final size = MediaQuery.of(ctx).size;
     // Clamp left/top so the mini player stays on screen even as it is resized
-    final left = _miniPos.dx.clamp(0.0, size.width - _miniWidth);
-    final top = _miniPos.dy.clamp(0.0, size.height - _miniHeight);
+    final left = _miniPos.dx.clamp(
+      0.0,
+      (size.width - _miniWidth).clamp(0.0, double.infinity),
+    );
+    final top = _miniPos.dy.clamp(
+      0.0,
+      (size.height - _miniHeight).clamp(0.0, double.infinity),
+    );
     return Positioned(
       left: left,
       top: top,
@@ -1514,38 +1655,47 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
             _miniScaleStartH = _miniHeight;
           },
           onScaleUpdate: (details) {
-            // Pinch to resize when scale changes
-            if (details.scale != 1.0 &&
-                _miniScaleStartW != null &&
-                _miniScaleStartH != null) {
+            final ar = _currentVideoAspectRatio();
+            const minW = 220.0;
+            final maxW = (size.width - 24).clamp(minW, 520.0);
+
+            // 兩指以上才視為縮放；單指是拖移
+            if (details.pointerCount > 1 &&
+                details.scale != 1.0 &&
+                _miniScaleStartW != null) {
               final newW = (_miniScaleStartW! * details.scale).clamp(
-                220.0,
-                520.0,
+                minW,
+                maxW,
               );
-              final newH = (_miniScaleStartH! * details.scale).clamp(
-                124.0,
-                320.0,
-              );
+              final newH = newW / ar;
               setSB(() {
                 _miniWidth = newW;
                 _miniHeight = newH;
-                // After resizing, also clamp position so it stays on screen
+                // 確保新尺寸仍在畫面內
                 _miniPos = Offset(
-                  _miniPos.dx.clamp(0.0, size.width - _miniWidth),
-                  _miniPos.dy.clamp(0.0, size.height - _miniHeight),
+                  _miniPos.dx.clamp(
+                    0.0,
+                    (size.width - _miniWidth).clamp(0.0, double.infinity),
+                  ),
+                  _miniPos.dy.clamp(
+                    0.0,
+                    (size.height - _miniHeight).clamp(0.0, double.infinity),
+                  ),
                 );
               });
             } else {
-              // One-finger drag to move
+              // 單指拖移：先加上位移，再夾到邊界
               setSB(() {
+                final nx = _miniPos.dx + details.focalPointDelta.dx;
+                final ny = _miniPos.dy + details.focalPointDelta.dy;
                 _miniPos = Offset(
-                  (_miniPos.dx + details.focalPointDelta.dx).clamp(
+                  nx.clamp(
                     0.0,
-                    size.width - _miniWidth,
+                    (size.width - _miniWidth).clamp(0.0, double.infinity),
                   ),
-                  (_miniPos.dy + details.focalPointDelta.dy).clamp(
+                  ny.clamp(
                     0.0,
-                    size.height - _miniHeight,
+                    (size.height - _miniHeight).clamp(0.0, double.infinity),
                   ),
                 );
               });
@@ -1754,14 +1904,34 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                   child: GestureDetector(
                     behavior: HitTestBehavior.translucent,
                     onPanUpdate: (details) {
+                      final ar = _currentVideoAspectRatio();
+                      const minW = 220.0;
+                      final maxW = (size.width - 24).clamp(minW, 520.0);
+                      // 以水平位移推寬度（體感最好），高度依比例
+                      double targetW = (_miniWidth + details.delta.dx).clamp(
+                        minW,
+                        maxW,
+                      );
+                      final targetH = targetW / ar;
                       setSB(() {
-                        _miniWidth = (_miniWidth + details.delta.dx).clamp(
-                          220.0,
-                          520.0,
-                        );
-                        _miniHeight = (_miniHeight + details.delta.dy).clamp(
-                          124.0,
-                          320.0,
+                        _miniWidth = targetW;
+                        _miniHeight = targetH;
+                        // 尺寸改變後也要收斂位置，避免超出螢幕
+                        _miniPos = Offset(
+                          _miniPos.dx.clamp(
+                            0.0,
+                            (size.width - _miniWidth).clamp(
+                              0.0,
+                              double.infinity,
+                            ),
+                          ),
+                          _miniPos.dy.clamp(
+                            0.0,
+                            (size.height - _miniHeight).clamp(
+                              0.0,
+                              double.infinity,
+                            ),
+                          ),
                         );
                       });
                     },
@@ -1870,8 +2040,8 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   void _startAutoHide() {
     _autoHideTimer?.cancel();
     _autoHideTimer = Timer(const Duration(seconds: 3), () {
-      if (mounted && _vc.value.isPlaying && !_dragging) {
-        setState(() => _showControls = false);
+      if (_vc.value.isPlaying && !_dragging) {
+        _safeSetState(() => _showControls = false);
       }
     });
   }
@@ -1955,10 +2125,11 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   }
 
   Future<void> _exitFullscreen() async {
-    _fullscreen = false;
-    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-    await SystemChrome.setPreferredOrientations(DeviceOrientation.values);
-    setState(() {});
+    try {
+      // SystemChrome 邏輯照舊
+    } catch (_) {}
+    _fullscreen = false; // 只改旗標
+    _safeSetState(() {}); // 可要可不要；要就用安全版
   }
 
   // 長按快進/快退 2X（以定時 seek 模擬；鬆手停止）

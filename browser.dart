@@ -5,6 +5,9 @@ import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/log.dart';
 import 'package:ffmpeg_kit_flutter_new/session.dart';
 import 'soure.dart';
+
+import 'package:path/path.dart' as path;
+import 'package:path_provider/path_provider.dart';
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:video_player/video_player.dart';
@@ -17,6 +20,13 @@ import 'package:path/path.dart' as path;
 import 'media.dart';
 import 'dart:io' show Platform;
 import 'package:shared_preferences/shared_preferences.dart';
+
+// --- Top-level helper for measuring instantaneous rates (bytes per second)
+class _RateSnapshot {
+  final int bytes;
+  final DateTime ts;
+  const _RateSnapshot(this.bytes, this.ts);
+}
 
 // Represents one browser tab's state (URL text controller, progress, title, etc.)
 class _TabData {
@@ -91,6 +101,53 @@ class _BrowserPageState extends State<BrowserPage> {
       case 'iphone':
       default:
         return 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
+    }
+  }
+
+  Widget _buildThumb(DownloadTask t) {
+    final thumbPath = t.thumbnailPath;
+    if (thumbPath != null && File(thumbPath).existsSync()) {
+      return Image.file(File(thumbPath), fit: BoxFit.cover);
+    }
+
+    // 如果影片檔還存在，但縮圖沒有 → 背景再抓一次縮圖
+    final f = File(t.savePath);
+    if (f.existsSync()) {
+      _regenThumbAsync(t); // 非同步抽圖
+    }
+
+    // 預設顯示一個灰色方塊或 icon
+    return Container(
+      color: Colors.grey.shade800,
+      child: const Icon(Icons.movie, color: Colors.white),
+    );
+  }
+
+  Future<void> _regenThumbAsync(DownloadTask t) async {
+    try {
+      final outDir = path.join(
+        (await getApplicationDocumentsDirectory()).path,
+        'thumbnails',
+      );
+      await Directory(outDir).create(recursive: true);
+      final outPath = path.join(
+        outDir,
+        '${path.basenameWithoutExtension(t.savePath)}.jpg',
+      );
+
+      // ffmpeg 抽取 1 秒處的畫面，縮成寬 320
+      final cmd =
+          "-i '${t.savePath}' -ss 00:00:01.000 -vframes 1 -vf scale=320:-1 '$outPath'";
+      await FFmpegKit.execute(cmd);
+
+      if (File(outPath).existsSync()) {
+        setState(() {
+          t.thumbnailPath = outPath;
+        });
+        AppRepo.I.updateDownload(t);
+      }
+    } catch (e) {
+      debugPrint('縮圖生成失敗: $e');
     }
   }
 
@@ -427,6 +484,27 @@ class _BrowserPageState extends State<BrowserPage> {
         ty.contains('m3u8');
   }
 
+  /// Whether this entry should be counted as a real "download task"
+  /// (used by the badge and sheet). Excludes local/imported/library items.
+  bool _isDownloadTaskEntry(DownloadTask t) {
+    final s = (t.state).toString().toLowerCase();
+    final isLocalUrl =
+        t.url.startsWith('file://') ||
+        t.url.startsWith('/') ||
+        t.url.startsWith('asset://');
+    final fromLibrary =
+        (t.kind == 'library' || t.kind == 'local' || t.kind == 'import');
+    final isTaskState =
+        s == 'downloading' ||
+        s == 'paused' ||
+        s == 'queued' ||
+        s == 'error' ||
+        s == 'done' ||
+        s == 'canceled' ||
+        s == 'cancelled';
+    return !isLocalUrl && !fromLibrary && isTaskState;
+  }
+
   /// Produce a compact progress text for a download entry.
   /// For HLS/segmented tasks we hide size until finished as requested.
   String _currentReceived(DownloadTask t) {
@@ -494,6 +572,13 @@ class _BrowserPageState extends State<BrowserPage> {
     repo.setOpenTabs(urls);
   }
 
+  Future<void> _persistCurrentTabIndex() async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      await sp.setInt('current_tab_index', _currentTabIndex);
+    } catch (_) {}
+  }
+
   /// Build the horizontal scrollable tab bar used below the toolbar. Each
   /// tab displays its page title or URL and includes a close button when
   /// more than one tab is present. A plus button at the end allows users
@@ -526,6 +611,7 @@ class _BrowserPageState extends State<BrowserPage> {
                         setState(() {
                           _currentTabIndex = i;
                         });
+                        _persistCurrentTabIndex();
                       },
                       child: Text(
                         _tabs[i].pageTitle?.isNotEmpty == true
@@ -662,11 +748,13 @@ class _BrowserPageState extends State<BrowserPage> {
                   _currentTabIndex = _tabs.length - 1;
                 });
                 _updateOpenTabs();
+                _persistCurrentTabIndex();
               },
               onSelect: (int index) {
                 setState(() {
                   _currentTabIndex = index;
                 });
+                _persistCurrentTabIndex();
               },
               onClose: (int index) {
                 setState(() {
@@ -680,6 +768,7 @@ class _BrowserPageState extends State<BrowserPage> {
                   }
                 });
                 _updateOpenTabs();
+                _persistCurrentTabIndex();
               },
             ),
       ),
@@ -930,7 +1019,22 @@ class _BrowserPageState extends State<BrowserPage> {
     // created from saved state. This ensures that any default blank tab
     // also gets persisted.
     _updateOpenTabs();
-
+    // Restore last active tab index (default 0), clamp to valid range.
+    () async {
+      final sp = await SharedPreferences.getInstance();
+      int idx = sp.getInt('current_tab_index') ?? 0;
+      if (_tabs.isNotEmpty) {
+        if (idx < 0) idx = 0;
+        if (idx >= _tabs.length) idx = _tabs.length - 1;
+        if (mounted) {
+          setState(() {
+            _currentTabIndex = idx;
+          });
+        } else {
+          _currentTabIndex = idx;
+        }
+      }
+    }();
     // When a pending URL is set via the home page, load it automatically in
     // the current browser tab.
     repo.pendingOpenUrl.addListener(() {
@@ -945,6 +1049,18 @@ class _BrowserPageState extends State<BrowserPage> {
         repo.pendingOpenUrl.value = null;
       }
     });
+
+    // Load saved snifferEnabled preference, default to false if not set.
+    () async {
+      final sp = await SharedPreferences.getInstance();
+      if (!sp.containsKey('sniffer_enabled')) {
+        repo.setSnifferEnabled(false);
+        await sp.setBool('sniffer_enabled', false);
+      } else {
+        final saved = sp.getBool('sniffer_enabled') ?? false;
+        repo.setSnifferEnabled(saved);
+      }
+    }();
   }
 
   @override
@@ -1318,6 +1434,7 @@ class _BrowserPageState extends State<BrowserPage> {
       });
       _tabs.add(tab);
       _currentTabIndex = 0;
+      _persistCurrentTabIndex();
     });
     _updateOpenTabs();
   }
@@ -1367,6 +1484,9 @@ class _BrowserPageState extends State<BrowserPage> {
                     onPressed: () async {
                       final next = !on;
                       repo.setSnifferEnabled(next);
+                      // Persist snifferEnabled to preferences
+                      final sp = await SharedPreferences.getInstance();
+                      await sp.setBool('sniffer_enabled', next);
                       // apply to current page
                       if (_tabs.isNotEmpty) {
                         final tab = _tabs[_currentTabIndex];
@@ -1455,7 +1575,7 @@ class _BrowserPageState extends State<BrowserPage> {
               ValueListenableBuilder<List<DownloadTask>>(
                 valueListenable: repo.downloads,
                 builder: (context, list, _) {
-                  final count = list.length;
+                  final count = list.where(_isDownloadTaskEntry).length;
                   return Stack(
                     clipBehavior: Clip.none,
                     children: [
@@ -2208,6 +2328,40 @@ class _BrowserPageState extends State<BrowserPage> {
     );
   }
 
+  /// --- Download speed helpers ---
+
+  /// key => snapshot (key can be url or savePath+phase)
+  final Map<String, _RateSnapshot> _rateSnaps = {};
+
+  String _fmtSpeed(num bps) {
+    // bytes per second to human friendly string without specifying colors
+    const units = ['B/s', 'KB/s', 'MB/s', 'GB/s', 'TB/s'];
+    double v = bps.toDouble();
+    int i = 0;
+    while (v >= 1024.0 && i < units.length - 1) {
+      v /= 1024.0;
+      i++;
+    }
+    return '${v.toStringAsFixed(v >= 100 ? 0 : (v >= 10 ? 1 : 2))} ${units[i]}';
+  }
+
+  _RateSnapshot _snapNow(int bytes) => _RateSnapshot(bytes, DateTime.now());
+
+  /// Computes speed in B/s based on previous snapshot.
+  /// Returns null if not enough data yet.
+  double? _computeSpeed(String key, int bytesNow) {
+    final prev = _rateSnaps[key];
+    _rateSnaps[key] = _snapNow(bytesNow);
+    if (prev == null) return null;
+    final dt = DateTime.now().difference(prev.ts).inMilliseconds / 1000.0;
+    if (dt <= 0) return null;
+    final db = bytesNow - prev.bytes;
+    if (db <= 0) return null;
+    return db / dt;
+  }
+
+  /// --- end helpers ---
+
   /// Shows a bottom sheet listing all current download tasks. Each entry
   /// displays its name (or URL), status, timestamp, and progress. This
   /// provides quick visibility into ongoing and completed downloads without
@@ -2221,8 +2375,19 @@ class _BrowserPageState extends State<BrowserPage> {
             animation: AppRepo.I,
             builder: (_, __) {
               final list = repo.downloads.value;
-              final tasks = [...list]
-                ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+
+              // 只顯示「下載任務」：與工具列徽章一致
+              final tasks =
+                  list.where(_isDownloadTaskEntry).toList()
+                    ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+              // 檢查並補齊缺失縮圖（重啟後快取丟失時自動重建）
+              for (final t in tasks) {
+                final p = t.thumbnailPath;
+                if (p == null || p.isEmpty || !File(p).existsSync()) {
+                  _regenThumbAsync(t); // 背景抽圖，完成會 setState + 持久化
+                }
+              }
+
               if (tasks.isEmpty) {
                 return const Padding(
                   padding: EdgeInsets.all(16),
@@ -2255,14 +2420,6 @@ class _BrowserPageState extends State<BrowserPage> {
                                 ),
                               );
                             }
-                          },
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.menu),
-                          tooltip: '選單',
-                          onPressed: () {
-                            Navigator.pop(context);
-                            _scaffoldKey.currentState?.openEndDrawer();
                           },
                         ),
                       ],
@@ -2311,6 +2468,11 @@ class _BrowserPageState extends State<BrowserPage> {
         t.state == 'downloading' &&
         (t.total != null && t.received < t.total!);
 
+    // --- Speed calculation setup ---
+
+    String speedKeyPhase = 'dl';
+    int? speedBytesNow;
+
     // Compute progress percentage. For HLS segment downloads, this is the
     // fraction of segments downloaded. For file downloads, it is the
     // fraction of bytes downloaded. When progress cannot be determined, it
@@ -2333,32 +2495,27 @@ class _BrowserPageState extends State<BrowserPage> {
       progressPercent = t.received / (t.total!.toDouble());
     }
 
-    // Determine the leading icon or thumbnail. Use a saved thumbnail if
-    // available; otherwise fall back to an icon based on media type.
-    Widget leading;
-    if (t.thumbnailPath != null && File(t.thumbnailPath!).existsSync()) {
-      leading = ClipRRect(
-        borderRadius: BorderRadius.circular(6),
-        child: Image.file(
-          File(t.thumbnailPath!),
-          width: 44,
-          height: 44,
-          fit: BoxFit.cover,
-        ),
-      );
-    } else if (t.type == 'video') {
-      leading = const Icon(Icons.ondemand_video);
-    } else if (t.type == 'audio') {
-      leading = const Icon(Icons.audiotrack);
-    } else if (t.type == 'image') {
-      leading = const Icon(Icons.image);
-    } else {
-      leading = const Icon(Icons.insert_drive_file);
+    // Decide which byte counter to use for speed:
+    // - 非 HLS：使用 t.received（bytes）
+    // - HLS 轉檔階段：使用輸出檔案大小
+    // - HLS 片段下載階段：無法可靠取得 bytes，暫不顯示
+    if (!isHls && t.state == 'downloading') {
+      speedBytesNow = t.received;
+      speedKeyPhase = 'dl';
+    } else if (isConverting) {
+      try {
+        final f = File(t.savePath);
+        if (f.existsSync()) {
+          speedBytesNow = f.lengthSync();
+          speedKeyPhase = 'conv';
+        }
+      } catch (_) {}
     }
 
     // Build the subtitle lines dynamically. Use a list to collect lines and
     // later spread them into the Column.
     final List<Widget> subtitleWidgets = [];
+    bool _addedSize = false;
     // First line: the URL (truncated)
     subtitleWidgets.add(
       Text(
@@ -2401,6 +2558,25 @@ class _BrowserPageState extends State<BrowserPage> {
           ),
         );
       }
+      // 以「片段/秒」顯示近似速度（HLS 片段階段無可靠 byte 計數）
+      final segKey = '${t.savePath}|seg';
+      final segRate = _computeSpeed(
+        segKey,
+        t.received,
+      ); // delta segments per second
+      if (segRate != null) {
+        subtitleWidgets.add(
+          Text(
+            '速度: ${segRate.toStringAsFixed(2)} 片段/秒',
+            style: const TextStyle(fontSize: 12),
+          ),
+        );
+      } else {
+        _rateSnaps[segKey] = _snapNow(t.received);
+        subtitleWidgets.add(
+          const Text('速度: 測量中…', style: TextStyle(fontSize: 12)),
+        );
+      }
     } else if (isHls &&
         t.progressUnit == 'time-ms' &&
         t.total != null &&
@@ -2416,13 +2592,14 @@ class _BrowserPageState extends State<BrowserPage> {
       // 顯示目前檔案大小（可選）
       try {
         final f = File(t.savePath);
-        if (f.existsSync()) {
+        if (f.existsSync() && !_addedSize) {
           subtitleWidgets.add(
             Text(
               '大小: ${_fmtSize(f.lengthSync())}',
               style: const TextStyle(fontSize: 12),
             ),
           );
+          _addedSize = true;
         }
       } catch (_) {}
     }
@@ -2432,14 +2609,15 @@ class _BrowserPageState extends State<BrowserPage> {
     if (isConverting) {
       try {
         final f = File(t.savePath);
-        if (f.existsSync()) {
+        if (f.existsSync() && !_addedSize) {
           subtitleWidgets.add(
             Text(
               '大小: ${_fmtSize(f.lengthSync())}',
               style: const TextStyle(fontSize: 12),
             ),
           );
-        } else {
+          _addedSize = true;
+        } else if (!f.existsSync()) {
           subtitleWidgets.add(
             const Text('大小: 轉換中…', style: TextStyle(fontSize: 12)),
           );
@@ -2470,21 +2648,54 @@ class _BrowserPageState extends State<BrowserPage> {
             ),
           );
         }
+        // 顯示直接下載檔案的即時速度（非 HLS）
+        final keyDirect = '${t.savePath}|bytes';
+        final spDirect = _computeSpeed(keyDirect, t.received);
+        if (spDirect != null) {
+          subtitleWidgets.add(
+            Text(
+              '速度: ${_fmtSpeed(spDirect)}',
+              style: const TextStyle(fontSize: 12),
+            ),
+          );
+        } else {
+          _rateSnaps[keyDirect] = _snapNow(t.received);
+          subtitleWidgets.add(
+            const Text('速度: 測量中…', style: TextStyle(fontSize: 12)),
+          );
+        }
       } else if (t.state == 'done' || t.state == 'error') {
         try {
           final f = File(t.savePath);
-          if (f.existsSync()) {
+          if (f.existsSync() && !_addedSize) {
             subtitleWidgets.add(
               Text(
                 '大小: ${_fmtSize(f.lengthSync())}',
                 style: const TextStyle(fontSize: 12),
               ),
             );
+            _addedSize = true;
           }
         } catch (_) {}
       }
     } else if (isHls && t.state == 'done') {
       // HLS tasks that have completed conversion: show final size.
+      try {
+        final f = File(t.savePath);
+        if (f.existsSync() && !_addedSize) {
+          subtitleWidgets.add(
+            Text(
+              '大小: ${_fmtSize(f.lengthSync())}',
+              style: const TextStyle(fontSize: 12),
+            ),
+          );
+          _addedSize = true;
+        }
+      } catch (_) {}
+    }
+
+    // 任何 downloading 狀態下的通用「目前檔案大小」顯示（若前面尚未加入大小）
+    if (t.state == 'downloading' && !_addedSize) {
       try {
         final f = File(t.savePath);
         if (f.existsSync()) {
@@ -2494,9 +2705,27 @@ class _BrowserPageState extends State<BrowserPage> {
               style: const TextStyle(fontSize: 12),
             ),
           );
+          _addedSize = true;
         }
       } catch (_) {}
     }
+    // 顯示即時下載/轉換速度
+    if (speedBytesNow != null) {
+      final key = '${t.savePath}|$speedKeyPhase';
+      final sp = _computeSpeed(key, speedBytesNow!);
+      if (sp != null) {
+        subtitleWidgets.add(
+          Text('速度: ${_fmtSpeed(sp)}', style: const TextStyle(fontSize: 12)),
+        );
+      } else {
+        // 首次建立快照時先不顯示數值（避免顯示 0）
+        _rateSnaps[key] = _snapNow(speedBytesNow!);
+        subtitleWidgets.add(
+          const Text('速度: 測量中…', style: TextStyle(fontSize: 12)),
+        );
+      }
+    }
+
     // Append duration information when available. If unavailable and the
     // media is audio/video, show a placeholder.
     if (t.duration != null) {
@@ -2512,8 +2741,16 @@ class _BrowserPageState extends State<BrowserPage> {
       );
     }
 
-    // 對於 HLS 轉換中，使用小型 ticker 讓大小文字即時刷新
-    final needsTicker = isConverting;
+    // 對於 HLS 轉換中或下載中，使用小型 ticker 讓速度/大小文字即時刷新
+    final needsTicker = isConverting || t.state == 'downloading';
+    // Periodic rebuild to refresh speed/progress while active.
+    Widget _wrapWithTicker(Widget child) {
+      if (!needsTicker) return child;
+      return StreamBuilder<int>(
+        stream: Stream.periodic(const Duration(milliseconds: 800), (i) => i),
+        builder: (_, __) => child,
+      );
+    }
 
     Widget buildTile() {
       // Build and return the ListTile. Action buttons for pause/resume/delete
@@ -2523,7 +2760,7 @@ class _BrowserPageState extends State<BrowserPage> {
         isThreeLine: true,
         dense: false,
         minVerticalPadding: 8,
-        leading: leading,
+        leading: SizedBox(width: 64, height: 64, child: _buildThumb(t)),
         title: Text(
           t.name ?? path.basename(t.savePath),
           maxLines: 2,
@@ -2567,6 +2804,21 @@ class _BrowserPageState extends State<BrowserPage> {
             ),
           ],
         ),
+        onTap: () async {
+          // 僅在已完成的情況下點擊播放
+          if ((t.state).toString().toLowerCase() == 'done') {
+            String playPath = t.savePath;
+            try {
+              if (playPath.isEmpty || !File(playPath).existsSync()) {
+                playPath = t.url;
+              }
+            } catch (_) {
+              playPath = t.url;
+            }
+            // 使用內建播放器播放（支援 iOS 子母畫面 PiP）
+            _playMedia(playPath);
+          }
+        },
       );
     }
 
@@ -2779,10 +3031,16 @@ class _TabManagerPageState extends State<_TabManagerPage> {
             iconSize: 30,
             icon: const Icon(Icons.add_box_outlined),
             onPressed: () {
+              // Create a real tab in the BrowserPage first
               widget.onAdd();
+              // Determine new index (= current local list length before append)
+              final int newIndex = _localTabs.length;
               setState(() {
                 _localTabs.add(_TabInfo(title: '新分頁'));
               });
+              // Switch to the newly created tab and close this manager
+              widget.onSelect(newIndex);
+              Navigator.of(context).pop();
             },
           ),
         ],
@@ -2813,9 +3071,12 @@ class _TabManagerPageState extends State<_TabManagerPage> {
                     return GestureDetector(
                       onTap: () {
                         widget.onAdd();
+                        final int newIndex = _localTabs.length;
                         setState(() {
                           _localTabs.add(_TabInfo(title: '新分頁'));
                         });
+                        widget.onSelect(newIndex);
+                        Navigator.of(context).pop();
                       },
                       child: Container(
                         decoration: BoxDecoration(

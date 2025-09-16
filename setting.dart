@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'soure.dart';
 import 'dart:io' show Platform;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 /// SettingPage exposes preferences such as whether downloads are
 /// automatically saved to the photo album and provides a way to clear
@@ -211,14 +212,27 @@ class _SettingPageState extends State<SettingPage> {
           ListTile(
             leading: const Icon(Icons.privacy_tip_outlined),
             title: const Text('版權與使用聲明'),
-            subtitle: const Text('請僅下載您擁有或獲授權的內容；加密 DRM 流可能無法下載'),
+            subtitle: const Text(
+              '本應用程式僅提供技術工具，用戶的所有使用行為均與作者無關。請尊重智慧財產權，僅下載您擁有或已獲授權的內容；加密 DRM 流可能無法下載',
+            ),
           ),
           const Divider(height: 1),
           ListTile(
             leading: const Icon(Icons.info_outline),
             title: const Text('關於'),
-            subtitle: const Text('Sniffer Browser Demo 1.0.0'),
-            onTap: () {},
+            subtitle: const Text(
+              'Yi Apps Copyright © Yi Browser \n聯絡我們: tzuyichan0406@gmail.com',
+            ),
+            onTap: () async {
+              final Uri emailLaunchUri = Uri(
+                scheme: 'mailto',
+                path: 'tzuyichan0406@gmail.com',
+                query: 'subject=App 聯絡&body=您好，',
+              );
+              if (await canLaunchUrl(emailLaunchUri)) {
+                await launchUrl(emailLaunchUri);
+              }
+            },
           ),
         ],
       ),

@@ -15,6 +15,7 @@ import AVFoundation
     } catch {
       print("[PiP] AVAudioSession error: \(error)")
     }
+      
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 }

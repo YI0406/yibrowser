@@ -1379,6 +1379,30 @@ class AppRepo extends ChangeNotifier {
     _saveState();
   }
 
+  /// Update a single download task and persist changes.
+  /// If the task instance is not found by identity, we match by savePath,
+  /// then by url, to avoid creating duplicates after app restarts.
+  void updateDownload(DownloadTask t) {
+    final list = [...downloads.value];
+    int idx = list.indexWhere((e) => identical(e, t));
+    if (idx < 0) {
+      idx = list.indexWhere((e) => e.savePath == t.savePath);
+    }
+    if (idx < 0) {
+      idx = list.indexWhere((e) => e.url == t.url);
+    }
+    if (idx >= 0) {
+      list[idx] = t;
+    } else {
+      // As a last resort, append; this should be rare.
+      list.add(t);
+    }
+    downloads.value = list; // trigger listeners
+    notifyListeners();
+    // persist asynchronously so we don't block UI
+    unawaited(_saveState());
+  }
+
   /// Update the automatic saving setting. When true newly downloaded files
   /// will be copied into the photo gallery. Persists the preference.
   void setAutoSave(bool value) {
