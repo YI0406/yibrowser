@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 // Global navigator key for overlay access outside BuildContext
 import 'package:pip/pip.dart';
 import 'dart:async';
+import 'dart:ui';
 import 'package:flutter/services.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:flutter_in_app_pip/flutter_in_app_pip.dart';

@@ -22,6 +22,7 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
   private var playerStatusObservation: NSKeyValueObservation?
   private var playerLayerReadyObservation: NSKeyValueObservation?
   private var pipPossibleObservation: NSKeyValueObservation?
+  private var timeControlObservation: NSKeyValueObservation?
   private var timeObserver: Any?
 
   private var currentUrl: String?
@@ -45,13 +46,23 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
   // hierarchy. PiP requires the layer to belong to a view even if that view is
   // not visible.
   private let hostView: UIView = {
-    let view = UIView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
+      let view = UIView(frame: .zero)
     view.isHidden = true
     view.backgroundColor = .clear
     view.translatesAutoresizingMaskIntoConstraints = false
     return view
   }()
+    private var hostViewWidthConstraint: NSLayoutConstraint?
+    private var hostViewHeightConstraint: NSLayoutConstraint?
+    private var hostViewLeadingConstraint: NSLayoutConstraint?
+    private var hostViewTopConstraint: NSLayoutConstraint?
 
+  private func updateSystemAutoPiP() {
+    if #available(iOS 14.2, *) {
+      let playing = player?.timeControlStatus == .playing
+      pipController?.canStartPictureInPictureAutomaticallyFromInline = playing
+    }
+  }
   private override init() {
     super.init()
   }
@@ -61,11 +72,22 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
 
     flutterController = controller
     controller.view.addSubview(hostView)
+      
+      let widthConstraint = hostView.widthAnchor.constraint(equalToConstant: 1)
+      let heightConstraint = hostView.heightAnchor.constraint(equalToConstant: 1)
+      let leadingConstraint = hostView.leadingAnchor.constraint(equalTo: controller.view.leadingAnchor)
+      let topConstraint = hostView.topAnchor.constraint(equalTo: controller.view.topAnchor)
+
+      hostViewWidthConstraint = widthConstraint
+      hostViewHeightConstraint = heightConstraint
+      hostViewLeadingConstraint = leadingConstraint
+      hostViewTopConstraint = topConstraint
+
     NSLayoutConstraint.activate([
-      hostView.widthAnchor.constraint(equalToConstant: 1),
-      hostView.heightAnchor.constraint(equalToConstant: 1),
-      hostView.leadingAnchor.constraint(equalTo: controller.view.leadingAnchor),
-      hostView.topAnchor.constraint(equalTo: controller.view.topAnchor),
+        widthConstraint,
+             heightConstraint,
+             leadingConstraint,
+             topConstraint,
     ])
 
     let methodChannel = FlutterMethodChannel(
@@ -79,7 +101,28 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
 
     registerLifecycleNotificationsIfNeeded()
   }
+    func updateHostViewFrame(x: CGFloat, y: CGFloat, width: CGFloat, height: CGFloat) {
+       DispatchQueue.main.async { [weak self] in
+         guard let self, let flutterView = self.flutterController?.view else { return }
 
+         let targetRect = CGRect(x: x, y: y, width: width, height: height)
+         let convertedRect: CGRect
+         if flutterView.window != nil {
+           convertedRect = flutterView.convert(targetRect, from: nil)
+         } else {
+           convertedRect = targetRect
+         }
+
+         self.hostViewWidthConstraint?.constant = max(convertedRect.width, 0)
+         self.hostViewHeightConstraint?.constant = max(convertedRect.height, 0)
+         self.hostViewLeadingConstraint?.constant = convertedRect.origin.x
+         self.hostViewTopConstraint?.constant = convertedRect.origin.y
+
+         flutterView.layoutIfNeeded()
+         self.playerLayer?.frame = self.hostView.bounds
+       }
+     }
+    
   func primePiP(url: String?, positionMs: Int?, result: @escaping FlutterResult) {
     DispatchQueue.main.async { [weak self] in
       guard let self else {
@@ -182,32 +225,18 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
   }
 
   @objc private func onApplicationWillResignActive(_ notification: Notification) {
-      if autoStartArmed && !autoStartInProgress && pipController != nil {
-        autoStartInProgress = true
-        shouldAttemptStartWhenReady = true
-      }
-      if pendingStartResult != nil || autoStartInProgress {
-      // Arm and try to start immediately while the scene is still active
-      shouldAttemptStartWhenReady = true
-      startPiPWhenPossible()
-    } else {
-      shouldAttemptStartWhenReady = false
-    }
+    autoStartInProgress = false
+    shouldAttemptStartWhenReady = false
+    updateSystemAutoPiP()
   }
 
   @available(iOS 13.0, *)
   @objc private func onSceneWillDeactivate(_ notification: Notification) {
     guard let scene = notification.object as? UIScene else { return }
     lifecycleSceneHint = scene
-      if autoStartArmed && !autoStartInProgress && pipController != nil {
-          autoStartInProgress = true
-          shouldAttemptStartWhenReady = true
-        }
-        if pendingStartResult != nil || autoStartInProgress {
-      startPiPWhenPossible()
-    } else {
-      shouldAttemptStartWhenReady = false
-    }
+    autoStartInProgress = false
+    shouldAttemptStartWhenReady = false
+    updateSystemAutoPiP()
   }
 
   @objc private func onDidBecomeActive(_ notification: Notification) {
@@ -230,19 +259,22 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
         shouldAttemptStartWhenReady = false
       }
     }
+    updateSystemAutoPiP()
   }
 
   @objc private func onApplicationDidEnterBackground(_ notification: Notification) {
-    shouldAttemptStartWhenReady = true
-    startPiPWhenPossible()
+    // Do not manual-start in background; rely on system auto‑PiP only when user goes Home.
+    shouldAttemptStartWhenReady = false
+    updateSystemAutoPiP()
   }
 
   @available(iOS 13.0, *)
   @objc private func onSceneDidEnterBackground(_ notification: Notification) {
     guard let scene = notification.object as? UIScene else { return }
     lifecycleSceneHint = scene
-    shouldAttemptStartWhenReady = true
-    startPiPWhenPossible()
+    // Do not manual-start in background.
+    shouldAttemptStartWhenReady = false
+    updateSystemAutoPiP()
   }
 
   private func handle(call: FlutterMethodCall, result: @escaping FlutterResult) {
@@ -262,6 +294,24 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
       let url = args?["url"] as? String
       let positionMs = args?["positionMs"] as? Int
       startPiP(url: url, positionMs: positionMs, result: result)
+    case "updateHostViewFrame":
+          guard
+            let args = call.arguments as? [String: Any],
+            let x = args["x"] as? Double,
+            let y = args["y"] as? Double,
+            let width = args["width"] as? Double,
+            let height = args["height"] as? Double
+          else {
+            result(FlutterError(code: "invalid_args", message: "Missing frame values", details: nil))
+            return
+          }
+          updateHostViewFrame(
+            x: CGFloat(x),
+            y: CGFloat(y),
+            width: CGFloat(width),
+            height: CGFloat(height)
+          )
+          result(nil)
     case "exit":
       stopPiP(result: result)
     default:
@@ -413,6 +463,9 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
 
     pipController.delegate = self
     pipController.requiresLinearPlayback = false
+    if #available(iOS 14.2, *) {
+      pipController.canStartPictureInPictureAutomaticallyFromInline = false
+    }
     print("[PiP] preparePlayer: pipController configured (requiresLinearPlayback=false)")
 
     pipPossibleObservation = pipController.observe(
@@ -422,7 +475,12 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
       guard let possible = change.newValue, possible else { return }
       print("[PiP] KVO: isPictureInPicturePossible -> \(possible)")
       DispatchQueue.main.async {
-        self?.startPiPWhenPossible()
+        if #available(iOS 14.2, *) {
+          // Defer to system auto‑PiP; do not manual‑start.
+          self?.updateSystemAutoPiP()
+        } else {
+          self?.startPiPWhenPossible()
+        }
       }
     }
 
@@ -433,7 +491,11 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
         DispatchQueue.main.async {
           self.finishPrimingPlaybackIfNeeded()
           self.applyPendingSeekIfNeeded()
-          self.startPiPWhenPossible()
+          if #available(iOS 14.2, *) {
+            self.updateSystemAutoPiP()
+          } else {
+            self.startPiPWhenPossible()
+          }
         }
       }
     }
@@ -445,7 +507,11 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
         print("[PiP] KVO: layer.isReadyForDisplay == true")
         DispatchQueue.main.async {
           self.finishPrimingPlaybackIfNeeded()
-          self.startPiPWhenPossible()
+          if #available(iOS 14.2, *) {
+            self.updateSystemAutoPiP()
+          } else {
+            self.startPiPWhenPossible()
+          }
         }
       }
     }
@@ -455,6 +521,9 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
       queue: .main
     ) { [weak self] time in
       self?.lastKnownPosition = time
+    }
+    timeControlObservation = player.observe(\.timeControlStatus, options: [.new]) { [weak self] _, _ in
+      self?.updateSystemAutoPiP()
     }
 
     self.player = player
@@ -481,6 +550,10 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
   }
 
   private func startPiPWhenPossible() {
+    if #available(iOS 14.2, *) {
+      // Hand off entirely to system auto‑PiP on modern iOS; do not attempt manual start.
+      return
+    }
     guard shouldAttemptStartWhenReady else { return }
     guard let controller = pipController else { return }
     guard pendingStartResult != nil || autoStartInProgress else { return }
@@ -491,16 +564,12 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
       return
     }
 
-  
     if #available(iOS 13.0, *) {
       if let activeScene = flutterController?.view.window?.windowScene {
         lifecycleSceneHint = activeScene
       }
-
     }
 
- 
-      
     if player?.timeControlStatus != .playing {
       player?.play()
     }
@@ -546,6 +615,7 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
       player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero)
       lastKnownPosition = target
     }
+    updateSystemAutoPiP()
   }
 
   private func applyPrimingTargetImmediatelyIfNeeded() {
@@ -567,6 +637,7 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
       player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero)
       lastKnownPosition = target
     }
+    updateSystemAutoPiP()
   }
 
   private func completePendingStart(success: Bool) {
@@ -628,7 +699,13 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
     unregisterLifecycleNotifications()
     shouldAttemptStartWhenReady = false
     lifecycleSceneHint = nil
-      autoStartInProgress = false
+    autoStartInProgress = false
+
+    timeControlObservation?.invalidate()
+    timeControlObservation = nil
+    if #available(iOS 14.2, *) {
+      pipController?.canStartPictureInPictureAutomaticallyFromInline = false
+    }
 
     if let token = timeObserver {
       player?.removeTimeObserver(token)
@@ -711,3 +788,4 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
     unregisterLifecycleNotifications()
   }
 }
+    

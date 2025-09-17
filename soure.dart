@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:ui' show Offset; // for mini player free-positioning
+import 'dart:ui'
+    show Offset, Rect; // for mini player free-positioning & PiP sync
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
@@ -2778,6 +2779,17 @@ class SystemPip {
     } catch (_) {
       return false;
     }
+  }
+
+  static Future<void> updateHostViewFrame(Rect rect) async {
+    try {
+      await _ch.invokeMethod('updateHostViewFrame', {
+        'x': rect.left,
+        'y': rect.top,
+        'width': rect.width,
+        'height': rect.height,
+      });
+    } catch (_) {}
   }
 
   static Future<bool> isAvailable() async {
