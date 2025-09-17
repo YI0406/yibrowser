@@ -1,7 +1,7 @@
+import UIKit
 import AVFoundation
 import AVKit
 import Flutter
-import UIKit
 
 /// Native iOS picture-in-picture controller that is driven via the
 /// `MethodChannel('app.pip')` channel from Dart. The Dart side only supplies
@@ -20,6 +20,7 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
   private var player: AVPlayer?
   private var playerLayer: AVPlayerLayer?
   private var playerStatusObservation: NSKeyValueObservation?
+  private var playerLayerReadyObservation: NSKeyValueObservation?
   private var pipPossibleObservation: NSKeyValueObservation?
   private var timeObserver: Any?
 
@@ -29,6 +30,11 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
   private var pendingStopResult: FlutterResult?
   private var pendingStopPosition: Int?
   private var lastKnownPosition: CMTime = .zero
+
+  private var lifecycleNotificationsRegistered = false
+  private var shouldAttemptStartWhenReady = false
+  @available(iOS 13.0, *)
+  private weak var lifecycleSceneHint: UIScene?
 
   // Invisible host view that keeps the AVPlayerLayer attached to the view
   // hierarchy. PiP requires the layer to belong to a view even if that view is
@@ -66,18 +72,108 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
     }
     channel = methodChannel
 
+    registerLifecycleNotificationsIfNeeded()
+  }
+
+  func primePiP(url: String?, positionMs: Int?, result: @escaping FlutterResult) {
+    DispatchQueue.main.async { [weak self] in
+      guard let self else {
+        result(false)
+        return
+      }
+      self.registerLifecycleNotificationsIfNeeded()
+      guard AVPictureInPictureController.isPictureInPictureSupported() else {
+        result(false)
+        return
+      }
+      if let providedUrl = url, !providedUrl.isEmpty {
+        if self.currentUrl != providedUrl {
+          guard self.preparePlayer(with: providedUrl, autoPlay: false) else {
+            result(false)
+            return
+          }
+        }
+      } else if self.player == nil {
+        result(false)
+        return
+      }
+      if let ms = positionMs {
+        self.seek(toMilliseconds: ms)
+      }
+      result(true)
+    }
+  }
+
+  private func registerLifecycleNotificationsIfNeeded() {
+    guard !lifecycleNotificationsRegistered else { return }
+    lifecycleNotificationsRegistered = true
+
     NotificationCenter.default.addObserver(
       self,
-      selector: #selector(self.onWillResignActive),
+      selector: #selector(onApplicationWillResignActive(_:)),
       name: UIApplication.willResignActiveNotification,
       object: nil
     )
-    NotificationCenter.default.addObserver(
-      self,
-      selector: #selector(self.onDidBecomeActive),
-      name: UIApplication.didBecomeActiveNotification,
-      object: nil
-    )
+
+    if #available(iOS 13.0, *) {
+      NotificationCenter.default.addObserver(
+        self,
+        selector: #selector(onSceneWillDeactivate(_:)),
+        name: UIScene.willDeactivateNotification,
+        object: nil
+      )
+      NotificationCenter.default.addObserver(
+        self,
+        selector: #selector(onDidBecomeActive(_:)),
+        name: UIScene.didActivateNotification,
+        object: nil
+      )
+    } else {
+      NotificationCenter.default.addObserver(
+        self,
+        selector: #selector(onDidBecomeActive(_:)),
+        name: UIApplication.didBecomeActiveNotification,
+        object: nil
+      )
+    }
+  }
+
+  private func unregisterLifecycleNotifications() {
+    guard lifecycleNotificationsRegistered else { return }
+    lifecycleNotificationsRegistered = false
+
+    NotificationCenter.default.removeObserver(self, name: UIApplication.willResignActiveNotification, object: nil)
+
+    if #available(iOS 13.0, *) {
+      NotificationCenter.default.removeObserver(self, name: UIScene.willDeactivateNotification, object: nil)
+      NotificationCenter.default.removeObserver(self, name: UIScene.didActivateNotification, object: nil)
+    } else {
+      NotificationCenter.default.removeObserver(self, name: UIApplication.didBecomeActiveNotification, object: nil)
+    }
+  }
+
+  @objc private func onApplicationWillResignActive(_ notification: Notification) {
+    shouldAttemptStartWhenReady = false
+  }
+
+  @available(iOS 13.0, *)
+  @objc private func onSceneWillDeactivate(_ notification: Notification) {
+    guard let scene = notification.object as? UIScene else { return }
+    lifecycleSceneHint = scene
+    shouldAttemptStartWhenReady = false
+  }
+
+  @objc private func onDidBecomeActive(_ notification: Notification) {
+    if #available(iOS 13.0, *) {
+      guard let scene = notification.object as? UIScene else { return }
+      if lifecycleSceneHint == nil || lifecycleSceneHint === scene {
+        shouldAttemptStartWhenReady = true
+        startPiPWhenPossible()
+      }
+    } else {
+      shouldAttemptStartWhenReady = true
+      startPiPWhenPossible()
+    }
   }
 
   private func handle(call: FlutterMethodCall, result: @escaping FlutterResult) {
@@ -85,17 +181,6 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
     case "isAvailable":
       DispatchQueue.main.async {
         result(AVPictureInPictureController.isPictureInPictureSupported())
-      }
-    case "prepare":
-      let args = call.arguments as? [String: Any]
-      let url = args?["url"] as? String
-      let positionMs = args?["positionMs"] as? Int
-      let ok = self.preparePlayer(with: url ?? "")
-      if ok {
-        if let ms = positionMs { self.seek(toMilliseconds: ms) }
-        result(true)
-      } else {
-        result(false)
       }
     case "enter":
       let args = call.arguments as? [String: Any]
@@ -116,6 +201,8 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
         return
       }
 
+      self.registerLifecycleNotificationsIfNeeded()
+
       guard AVPictureInPictureController.isPictureInPictureSupported() else {
         result(false)
         return
@@ -123,7 +210,7 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
 
       if let providedUrl = url, !providedUrl.isEmpty {
         if self.currentUrl != providedUrl {
-          guard self.preparePlayer(with: providedUrl) else {
+          guard self.preparePlayer(with: providedUrl, autoPlay: false) else {
             result(false)
             return
           }
@@ -148,6 +235,7 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
       }
 
       self.pendingStartResult = result
+      self.shouldAttemptStartWhenReady = true
       self.startPiPWhenPossible()
     }
   }
@@ -175,7 +263,7 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
     }
   }
 
-  private func preparePlayer(with urlString: String) -> Bool {
+  private func preparePlayer(with urlString: String, autoPlay: Bool = false) -> Bool {
     guard let url = resolveUrl(from: urlString) else {
       return false
     }
@@ -233,6 +321,16 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
       }
     }
 
+    // Observe playerLayer's isReadyForDisplay property
+    playerLayerReadyObservation = layer.observe(\.isReadyForDisplay, options: [.new]) { [weak self] layer, change in
+      guard let self else { return }
+      if layer.isReadyForDisplay {
+        DispatchQueue.main.async {
+          self.startPiPWhenPossible()
+        }
+      }
+    }
+
     timeObserver = player.addPeriodicTimeObserver(
       forInterval: CMTime(seconds: 0.5, preferredTimescale: 600),
       queue: .main
@@ -247,7 +345,16 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
     self.pendingSeek = nil
     self.lastKnownPosition = .zero
 
-    player.play()
+    if autoPlay {
+      player.play()
+    }
+
+    registerLifecycleNotificationsIfNeeded()
+
+    if shouldAttemptStartWhenReady {
+      startPiPWhenPossible()
+    }
+
     return pipController != nil
   }
 
@@ -255,23 +362,41 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
     guard let controller = pipController else { return }
     guard pendingStartResult != nil else { return }
 
-    // Only start when the scene is active to avoid AVKit -1001 errors.
-    if let scene = flutterController?.view.window?.windowScene,
-       scene.activationState != .foregroundActive {
+    var sceneIsActive = true
+    if #available(iOS 13.0, *) {
+      if let scene = lifecycleSceneHint {
+        sceneIsActive = (scene.activationState == .foregroundActive)
+      }
+    }
+    let layerReady = playerLayer?.isReadyForDisplay == true
+
+    print("[PiP] Scene active: \(sceneIsActive), PlayerLayer ready: \(layerReady)")
+
+    // Require both scene active and playerLayer ready before starting PiP
+    if !sceneIsActive || !layerReady {
+      shouldAttemptStartWhenReady = true
       return
     }
+    shouldAttemptStartWhenReady = false
 
     if controller.isPictureInPictureActive {
       completePendingStart(success: true)
       return
     }
 
+    guard shouldAttemptStartWhenReady == false else { return }
+
+    player?.play()
+
     if controller.isPictureInPicturePossible {
       controller.startPictureInPicture()
+      lifecycleSceneHint = nil
     }
   }
 
   private func completePendingStart(success: Bool) {
+    shouldAttemptStartWhenReady = false
+    lifecycleSceneHint = nil
     if let callback = pendingStartResult {
       pendingStartResult = nil
       callback(success)
@@ -324,12 +449,18 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
   }
 
   private func teardownPlayer() {
+    unregisterLifecycleNotifications()
+    shouldAttemptStartWhenReady = false
+    lifecycleSceneHint = nil
+
     if let token = timeObserver {
       player?.removeTimeObserver(token)
       timeObserver = nil
     }
     playerStatusObservation?.invalidate()
     playerStatusObservation = nil
+    playerLayerReadyObservation?.invalidate()
+    playerLayerReadyObservation = nil
     pipPossibleObservation?.invalidate()
     pipPossibleObservation = nil
 
@@ -346,26 +477,6 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
     currentUrl = nil
     pendingSeek = nil
     lastKnownPosition = .zero
-  }
-
-  @objc private func onWillResignActive() {
-    // Start PiP right before we lose foreground-active state, if possible.
-    guard let controller = pipController else { return }
-    guard let scene = flutterController?.view.window?.windowScene,
-          scene.activationState == .foregroundActive else { return }
-    if controller.isPictureInPictureActive { return }
-    if controller.isPictureInPicturePossible {
-      if pendingStartResult == nil {
-        // Ensure Dart receives a completion even if no 'enter' call is pending.
-        pendingStartResult = { _ in }
-      }
-      controller.startPictureInPicture()
-    }
-  }
-
-  @objc private func onDidBecomeActive() {
-    // If a start was deferred, try again now that we're foreground active.
-    startPiPWhenPossible()
   }
 
   // MARK: - AVPictureInPictureControllerDelegate
@@ -413,5 +524,9 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
       pendingStopResult = nil
       result(position)
     }
+  }
+
+  deinit {
+    unregisterLifecycleNotifications()
   }
 }
