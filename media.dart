@@ -1477,23 +1477,26 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
         } catch (_) {}
         if (Platform.isIOS) {
           try {
-            final pos = _vc.value.position.inMilliseconds;
             debugPrint(
-              '[VideoPlayerPage] calling SystemPip.prime with url=${widget.path}, pos=$pos',
+              '[VideoPlayerPage] calling SystemPip.prime with url=${widget.path}, pos=${_vc.value.position.inMilliseconds}',
             );
-            final ok = await SystemPip.prime(url: widget.path, positionMs: pos);
-            debugPrint('[VideoPlayerPage] SystemPip.prime returned $ok');
-
-            // Always try entering PiP: if prime failed, native startPiP(url:...) will lazily prepare the player.
-            await Future.delayed(const Duration(milliseconds: 140));
-            debugPrint(
-              '[VideoPlayerPage] calling SystemPip.enter (primeOk=$ok) with url=${widget.path}, pos=$pos',
-            );
-            final entered = await SystemPip.enter(
+            final ok = await SystemPip.prime(
               url: widget.path,
-              positionMs: pos,
+              positionMs: _vc.value.position.inMilliseconds,
             );
-            debugPrint('[VideoPlayerPage] SystemPip.enter returned $entered');
+            debugPrint('[VideoPlayerPage] SystemPip.prime returned $ok');
+            if (ok) {
+              // Give UIKit a beat to settle any layout/route transitions before entering PiP
+              await Future.delayed(const Duration(milliseconds: 120));
+              debugPrint(
+                '[VideoPlayerPage] calling SystemPip.enter with url=${widget.path}, pos=${_vc.value.position.inMilliseconds}',
+              );
+              final entered = await SystemPip.enter(
+                url: widget.path,
+                positionMs: _vc.value.position.inMilliseconds,
+              );
+              debugPrint('[VideoPlayerPage] SystemPip.enter returned $entered');
+            }
           } catch (e) {
             debugPrint('[VideoPlayerPage] SystemPip.prime/enter error: $e');
           }
