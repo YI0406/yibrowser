@@ -32,6 +32,8 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
   private var lastKnownPosition: CMTime = .zero
   private var isPrimingPlayback = false
   private var primingTargetTime: CMTime?
+    private var autoStartArmed = false
+    private var autoStartInProgress = false
   
 
   private var lifecycleNotificationsRegistered = false
@@ -112,6 +114,7 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
       } else {
         self.beginPrimingPlaybackIfNeeded()
       }
+        self.autoStartArmed = true
       result(true)
     }
   }
@@ -165,7 +168,13 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
   }
 
   @objc private func onApplicationWillResignActive(_ notification: Notification) {
-    if pendingStartResult != nil {
+      if autoStartArmed && !autoStartInProgress && pipController != nil {
+        autoStartInProgress = true
+        shouldAttemptStartWhenReady = true
+      }
+      if pendingStartResult != nil || autoStartInProgress {
+      // Arm and try to start immediately while the scene is still active
+      shouldAttemptStartWhenReady = true
       startPiPWhenPossible()
     } else {
       shouldAttemptStartWhenReady = false
@@ -176,7 +185,11 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
   @objc private func onSceneWillDeactivate(_ notification: Notification) {
     guard let scene = notification.object as? UIScene else { return }
     lifecycleSceneHint = scene
-    if pendingStartResult != nil {
+      if autoStartArmed && !autoStartInProgress && pipController != nil {
+          autoStartInProgress = true
+          shouldAttemptStartWhenReady = true
+        }
+        if pendingStartResult != nil || autoStartInProgress {
       startPiPWhenPossible()
     } else {
       shouldAttemptStartWhenReady = false
@@ -229,6 +242,7 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
       }
 
       self.registerLifecycleNotificationsIfNeeded()
+        self.autoStartArmed = false
 
       guard AVPictureInPictureController.isPictureInPictureSupported() else {
         result(false)
@@ -255,7 +269,11 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
         player.isMuted = false
         if player.timeControlStatus == .paused {
             if player.currentItem?.status == .readyToPlay {
-                       player.preroll(atRate: 1.0) { _ in }
+                if player.currentItem?.status == .readyToPlay {
+                           player.preroll(atRate: 1.0) { _ in }
+                         } else {
+                           self.beginPrimingPlaybackIfNeeded()
+                         }
                      } else {
                        self.beginPrimingPlaybackIfNeeded()
                      }
@@ -269,6 +287,15 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
         }
         self.lifecycleSceneHint = scene
       }
+        if self.pipController?.isPictureInPictureActive == true {
+           result(true)
+           return
+         }
+         if self.autoStartInProgress {
+           self.pendingStartResult = result
+           self.startPiPWhenPossible()
+           return
+         }
       self.pendingStartResult = result
       self.shouldAttemptStartWhenReady = true
       self.startPiPWhenPossible()
@@ -420,7 +447,7 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
   private func startPiPWhenPossible() {
     guard shouldAttemptStartWhenReady else { return }
     guard let controller = pipController else { return }
-    guard pendingStartResult != nil else { return }
+      guard pendingStartResult != nil || autoStartInProgress else { return }
 
     if controller.isPictureInPictureActive {
       completePendingStart(success: true)
@@ -431,21 +458,28 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
     if #available(iOS 13.0, *) {
       if let activeScene = flutterController?.view.window?.windowScene {
         lifecycleSceneHint = activeScene
-          sceneIsActive = (activeScene.activationState == .foregroundActive
-                    || activeScene.activationState == .foregroundInactive)
+        sceneIsActive = (activeScene.activationState == .foregroundActive)
       } else if let scene = lifecycleSceneHint {
-          sceneIsActive = (scene.activationState == .foregroundActive
-                   || scene.activationState == .foregroundInactive)
+        sceneIsActive = (scene.activationState == .foregroundActive)
       }
     }
 
     if !sceneIsActive {
+        if autoStartInProgress {
+            autoStartInProgress = false
+            shouldAttemptStartWhenReady = false
+          }
       return
     }
+      
     if player?.timeControlStatus != .playing {
       player?.play()
     }
 
+    // Start only when possible and the layer is ready for display to avoid -1001
+    guard controller.isPictureInPicturePossible else { return }
+    if let l = playerLayer, l.isReadyForDisplay == false { return }
+      autoStartArmed = false
     controller.startPictureInPicture()
   }
 
@@ -564,6 +598,8 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
     unregisterLifecycleNotifications()
     shouldAttemptStartWhenReady = false
     lifecycleSceneHint = nil
+      autoStartArmed = false
+        autoStartInProgress = false
 
     if let token = timeObserver {
       player?.removeTimeObserver(token)
