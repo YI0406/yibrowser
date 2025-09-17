@@ -1374,6 +1374,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   final Pip _pip = Pip();
   bool _autoPipArmed = false; // background trigger flag
   bool _wasPlayingBeforePip = false;
+  bool _nativePipInUse = false;
 
   @override
   void initState() {
@@ -1473,6 +1474,14 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
             },
           );
         } catch (_) {}
+        if (Platform.isIOS) {
+          try {
+            await SystemPip.prime(
+              url: widget.path,
+              positionMs: _vc.value.position.inMilliseconds,
+            );
+          } catch (_) {}
+        }
       });
 
     // Listen to changes in the video controller to update the UI (e.g. progress).
@@ -1988,25 +1997,46 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
 
   Future<void> _startSystemPip() async {
     if (!_ready || !_vc.value.isInitialized) return;
-    final widget = _pipContent();
-    try {
-      // Some versions of the pip plugin require providing a dedicated widget
-      // for the system PiP window. Call through `dynamic` to keep compatibility
-      // if the named parameter is absent while still supplying the widget when
-      // supported.
-      await (_pip as dynamic).start(pipWidget: widget);
-      return;
-    } catch (e) {
-      var started = false;
+
+    _nativePipInUse = false;
+
+    Future<void> startWithPlugin() async {
+      final pipWidget = _pipContent();
       try {
-        await _pip.start();
-        started = true;
-      } catch (_) {}
-      if (!started) {
-        // ignore: avoid_print
-        print('[PIP] start failed: $e');
+        await (_pip as dynamic).start(pipWidget: pipWidget);
+        return;
+      } catch (e) {
+        var started = false;
+        try {
+          await _pip.start();
+          started = true;
+        } catch (_) {}
+        if (!started) {
+          // ignore: avoid_print
+          print('[PIP] start failed: $e');
+        }
       }
     }
+
+    if (Platform.isIOS) {
+      try {
+        final ok = await SystemPip.enter(
+          url: widget.path,
+          positionMs: _vc.value.position.inMilliseconds,
+        );
+        _nativePipInUse = ok;
+        if (!ok) {
+          await startWithPlugin();
+        }
+      } catch (e) {
+        _nativePipInUse = false;
+        // ignore: avoid_print
+        print('[PIP] native start failed: $e');
+        await startWithPlugin();
+      }
+      return;
+    }
+    await startWithPlugin();
   }
 
   Future<void> _resumePlaybackAfterPip() async {
@@ -2032,6 +2062,23 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   }
 
   Future<void> _stopSystemPip() async {
+    if (Platform.isIOS && _nativePipInUse) {
+      int? pos;
+      try {
+        pos = await SystemPip.exit();
+      } catch (_) {}
+      _nativePipInUse = false;
+      if (pos != null) {
+        final target = Duration(milliseconds: pos);
+        final duration = _vc.value.duration;
+        if (duration == Duration.zero || target < duration) {
+          try {
+            await _vc.seekTo(target);
+          } catch (_) {}
+        }
+      }
+      return;
+    }
     try {
       await _pip.stop();
     } catch (_) {}

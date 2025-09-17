@@ -2766,6 +2766,20 @@ class SystemPip {
     }
   }
 
+  /// 預先建立原生 PiP 播放資源，但不觸發進入 PiP。
+  static Future<bool> prime({required String url, int? positionMs}) async {
+    try {
+      final params = <String, dynamic>{
+        'url': url,
+        if (positionMs != null) 'positionMs': positionMs,
+      };
+      final ok = await _ch.invokeMethod('prime', params);
+      return ok == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   static Future<bool> isAvailable() async {
     try {
       final ok = await _ch.invokeMethod('isAvailable');
