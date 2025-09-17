@@ -30,6 +30,9 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
   private var pendingStopResult: FlutterResult?
   private var pendingStopPosition: Int?
   private var lastKnownPosition: CMTime = .zero
+  private var isPrimingPlayback = false
+  private var primingTargetTime: CMTime?
+  
 
   private var lifecycleNotificationsRegistered = false
   private var shouldAttemptStartWhenReady = false
@@ -103,11 +106,12 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
       if let ms = positionMs {
         self.seek(toMilliseconds: ms)
       }
-        if let player = self.player {
-                // Warm up the underlying AVPlayer so PiP can start before the scene
-                // resigns active. `preroll` buffers frames without starting playback.
-                player.preroll(atRate: 1.0) { _ in }
-              }
+      self.primingTargetTime = self.pendingSeek ?? self.lastKnownPosition
+      if self.playerLayer?.isReadyForDisplay == true {
+        self.applyPrimingTargetImmediatelyIfNeeded()
+      } else {
+        self.beginPrimingPlaybackIfNeeded()
+      }
       result(true)
     }
   }
@@ -161,22 +165,22 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
   }
 
   @objc private func onApplicationWillResignActive(_ notification: Notification) {
-      if pendingStartResult != nil {
-           startPiPWhenPossible()
-         } else {
-           shouldAttemptStartWhenReady = false
-         }
+    if pendingStartResult != nil {
+      startPiPWhenPossible()
+    } else {
+      shouldAttemptStartWhenReady = false
+    }
   }
 
   @available(iOS 13.0, *)
   @objc private func onSceneWillDeactivate(_ notification: Notification) {
     guard let scene = notification.object as? UIScene else { return }
     lifecycleSceneHint = scene
-      if pendingStartResult != nil {
-           startPiPWhenPossible()
-         } else {
-           shouldAttemptStartWhenReady = false
-         }
+    if pendingStartResult != nil {
+      startPiPWhenPossible()
+    } else {
+      shouldAttemptStartWhenReady = false
+    }
   }
 
   @objc private func onDidBecomeActive(_ notification: Notification) {
@@ -200,10 +204,10 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
         result(AVPictureInPictureController.isPictureInPictureSupported())
       }
     case "prime":
-         let args = call.arguments as? [String: Any]
-         let url = args?["url"] as? String
-         let positionMs = args?["positionMs"] as? Int
-         primePiP(url: url, positionMs: positionMs, result: result)
+      let args = call.arguments as? [String: Any]
+      let url = args?["url"] as? String
+      let positionMs = args?["positionMs"] as? Int
+      primePiP(url: url, positionMs: positionMs, result: result)
     case "enter":
       let args = call.arguments as? [String: Any]
       let url = args?["url"] as? String
@@ -239,7 +243,7 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
           }
         }
       } else if self.player == nil {
-          print("[PiP] startPiP: no existing player and no url provided")
+        print("[PiP] startPiP: no existing player and no url provided")
         result(false)
         return
       }
@@ -247,17 +251,11 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
       if let ms = positionMs {
         self.seek(toMilliseconds: ms)
       }
-      if let player = self.player, player.timeControlStatus == .paused {
-        player.preroll(atRate: 1.0) { _ in }
-      }
-      guard let controller = self.pipController else {
-        result(false)
-        return
-      }
-
-      if controller.isPictureInPictureActive {
-        result(true)
-        return
+      if let player = self.player {
+        player.isMuted = false
+        if player.timeControlStatus == .paused {
+          player.preroll(atRate: 1.0) { _ in }
+        }
       }
       if #available(iOS 13.0, *) {
         guard let scene = self.flutterController?.view.window?.windowScene else {
@@ -266,11 +264,9 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
           return
         }
         self.lifecycleSceneHint = scene
-        print("[PiP] startPiP: captured active windowScene (\(scene))")
       }
       self.pendingStartResult = result
       self.shouldAttemptStartWhenReady = true
-      print("[PiP] startPiP: armed shouldAttemptStartWhenReady=true; calling startPiPWhenPossible()")
       self.startPiPWhenPossible()
     }
   }
@@ -368,6 +364,7 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
       if item.status == .readyToPlay {
         print("[PiP] KVO: item.status == .readyToPlay")
         DispatchQueue.main.async {
+          self.finishPrimingPlaybackIfNeeded()
           self.applyPendingSeekIfNeeded()
           self.startPiPWhenPossible()
         }
@@ -380,6 +377,7 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
       if layer.isReadyForDisplay {
         print("[PiP] KVO: layer.isReadyForDisplay == true")
         DispatchQueue.main.async {
+          self.finishPrimingPlaybackIfNeeded()
           self.startPiPWhenPossible()
         }
       }
@@ -398,6 +396,8 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
     self.currentUrl = urlString
     self.pendingSeek = nil
     self.lastKnownPosition = .zero
+    self.isPrimingPlayback = false
+    self.primingTargetTime = nil
 
     if autoPlay {
       player.play()
@@ -417,13 +417,12 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
     guard shouldAttemptStartWhenReady else { return }
     guard let controller = pipController else { return }
     guard pendingStartResult != nil else { return }
+
     if controller.isPictureInPictureActive {
       completePendingStart(success: true)
       return
     }
-    let itemStatusRaw = player?.currentItem?.status.rawValue ?? -99
-    let layerReady = playerLayer?.isReadyForDisplay ?? false
-    print("[PiP] startPiPWhenPossible: itemStatus=\(itemStatusRaw) layerReady=\(layerReady)")
+
     var sceneIsActive = true
     if #available(iOS 13.0, *) {
       if let activeScene = flutterController?.view.window?.windowScene {
@@ -434,7 +433,6 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
       }
     }
 
-    // Require both scene active and playerLayer ready before starting PiP
     if !sceneIsActive {
       return
     }
@@ -442,8 +440,64 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
       player?.play()
     }
 
-    print("[PiP] startPiPWhenPossible: calling startPictureInPicture()")
     controller.startPictureInPicture()
+  }
+
+  private func beginPrimingPlaybackIfNeeded() {
+    guard let player = player else { return }
+    guard playerLayer?.isReadyForDisplay != true else {
+      applyPrimingTargetImmediatelyIfNeeded()
+      return
+    }
+    guard !isPrimingPlayback else { return }
+
+    isPrimingPlayback = true
+    player.isMuted = true
+    if player.timeControlStatus != .playing {
+      player.play()
+    }
+  }
+
+  private func finishPrimingPlaybackIfNeeded() {
+    guard isPrimingPlayback, let player = player else { return }
+
+    isPrimingPlayback = false
+    defer {
+      primingTargetTime = nil
+      player.isMuted = false
+    }
+
+    guard pendingStartResult == nil,
+          pipController?.isPictureInPictureActive != true else {
+      return
+    }
+
+    player.pause()
+    if let target = primingTargetTime {
+      player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero)
+      lastKnownPosition = target
+    }
+  }
+
+  private func applyPrimingTargetImmediatelyIfNeeded() {
+    guard let player = player else { return }
+
+    defer {
+      primingTargetTime = nil
+      isPrimingPlayback = false
+      player.isMuted = false
+    }
+
+    guard pendingStartResult == nil,
+          pipController?.isPictureInPictureActive != true else {
+      return
+    }
+
+    player.pause()
+    if let target = primingTargetTime {
+      player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero)
+      lastKnownPosition = target
+    }
   }
 
   private func completePendingStart(success: Bool) {
@@ -529,6 +583,8 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
     currentUrl = nil
     pendingSeek = nil
     lastKnownPosition = .zero
+    isPrimingPlayback = false
+    primingTargetTime = nil
   }
 
   // MARK: - AVPictureInPictureControllerDelegate
@@ -536,7 +592,6 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
   func pictureInPictureControllerDidStartPictureInPicture(
     _ pictureInPictureController: AVPictureInPictureController
   ) {
-    print("[PiP] didStartPiP")
     completePendingStart(success: true)
   }
 
@@ -551,7 +606,6 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
   func pictureInPictureControllerDidStopPictureInPicture(
     _ pictureInPictureController: AVPictureInPictureController
   ) {
-    print("[PiP] didStopPiP")
     finishPendingStop()
   }
 
