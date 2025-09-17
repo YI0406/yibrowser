@@ -254,7 +254,11 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
       if let player = self.player {
         player.isMuted = false
         if player.timeControlStatus == .paused {
-          player.preroll(atRate: 1.0) { _ in }
+            if player.currentItem?.status == .readyToPlay {
+                       player.preroll(atRate: 1.0) { _ in }
+                     } else {
+                       self.beginPrimingPlaybackIfNeeded()
+                     }
         }
       }
       if #available(iOS 13.0, *) {
@@ -427,9 +431,11 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
     if #available(iOS 13.0, *) {
       if let activeScene = flutterController?.view.window?.windowScene {
         lifecycleSceneHint = activeScene
-        sceneIsActive = (activeScene.activationState == .foregroundActive)
+          sceneIsActive = (activeScene.activationState == .foregroundActive
+                    || activeScene.activationState == .foregroundInactive)
       } else if let scene = lifecycleSceneHint {
-        sceneIsActive = (scene.activationState == .foregroundActive)
+          sceneIsActive = (scene.activationState == .foregroundActive
+                   || scene.activationState == .foregroundInactive)
       }
     }
 
