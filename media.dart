@@ -1372,6 +1372,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   // --- iOS PiP integration ---
   // --- System PiP via `pip` plugin ---
   final Pip _pip = Pip();
+  bool _autoPipSawPause = false;
   bool _autoPipArmed = false; // background trigger flag
   bool _wasPlayingBeforePip = false;
   bool _nativePipInUse = false;
@@ -1543,6 +1544,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
         // iOS 會先進 inactive 再進背景
         if (mounted && _ready && !_autoPipArmed) {
           _autoPipArmed = true;
+          _autoPipSawPause = false;
           _wasPlayingBeforePip = _lastKnownPlaying;
           if (_systemPipPrimed) {
             // 讓原生端在 willResignActive 時自動啟動 PiP。
@@ -1551,8 +1553,22 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
             await _startSystemPip(); // ✅ 一定要帶 pipWidget
           }
         }
+      } else if (state == AppLifecycleState.paused) {
+        if (_autoPipArmed) {
+          _autoPipSawPause = true;
+        }
       } else if (state == AppLifecycleState.resumed) {
         if (_autoPipArmed) {
+          final sawPause = _autoPipSawPause;
+          _autoPipArmed = false;
+          _autoPipSawPause = false;
+
+          if (!sawPause) {
+            // Gesture was cancelled before the app actually left the foreground.
+            _nativePipInUse = false;
+            return;
+          }
+
           await _stopSystemPip();
           if (mounted) {
             await _enterFullscreen();
@@ -1569,7 +1585,6 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
               }
             }
           }
-          _autoPipArmed = false;
         }
       }
     } catch (_) {}
