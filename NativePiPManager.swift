@@ -34,7 +34,6 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
   private var primingTargetTime: CMTime?
     private var autoStartArmed = false
     private var autoStartInProgress = false
-    private var autoStartAwaitingBackground = false
   
 
   private var lifecycleNotificationsRegistered = false
@@ -115,9 +114,7 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
       } else {
         self.beginPrimingPlaybackIfNeeded()
       }
-      self.autoStartArmed = true
-      self.autoStartAwaitingBackground = true
-      self.autoStartInProgress = false
+        self.autoStartArmed = true
       result(true)
     }
   }
@@ -132,20 +129,8 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
       name: UIApplication.willResignActiveNotification,
       object: nil
     )
-    NotificationCenter.default.addObserver(
-      self,
-      selector: #selector(onApplicationDidEnterBackground(_:)),
-      name: UIApplication.didEnterBackgroundNotification,
-      object: nil
-    )
 
     if #available(iOS 13.0, *) {
-      NotificationCenter.default.addObserver(
-        self,
-        selector: #selector(onSceneDidEnterBackground(_:)),
-        name: UIScene.didEnterBackgroundNotification,
-        object: nil
-      )
       NotificationCenter.default.addObserver(
         self,
         selector: #selector(onSceneWillDeactivate(_:)),
@@ -173,78 +158,56 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
     lifecycleNotificationsRegistered = false
 
     NotificationCenter.default.removeObserver(self, name: UIApplication.willResignActiveNotification, object: nil)
-    NotificationCenter.default.removeObserver(self, name: UIApplication.didEnterBackgroundNotification, object: nil)
 
     if #available(iOS 13.0, *) {
       NotificationCenter.default.removeObserver(self, name: UIScene.willDeactivateNotification, object: nil)
       NotificationCenter.default.removeObserver(self, name: UIScene.didActivateNotification, object: nil)
-      NotificationCenter.default.removeObserver(self, name: UIScene.didEnterBackgroundNotification, object: nil)
     } else {
       NotificationCenter.default.removeObserver(self, name: UIApplication.didBecomeActiveNotification, object: nil)
     }
   }
 
   @objc private func onApplicationWillResignActive(_ notification: Notification) {
-    if pendingStartResult != nil || autoStartInProgress {
+      if autoStartArmed && !autoStartInProgress && pipController != nil {
+        autoStartInProgress = true
+        shouldAttemptStartWhenReady = true
+      }
+      if pendingStartResult != nil || autoStartInProgress {
       // Arm and try to start immediately while the scene is still active
       shouldAttemptStartWhenReady = true
       startPiPWhenPossible()
+    } else {
+      shouldAttemptStartWhenReady = false
     }
-  }
-
-  @objc private func onApplicationDidEnterBackground(_ notification: Notification) {
-    requestAutoStartAfterBackground(for: nil)
   }
 
   @available(iOS 13.0, *)
   @objc private func onSceneWillDeactivate(_ notification: Notification) {
     guard let scene = notification.object as? UIScene else { return }
     lifecycleSceneHint = scene
-    if pendingStartResult != nil || autoStartInProgress {
+      if autoStartArmed && !autoStartInProgress && pipController != nil {
+          autoStartInProgress = true
+          shouldAttemptStartWhenReady = true
+        }
+        if pendingStartResult != nil || autoStartInProgress {
       startPiPWhenPossible()
+    } else {
+      shouldAttemptStartWhenReady = false
     }
-  }
-
-  @available(iOS 13.0, *)
-  @objc private func onSceneDidEnterBackground(_ notification: Notification) {
-    guard let scene = notification.object as? UIScene else { return }
-    requestAutoStartAfterBackground(for: scene)
-  }
-
-  private func requestAutoStartAfterBackground(for scene: UIScene?) {
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
-      self?.beginAutoStartAfterBackground(for: scene)
-    }
-  }
-
-  private func beginAutoStartAfterBackground(for scene: UIScene?) {
-    guard autoStartArmed,
-          autoStartAwaitingBackground,
-          !autoStartInProgress,
-          pipController != nil else { return }
-
-    if #available(iOS 13.0, *), let scene = scene {
-      if let hint = lifecycleSceneHint, hint !== scene { return }
-      lifecycleSceneHint = scene
-    }
-
-    autoStartAwaitingBackground = false
-    autoStartInProgress = true
-    shouldAttemptStartWhenReady = true
-    startPiPWhenPossible()
   }
 
   @objc private func onDidBecomeActive(_ notification: Notification) {
-    // Returning to the app: ensure PiP is stopped so the inline player takes over.
-    if let controller = pipController, controller.isPictureInPictureActive {
-      controller.stopPictureInPicture()
+    if #available(iOS 13.0, *) {
+      guard let scene = notification.object as? UIScene else { return }
+      if lifecycleSceneHint == nil || lifecycleSceneHint === scene {
+        shouldAttemptStartWhenReady = true
+        startPiPWhenPossible()
+      }
+    } else {
+      shouldAttemptStartWhenReady = true
+      startPiPWhenPossible()
     }
-    autoStartArmed = false
-    autoStartInProgress = false
-    shouldAttemptStartWhenReady = false
   }
-
-
 
   private func handle(call: FlutterMethodCall, result: @escaping FlutterResult) {
     print("[PiP] handle method=\(call.method)")
@@ -279,9 +242,7 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
       }
 
       self.registerLifecycleNotificationsIfNeeded()
-      self.autoStartArmed = false
-      self.autoStartAwaitingBackground = false
-      self.autoStartInProgress = false
+        self.autoStartArmed = false
 
       guard AVPictureInPictureController.isPictureInPictureSupported() else {
         result(false)
@@ -307,11 +268,15 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
       if let player = self.player {
         player.isMuted = false
         if player.timeControlStatus == .paused {
-          if player.currentItem?.status == .readyToPlay {
-            player.preroll(atRate: 1.0) { _ in }
-          } else {
-            self.beginPrimingPlaybackIfNeeded()
-          }
+            if player.currentItem?.status == .readyToPlay {
+                if player.currentItem?.status == .readyToPlay {
+                           player.preroll(atRate: 1.0) { _ in }
+                         } else {
+                           self.beginPrimingPlaybackIfNeeded()
+                         }
+                     } else {
+                       self.beginPrimingPlaybackIfNeeded()
+                     }
         }
       }
       if #available(iOS 13.0, *) {
@@ -322,15 +287,15 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
         }
         self.lifecycleSceneHint = scene
       }
-      if self.pipController?.isPictureInPictureActive == true {
-        result(true)
-        return
-      }
-      if self.autoStartInProgress {
-        self.pendingStartResult = result
-        self.startPiPWhenPossible()
-        return
-      }
+        if self.pipController?.isPictureInPictureActive == true {
+           result(true)
+           return
+         }
+         if self.autoStartInProgress {
+           self.pendingStartResult = result
+           self.startPiPWhenPossible()
+           return
+         }
       self.pendingStartResult = result
       self.shouldAttemptStartWhenReady = true
       self.startPiPWhenPossible()
@@ -482,32 +447,31 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
   private func startPiPWhenPossible() {
     guard shouldAttemptStartWhenReady else { return }
     guard let controller = pipController else { return }
-    guard pendingStartResult != nil || autoStartInProgress else { return }
+      guard pendingStartResult != nil || autoStartInProgress else { return }
 
     if controller.isPictureInPictureActive {
       completePendingStart(success: true)
       return
     }
 
-    var canStartForState = true
+    var sceneIsActive = true
     if #available(iOS 13.0, *) {
-      let state: UIScene.ActivationState? = {
-        if let activeScene = flutterController?.view.window?.windowScene {
-          lifecycleSceneHint = activeScene
-          return activeScene.activationState
-        }
-        return lifecycleSceneHint?.activationState
-      }()
-      // We allow starting during the transition (foregroundInactive) or when backgrounded.
-      if let s = state {
-        canStartForState = (s == .foregroundInactive || s == .background)
+      if let activeScene = flutterController?.view.window?.windowScene {
+        lifecycleSceneHint = activeScene
+        sceneIsActive = (activeScene.activationState == .foregroundActive)
+      } else if let scene = lifecycleSceneHint {
+        sceneIsActive = (scene.activationState == .foregroundActive)
       }
     }
-    if !canStartForState && !autoStartInProgress {
-      // Not in a good windowing phase to start; try again when lifecycle changes.
+
+    if !sceneIsActive {
+        if autoStartInProgress {
+            autoStartInProgress = false
+            shouldAttemptStartWhenReady = false
+          }
       return
     }
-
+      
     if player?.timeControlStatus != .playing {
       player?.play()
     }
@@ -515,7 +479,7 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
     // Start only when possible and the layer is ready for display to avoid -1001
     guard controller.isPictureInPicturePossible else { return }
     if let l = playerLayer, l.isReadyForDisplay == false { return }
-    autoStartArmed = false
+      autoStartArmed = false
     controller.startPictureInPicture()
   }
 
@@ -579,8 +543,6 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
   private func completePendingStart(success: Bool) {
     shouldAttemptStartWhenReady = false
     lifecycleSceneHint = nil
-    autoStartInProgress = false
-    autoStartAwaitingBackground = false
     if let callback = pendingStartResult {
       pendingStartResult = nil
       callback(success)
@@ -636,9 +598,7 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
     unregisterLifecycleNotifications()
     shouldAttemptStartWhenReady = false
     lifecycleSceneHint = nil
-    autoStartArmed = false
-    autoStartInProgress = false
-    autoStartAwaitingBackground = false
+      autoStartInProgress = false
 
     if let token = timeObserver {
       player?.removeTimeObserver(token)
