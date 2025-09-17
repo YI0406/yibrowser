@@ -234,13 +234,13 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
         return
       }
         if #available(iOS 13.0, *) {
-             guard let scene = self.flutterController?.view.window?.windowScene else {
-               print("[PiP] No active window scene available; cannot start PiP.")
-               result(false)
-               return
+               guard let scene = self.flutterController?.view.window?.windowScene else {
+                 print("[PiP] No active window scene available; cannot start PiP.")
+                 result(false)
+                 return
+               }
+               self.lifecycleSceneHint = scene
              }
-             self.lifecycleSceneHint = scene
-           }
       self.pendingStartResult = result
       self.shouldAttemptStartWhenReady = true
       self.startPiPWhenPossible()
@@ -397,7 +397,7 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
 
     if controller.isPictureInPicturePossible {
       controller.startPictureInPicture()
-      lifecycleSceneHint = nil
+     
     }
   }
 
