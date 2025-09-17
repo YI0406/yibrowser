@@ -1477,6 +1477,11 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
         } catch (_) {}
         if (Platform.isIOS) {
           try {
+            // 啟用「離開 App 才自動進入 PiP」策略，並且只做 prime 不立刻 enter
+            await SystemPip.prime(
+              url: widget.path,
+              positionMs: _vc.value.position.inMilliseconds,
+            ); // Replace with an existing method
             debugPrint(
               '[VideoPlayerPage] calling SystemPip.prime with url=${widget.path}, pos=${_vc.value.position.inMilliseconds}',
             );
@@ -1485,20 +1490,9 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
               positionMs: _vc.value.position.inMilliseconds,
             );
             debugPrint('[VideoPlayerPage] SystemPip.prime returned $ok');
-            if (ok) {
-              // Give UIKit a beat to settle any layout/route transitions before entering PiP
-              await Future.delayed(const Duration(milliseconds: 120));
-              debugPrint(
-                '[VideoPlayerPage] calling SystemPip.enter with url=${widget.path}, pos=${_vc.value.position.inMilliseconds}',
-              );
-              final entered = await SystemPip.enter(
-                url: widget.path,
-                positionMs: _vc.value.position.inMilliseconds,
-              );
-              debugPrint('[VideoPlayerPage] SystemPip.enter returned $entered');
-            }
+            // 不要在這裡呼叫 enter；交由 iOS 原生 willResignActive 於前景最後一刻自動觸發
           } catch (e) {
-            debugPrint('[VideoPlayerPage] SystemPip.prime/enter error: $e');
+            debugPrint('[VideoPlayerPage] SystemPip.prime error: $e');
           }
         }
       });
