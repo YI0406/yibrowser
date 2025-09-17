@@ -491,23 +491,15 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
       return
     }
 
-    var isForegroundActive: Bool?
+  
     if #available(iOS 13.0, *) {
       if let activeScene = flutterController?.view.window?.windowScene {
         lifecycleSceneHint = activeScene
-        isForegroundActive = (activeScene.activationState == .foregroundActive)
-      } else if let scene = lifecycleSceneHint as? UIWindowScene {
-        isForegroundActive = (scene.activationState == .foregroundActive)
       }
-    } else {
-      isForegroundActive = UIApplication.shared.applicationState == .active
+
     }
 
-    if autoStartInProgress {
-      if let isForegroundActive, isForegroundActive {
-        return
-      }
-    }
+ 
       
     if player?.timeControlStatus != .playing {
       player?.play()
