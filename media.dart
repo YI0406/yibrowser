@@ -1470,6 +1470,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
         _vc.play();
         _lastKnownPlaying = true;
         _startAutoHide();
+
         try {
           await FirebaseAnalytics.instance.logEvent(
             name: 'video_play',
@@ -2031,6 +2032,17 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
       _startAutoHide();
     }
     setState(() {});
+  }
+
+  // --- Helpers: compute this widget's rect in screen coordinates (for iOS PiP layer binding)
+  Rect _widgetRectOnScreen(BuildContext context) {
+    final renderObject = context.findRenderObject();
+    if (renderObject is RenderBox) {
+      final topLeft = renderObject.localToGlobal(Offset.zero);
+      final size = renderObject.size;
+      return Rect.fromLTWH(topLeft.dx, topLeft.dy, size.width, size.height);
+    }
+    return const Rect.fromLTWH(0, 0, 0, 0);
   }
 
   Widget _pipContent() {
