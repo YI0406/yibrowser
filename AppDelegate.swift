@@ -8,19 +8,23 @@ import AVFoundation
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
-    // Enable background playback for PiP (handled fully by pip Dart plugin).
+
+    // 確保為影音播放情境，讓 PiP 在背景可繼續
     do {
       try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback, options: [])
       try AVAudioSession.sharedInstance().setActive(true)
     } catch {
       print("[PiP] AVAudioSession error: \(error)")
     }
-      let result = super.application(application, didFinishLaunchingWithOptions: launchOptions)
 
-      if let controller = window?.rootViewController as? FlutterViewController {
-        NativePiPManager.shared.configure(with: controller)
-      }
+    let result = super.application(application, didFinishLaunchingWithOptions: launchOptions)
 
-      return result
+    if let controller = window?.rootViewController as? FlutterViewController {
+      NativePiPManager.shared.configure(with: controller)
+    }
+
+    // 提醒（僅註解）：Xcode > Signing & Capabilities 要勾選：
+    // Background Modes -> Audio, AirPlay, and Picture in Picture
+    return result
   }
 }

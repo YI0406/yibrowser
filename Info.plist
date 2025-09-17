@@ -280,6 +280,8 @@
 			<key>UIWindowSceneSessionRoleApplication</key>
 			<array>
 				<dict>
+					<key>UISceneConfigurationName</key>
+					<string>Default Configuration</string>
 					<key>UISceneClassName</key>
 					<string>UIWindowScene</string>
 					<key>UISceneDelegateClassName</key>

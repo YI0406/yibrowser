@@ -1424,6 +1424,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
       }
     };
     _vc.addListener(_vcListener!);
+    // ignore: avoid_single_cascade_in_expression_statements
     _vc
       ..initialize().then((_) async {
         if (!mounted) return;
@@ -1476,11 +1477,26 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
         } catch (_) {}
         if (Platform.isIOS) {
           try {
-            await SystemPip.prime(
-              url: widget.path,
-              positionMs: _vc.value.position.inMilliseconds,
+            final pos = _vc.value.position.inMilliseconds;
+            debugPrint(
+              '[VideoPlayerPage] calling SystemPip.prime with url=${widget.path}, pos=$pos',
             );
-          } catch (_) {}
+            final ok = await SystemPip.prime(url: widget.path, positionMs: pos);
+            debugPrint('[VideoPlayerPage] SystemPip.prime returned $ok');
+
+            // Always try entering PiP: if prime failed, native startPiP(url:...) will lazily prepare the player.
+            await Future.delayed(const Duration(milliseconds: 140));
+            debugPrint(
+              '[VideoPlayerPage] calling SystemPip.enter (primeOk=$ok) with url=${widget.path}, pos=$pos',
+            );
+            final entered = await SystemPip.enter(
+              url: widget.path,
+              positionMs: pos,
+            );
+            debugPrint('[VideoPlayerPage] SystemPip.enter returned $entered');
+          } catch (e) {
+            debugPrint('[VideoPlayerPage] SystemPip.prime/enter error: $e');
+          }
         }
       });
 
