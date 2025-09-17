@@ -182,6 +182,11 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
       DispatchQueue.main.async {
         result(AVPictureInPictureController.isPictureInPictureSupported())
       }
+    case "prime":
+          let args = call.arguments as? [String: Any]
+          let url = args?["url"] as? String
+          let positionMs = args?["positionMs"] as? Int
+          primePiP(url: url, positionMs: positionMs, result: result)
     case "enter":
       let args = call.arguments as? [String: Any]
       let url = args?["url"] as? String
