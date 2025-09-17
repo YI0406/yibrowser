@@ -1375,6 +1375,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   bool _autoPipArmed = false; // background trigger flag
   bool _wasPlayingBeforePip = false;
   bool _nativePipInUse = false;
+  bool _systemPipPrimed = false;
 
   @override
   void initState() {
@@ -1477,11 +1478,6 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
         } catch (_) {}
         if (Platform.isIOS) {
           try {
-            // 啟用「離開 App 才自動進入 PiP」策略，並且只做 prime 不立刻 enter
-            await SystemPip.prime(
-              url: widget.path,
-              positionMs: _vc.value.position.inMilliseconds,
-            ); // Replace with an existing method
             debugPrint(
               '[VideoPlayerPage] calling SystemPip.prime with url=${widget.path}, pos=${_vc.value.position.inMilliseconds}',
             );
@@ -1489,9 +1485,11 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
               url: widget.path,
               positionMs: _vc.value.position.inMilliseconds,
             );
+            _systemPipPrimed = ok;
             debugPrint('[VideoPlayerPage] SystemPip.prime returned $ok');
             // 不要在這裡呼叫 enter；交由 iOS 原生 willResignActive 於前景最後一刻自動觸發
           } catch (e) {
+            _systemPipPrimed = false;
             debugPrint('[VideoPlayerPage] SystemPip.prime error: $e');
           }
         }
@@ -1546,7 +1544,12 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
         if (mounted && _ready && !_autoPipArmed) {
           _autoPipArmed = true;
           _wasPlayingBeforePip = _lastKnownPlaying;
-          await _startSystemPip(); // ✅ 一定要帶 pipWidget
+          if (_systemPipPrimed) {
+            // 讓原生端在 willResignActive 時自動啟動 PiP。
+            _nativePipInUse = true;
+          } else {
+            await _startSystemPip(); // ✅ 一定要帶 pipWidget
+          }
         }
       } else if (state == AppLifecycleState.resumed) {
         if (_autoPipArmed) {
@@ -1554,6 +1557,17 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
           if (mounted) {
             await _enterFullscreen();
             await _resumePlaybackAfterPip();
+            if (_ready && !_isDisposing) {
+              try {
+                final ok = await SystemPip.prime(
+                  url: widget.path,
+                  positionMs: _vc.value.position.inMilliseconds,
+                );
+                _systemPipPrimed = ok;
+              } catch (_) {
+                _systemPipPrimed = false;
+              }
+            }
           }
           _autoPipArmed = false;
         }
@@ -2038,11 +2052,13 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
           positionMs: _vc.value.position.inMilliseconds,
         );
         _nativePipInUse = ok;
+        _systemPipPrimed = ok;
         if (!ok) {
           await startWithPlugin();
         }
       } catch (e) {
         _nativePipInUse = false;
+        _systemPipPrimed = false;
         // ignore: avoid_print
         print('[PIP] native start failed: $e');
         await startWithPlugin();
@@ -2075,13 +2091,14 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   }
 
   Future<void> _stopSystemPip() async {
-    if (Platform.isIOS && _nativePipInUse) {
+    if (Platform.isIOS && (_nativePipInUse || _systemPipPrimed)) {
       int? pos;
       try {
         pos = await SystemPip.exit();
       } catch (_) {}
       _nativePipInUse = false;
-      if (pos != null) {
+      _systemPipPrimed = false;
+      if (_ready && pos != null) {
         final target = Duration(milliseconds: pos);
         final duration = _vc.value.duration;
         if (duration == Duration.zero || target < duration) {
