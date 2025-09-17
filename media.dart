@@ -1375,6 +1375,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   bool _autoPipSawPause = false;
   bool _autoPipArmed = false; // background trigger flag
   bool _wasPlayingBeforePip = false;
+
   bool _nativePipInUse = false;
   bool _systemPipPrimed = false;
 
