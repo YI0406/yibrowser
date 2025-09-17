@@ -129,6 +129,12 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
       name: UIApplication.willResignActiveNotification,
       object: nil
     )
+    NotificationCenter.default.addObserver(
+      self,
+      selector: #selector(onApplicationDidEnterBackground(_:)),
+      name: UIApplication.didEnterBackgroundNotification,
+      object: nil
+    )
 
     if #available(iOS 13.0, *) {
       NotificationCenter.default.addObserver(
@@ -141,6 +147,12 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
         self,
         selector: #selector(onDidBecomeActive(_:)),
         name: UIScene.didActivateNotification,
+        object: nil
+      )
+      NotificationCenter.default.addObserver(
+        self,
+        selector: #selector(onSceneDidEnterBackground(_:)),
+        name: UIScene.didEnterBackgroundNotification,
         object: nil
       )
     } else {
@@ -158,10 +170,12 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
     lifecycleNotificationsRegistered = false
 
     NotificationCenter.default.removeObserver(self, name: UIApplication.willResignActiveNotification, object: nil)
+    NotificationCenter.default.removeObserver(self, name: UIApplication.didEnterBackgroundNotification, object: nil)
 
     if #available(iOS 13.0, *) {
       NotificationCenter.default.removeObserver(self, name: UIScene.willDeactivateNotification, object: nil)
       NotificationCenter.default.removeObserver(self, name: UIScene.didActivateNotification, object: nil)
+      NotificationCenter.default.removeObserver(self, name: UIScene.didEnterBackgroundNotification, object: nil)
     } else {
       NotificationCenter.default.removeObserver(self, name: UIApplication.didBecomeActiveNotification, object: nil)
     }
@@ -197,16 +211,38 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
   }
 
   @objc private func onDidBecomeActive(_ notification: Notification) {
+    autoStartInProgress = false
     if #available(iOS 13.0, *) {
       guard let scene = notification.object as? UIScene else { return }
       if lifecycleSceneHint == nil || lifecycleSceneHint === scene {
-        shouldAttemptStartWhenReady = true
-        startPiPWhenPossible()
+        if pendingStartResult != nil {
+          shouldAttemptStartWhenReady = true
+          startPiPWhenPossible()
+        } else {
+          shouldAttemptStartWhenReady = false
+        }
       }
     } else {
-      shouldAttemptStartWhenReady = true
-      startPiPWhenPossible()
+      if pendingStartResult != nil {
+        shouldAttemptStartWhenReady = true
+        startPiPWhenPossible()
+      } else {
+        shouldAttemptStartWhenReady = false
+      }
     }
+  }
+
+  @objc private func onApplicationDidEnterBackground(_ notification: Notification) {
+    shouldAttemptStartWhenReady = true
+    startPiPWhenPossible()
+  }
+
+  @available(iOS 13.0, *)
+  @objc private func onSceneDidEnterBackground(_ notification: Notification) {
+    guard let scene = notification.object as? UIScene else { return }
+    lifecycleSceneHint = scene
+    shouldAttemptStartWhenReady = true
+    startPiPWhenPossible()
   }
 
   private func handle(call: FlutterMethodCall, result: @escaping FlutterResult) {
@@ -447,29 +483,30 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
   private func startPiPWhenPossible() {
     guard shouldAttemptStartWhenReady else { return }
     guard let controller = pipController else { return }
-      guard pendingStartResult != nil || autoStartInProgress else { return }
+    guard pendingStartResult != nil || autoStartInProgress else { return }
 
     if controller.isPictureInPictureActive {
       completePendingStart(success: true)
+      autoStartInProgress = false
       return
     }
 
-    var sceneIsActive = true
+    var isForegroundActive: Bool?
     if #available(iOS 13.0, *) {
       if let activeScene = flutterController?.view.window?.windowScene {
         lifecycleSceneHint = activeScene
-        sceneIsActive = (activeScene.activationState == .foregroundActive)
-      } else if let scene = lifecycleSceneHint {
-        sceneIsActive = (scene.activationState == .foregroundActive)
+        isForegroundActive = (activeScene.activationState == .foregroundActive)
+      } else if let scene = lifecycleSceneHint as? UIWindowScene {
+        isForegroundActive = (scene.activationState == .foregroundActive)
       }
+    } else {
+      isForegroundActive = UIApplication.shared.applicationState == .active
     }
 
-    if !sceneIsActive {
-        if autoStartInProgress {
-            autoStartInProgress = false
-            shouldAttemptStartWhenReady = false
-          }
-      return
+    if autoStartInProgress {
+      if let isForegroundActive, isForegroundActive {
+        return
+      }
     }
       
     if player?.timeControlStatus != .playing {
@@ -479,7 +516,7 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
     // Start only when possible and the layer is ready for display to avoid -1001
     guard controller.isPictureInPicturePossible else { return }
     if let l = playerLayer, l.isReadyForDisplay == false { return }
-      autoStartArmed = false
+    autoStartArmed = false
     controller.startPictureInPicture()
   }
 
@@ -541,6 +578,7 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
   }
 
   private func completePendingStart(success: Bool) {
+    autoStartInProgress = false
     shouldAttemptStartWhenReady = false
     lifecycleSceneHint = nil
     if let callback = pendingStartResult {
@@ -633,6 +671,7 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
   func pictureInPictureControllerDidStartPictureInPicture(
     _ pictureInPictureController: AVPictureInPictureController
   ) {
+    autoStartInProgress = false
     completePendingStart(success: true)
   }
 
@@ -641,6 +680,7 @@ final class NativePiPManager: NSObject, AVPictureInPictureControllerDelegate {
     failedToStartPictureInPictureWithError error: Error
   ) {
     print("[PiP] Failed to start: \(error)")
+    autoStartInProgress = false
     completePendingStart(success: false)
   }
 
