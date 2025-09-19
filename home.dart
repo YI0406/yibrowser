@@ -465,8 +465,8 @@ class _HomePageState extends State<HomePage>
         mainAxisSize: MainAxisSize.max,
         children: [
           Container(
-            width: 40,
-            height: 40,
+            width: 48,
+            height: 48,
             decoration: BoxDecoration(
               color: Colors.white,
               shape: BoxShape.circle,
@@ -493,14 +493,14 @@ class _HomePageState extends State<HomePage>
                     )
                     : const Icon(Icons.public, color: Colors.black54),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 14),
           Flexible(
             child: Text(
               item.name.isNotEmpty ? item.name : host,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 14),
+              style: const TextStyle(fontSize: 16),
             ),
           ),
           const SizedBox(height: 4),

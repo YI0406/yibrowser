@@ -106,6 +106,14 @@ class _BrowserPageState extends State<BrowserPage> {
   bool _uaInitialized = false;
 
   bool _blockExternalApp = false; // 阻擋由網頁開啟第三方 App
+  static const Set<String> _kWebSchemes = {
+    'http',
+    'https',
+    'about',
+    'data',
+    'blob',
+    'file',
+  };
 
   static const double _edgeSwipeWidth = 32.0;
   static const double _edgeSwipeDistanceThreshold = 48.0;
@@ -1187,6 +1195,67 @@ class _BrowserPageState extends State<BrowserPage> {
     setState(() {});
   }
 
+  bool _navigationActionRequestsExternalApp(NavigationAction action) {
+    bool shouldBlock = false;
+    try {
+      final dynamic dynAction = action;
+      final dynamic shouldPerformAppLink = dynAction.shouldPerformAppLink;
+      if (shouldPerformAppLink is bool && shouldPerformAppLink) {
+        shouldBlock = true;
+      }
+      final dynamic iosShouldPerformAppLink = dynAction.iosShouldPerformAppLink;
+      if (iosShouldPerformAppLink is bool && iosShouldPerformAppLink) {
+        shouldBlock = true;
+      }
+      final dynamic androidShouldOpenExternalApp =
+          dynAction.androidShouldOpenExternalApp;
+      if (androidShouldOpenExternalApp is bool &&
+          androidShouldOpenExternalApp) {
+        shouldBlock = true;
+      }
+      final dynamic androidShouldLeaveApplication =
+          dynAction.androidShouldLeaveApplication;
+      if (androidShouldLeaveApplication is bool &&
+          androidShouldLeaveApplication) {
+        shouldBlock = true;
+      }
+    } catch (_) {}
+
+    if (!shouldBlock) {
+      try {
+        final dynamic rawMap = action.toMap();
+        if (rawMap is Map) {
+          final dynamic appLinkFlag =
+              rawMap['shouldPerformAppLink'] ??
+              rawMap['iosShouldPerformAppLink'] ??
+              rawMap['shouldOpenExternalApp'] ??
+              rawMap['androidShouldOpenExternalApp'] ??
+              rawMap['androidShouldLeaveApplication'];
+          if (appLinkFlag is bool && appLinkFlag) {
+            shouldBlock = true;
+          }
+        }
+      } catch (_) {}
+    }
+    return shouldBlock;
+  }
+
+  bool _shouldPreventExternalNavigation(
+    WebUri? uri, {
+    NavigationAction? action,
+  }) {
+    if (!_blockExternalApp) return false;
+    if (uri == null) return false;
+    final scheme = (uri.scheme ?? '').toLowerCase();
+    if (!_kWebSchemes.contains(scheme)) {
+      return true;
+    }
+    if (action != null && _navigationActionRequestsExternalApp(action)) {
+      return true;
+    }
+    return false;
+  }
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -1331,6 +1400,7 @@ class _BrowserPageState extends State<BrowserPage> {
                           allowsInlineMediaPlayback: true,
                           mediaPlaybackRequiresUserGesture: false,
                           useOnLoadResource: true,
+                          useShouldOverrideUrlLoading: true,
                           javaScriptEnabled: true,
                           allowsBackForwardNavigationGestures: true,
                         ),
@@ -1378,30 +1448,18 @@ class _BrowserPageState extends State<BrowserPage> {
                         },
                         onLoadStart: (c, u) async {
                           // 雙保險：硬攔非 Web scheme（極少數情況仍可能觸發）
-                          if (_blockExternalApp && u != null) {
-                            final scheme = (u.scheme ?? '').toLowerCase();
-                            const allowed = {
-                              'http',
-                              'https',
-                              'about',
-                              'data',
-                              'blob',
-                              'file',
-                            };
-                            if (!allowed.contains(scheme)) {
-                              // 直接停止這次導航，避免外部 App 被開啟
-                              try {
-                                await c.stopLoading();
-                              } catch (_) {}
-                              if (mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                    content: Text('已阻擋網頁嘗試開啟外部 App'),
-                                  ),
-                                );
-                              }
-                              return;
+                          if (_shouldPreventExternalNavigation(u)) {
+                            try {
+                              await c.stopLoading();
+                            } catch (_) {}
+                            if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('已阻擋網頁嘗試開啟外部 App'),
+                                ),
+                              );
                             }
+                            return;
                           }
                           if (u != null) {
                             final tab = _tabs[tabIndex];
@@ -1482,17 +1540,9 @@ class _BrowserPageState extends State<BrowserPage> {
                           final uri = req?.url;
                           if (uri != null) {
                             final scheme = (uri.scheme ?? '').toLowerCase();
-                            const allowed = {
-                              'http',
-                              'https',
-                              'about',
-                              'data',
-                              'blob',
-                              'file',
-                            };
                             // 先處理外部 App 阻擋：目標是攔截像 x.com 這類用 window.open(...) 觸發的 twitter:// 等
                             if (_blockExternalApp &&
-                                !allowed.contains(scheme)) {
+                                !_kWebSchemes.contains(scheme)) {
                               ScaffoldMessenger.of(context).showSnackBar(
                                 const SnackBar(
                                   content: Text('已阻擋網頁嘗試開啟外部 App'),
@@ -1553,32 +1603,18 @@ class _BrowserPageState extends State<BrowserPage> {
                           controller,
                           navigationAction,
                         ) async {
-                          final uri = navigationAction.request.url;
-                          if (uri != null) {
-                            final scheme = (uri.scheme ?? '').toLowerCase();
-                            // 常見 Web/內嵌允許的 scheme
-                            const allowed = {
-                              'http',
-                              'https',
-                              'about',
-                              'data',
-                              'blob',
-                              'file',
-                            };
-                            if (!allowed.contains(scheme)) {
-                              // e.g. line://, fb://, intent://, tg://, itms-apps:// ...
-                              if (_blockExternalApp) {
-                                // 阻擋由網頁嘗試開啟第三方 App
-                                if (mounted) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
-                                      content: Text('已阻擋網頁嘗試開啟外部 App'),
-                                    ),
-                                  );
-                                }
-                                return NavigationActionPolicy.CANCEL;
-                              }
+                          if (_shouldPreventExternalNavigation(
+                            navigationAction.request.url,
+                            action: navigationAction,
+                          )) {
+                            if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('已阻擋網頁嘗試開啟外部 App'),
+                                ),
+                              );
                             }
+                            return NavigationActionPolicy.CANCEL;
                           }
                           return NavigationActionPolicy.ALLOW;
                         },

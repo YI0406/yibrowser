@@ -386,7 +386,7 @@ class _MediaAllState extends State<_MediaAll> {
                       },
                       decoration: InputDecoration(
                         isDense: true,
-                        hintText: '搜尋名稱/網址/檔名',
+                        hintText: '搜尋名稱/檔名',
                         prefixIcon: const Icon(Icons.search, size: 18),
                         suffixIcon:
                             _search.isNotEmpty
