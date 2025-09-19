@@ -366,7 +366,7 @@ class DownloadTask {
   final String url;
 
   /// Local file path where this task writes its downloaded content.
-  final String savePath;
+  String savePath;
 
   /// Either `'hls'` for M3U8/HLS playlists or `'file'` for direct files.
   final String kind;
@@ -389,7 +389,7 @@ class DownloadTask {
   String? name;
 
   /// Detected media type: `'video'`, `'audio'`, `'image'` or `'file'`.
-  final String type;
+  String type;
 
   /// Whether this task is marked as a favourite by the user.
   bool favorite;
@@ -505,6 +505,23 @@ class AppRepo extends ChangeNotifier {
   static final AppRepo I = AppRepo._();
   AppRepo._();
 
+  final Map<String, int> _resumePositionsMs = {};
+
+  Duration? resumePositionFor(String path) {
+    final key = _canonicalPath(path);
+    final ms = _resumePositionsMs[key] ?? _resumePositionsMs[path];
+    if (ms == null) return null;
+    if (ms <= 0) return Duration.zero;
+    return Duration(milliseconds: ms);
+  }
+
+  void setResumePosition(String path, Duration position) {
+    final canonical = _canonicalPath(path);
+    final clamped = position.inMilliseconds.clamp(0, 1 << 31);
+    _resumePositionsMs[canonical] = clamped;
+    unawaited(_saveState());
+  }
+
   /// Tracks the last emitted file size for HLS conversion progress. Used to
   /// throttle UI updates during FFmpeg processing so that the UI remains
   /// responsive without flooding with notifications. The key is the task and
@@ -534,56 +551,7 @@ class AppRepo extends ChangeNotifier {
 
   // 在 AppRepo class 裡新增
   Future<void> rescanDownloadsFolder() async {
-    try {
-      final dir = await _downloadsDir(); // 這是你原本存檔的資料夾
-      if (!dir.existsSync()) return;
-
-      final existing = downloads.value.map((t) => t.savePath).toSet();
-      final files = dir.listSync().whereType<File>();
-
-      final newTasks = <DownloadTask>[];
-      for (final f in files) {
-        if (existing.contains(f.path)) continue; // 已存在就跳過
-
-        final ext = p.extension(f.path).toLowerCase();
-        String type = 'file';
-        if (['.mp4', '.mov', '.mkv'].contains(ext)) {
-          type = 'video';
-        } else if (['.mp3', '.m4a', '.aac'].contains(ext)) {
-          type = 'audio';
-        }
-
-        final stat = f.statSync();
-        newTasks.add(
-          DownloadTask(
-            url: f.path,
-            savePath: f.path,
-            kind: 'file',
-            type: type,
-            state: 'done',
-            timestamp: stat.modified,
-            total: stat.size,
-          ),
-        );
-      }
-
-      if (newTasks.isNotEmpty) {
-        // Append the discovered tasks to the downloads list.
-        downloads.value = [...downloads.value, ...newTasks];
-        notifyListeners();
-        // For new video tasks generate a thumbnail and duration. Run in
-        // background without blocking the scan. Do not await to avoid
-        // delaying the UI.
-        for (final t in newTasks) {
-          if (t.type == 'video') {
-            // ignore: unawaited_futures
-            _generatePreview(t);
-          }
-        }
-      }
-    } catch (e) {
-      print("rescanDownloadsFolder error: $e");
-    }
+    await importExistingFiles();
   }
 
   /// Scan the downloads folder and import any media files that are not yet tracked.
@@ -592,12 +560,42 @@ class AppRepo extends ChangeNotifier {
       final dir = await _downloadsDir();
       final entries = await dir.list(followLinks: false).toList();
       final current = [...downloads.value];
-      final existing = current.map((t) => t.savePath).toSet();
+      for (final t in current) {
+        final canon = _canonicalPath(t.savePath);
+        if (canon != t.savePath) t.savePath = canon;
+      }
+      final existing = current.map((t) => _canonicalPath(t.savePath)).toSet();
+
+      // Track tasks whose files are currently missing so we can re-bind them
+      // if the underlying file was renamed outside the app (e.g. via Files).
+      final List<DownloadTask> missing = [];
+      final Map<int, List<DownloadTask>> missingBySize = {};
+      for (final task in current) {
+        final exists = File(task.savePath).existsSync();
+        if (!exists) {
+          missing.add(task);
+          final int? expectedSize;
+          if (task.total != null && task.total! > 0) {
+            expectedSize = task.total;
+          } else if (task.progressUnit != 'time-ms' && task.received > 0) {
+            expectedSize = task.received;
+          } else {
+            expectedSize = null;
+          }
+          if (expectedSize != null) {
+            final list = missingBySize.putIfAbsent(expectedSize, () => []);
+            list.add(task);
+          }
+        }
+      }
 
       bool changed = false;
       for (final e in entries) {
         if (e is! File) continue;
         final path = e.path;
+        // Skip hidden/system files to avoid importing metadata artefacts.
+        if (p.basename(path).startsWith('.')) continue;
+        final norm = _canonicalPath(path);
         // Filter by common media extensions
         final lower = path.toLowerCase();
         final isMedia =
@@ -620,15 +618,69 @@ class AppRepo extends ChangeNotifier {
             lower.endsWith('.bmp') ||
             lower.endsWith('.svg');
         if (!isMedia) continue;
-        if (existing.contains(path)) continue;
+        if (existing.contains(norm)) continue;
 
         final stat = await (e as File).stat();
-        final size = await e.length();
+        final fileSize = stat.size;
+
+        DownloadTask? rebound;
+        final sameSize = missingBySize[fileSize];
+        if (sameSize != null && sameSize.isNotEmpty) {
+          rebound = sameSize.firstWhereOrNull((t) => t.state == 'done');
+        }
+        rebound ??= missing.firstWhereOrNull((t) {
+          if (t.state != 'done') return false;
+          if (t.progressUnit == 'time-ms') return false;
+          // Prefer tasks that originally lived in the same downloads dir.
+          return p.dirname(_canonicalPath(t.savePath)) == p.dirname(norm);
+        });
+
+        if (rebound != null) {
+          final oldPath = rebound.savePath;
+          final oldBase = p.basename(oldPath);
+          rebound.savePath = norm;
+          rebound.total = fileSize;
+          rebound.received = fileSize;
+          rebound.type = _inferType(path);
+          _normalizeTaskType(rebound);
+          // If the name simply mirrored the filename, refresh it to the new one.
+          if (rebound.name == null ||
+              rebound.name!.isEmpty ||
+              rebound.name == oldBase) {
+            rebound.name = p.basename(path);
+          }
+          // Carry over resume position to the renamed file path.
+          final oldKey = _canonicalPath(oldPath);
+          final resume =
+              _resumePositionsMs.remove(oldKey) ??
+              _resumePositionsMs.remove(oldPath);
+          if (resume != null) {
+            _resumePositionsMs[norm] = resume;
+          }
+          if (rebound.thumbnailPath == null ||
+              !File(rebound.thumbnailPath!).existsSync()) {
+            // ignore: unawaited_futures
+            _generatePreview(rebound);
+          }
+          existing.add(norm);
+          missing.remove(rebound);
+          final sizedList = missingBySize[fileSize];
+          sizedList?.remove(rebound);
+          if (sizedList != null && sizedList.isEmpty) {
+            missingBySize.remove(fileSize);
+          }
+          changed = true;
+          continue;
+        }
+
+        final size = fileSize;
         final type = _inferType(path);
 
+        final canonicalPath = _canonicalPath(path);
         final task = DownloadTask(
-          url: path, // For imported files, use local path as url placeholder
-          savePath: path,
+          url:
+              canonicalPath, // For imported files, use local path as url placeholder
+          savePath: canonicalPath,
           kind: 'file',
           received: size,
           total: size,
@@ -642,14 +694,40 @@ class AppRepo extends ChangeNotifier {
           paused: false,
         );
         current.add(task);
+        existing.add(norm);
         changed = true;
         // Generate preview/duration in background for videos
         // ignore: unawaited_futures
         _generatePreview(task);
       }
 
-      if (changed) {
-        downloads.value = current;
+      // Deduplicate by normalised path while keeping richest metadata.
+      final Map<String, DownloadTask> byPath = {};
+      int score(DownloadTask t) {
+        var s = 0;
+        if (File(t.savePath).existsSync()) s += 3;
+        if (t.thumbnailPath != null && File(t.thumbnailPath!).existsSync())
+          s += 2;
+        if (t.duration != null && t.duration! > Duration.zero) s += 2;
+        if ((t.name ?? '').isNotEmpty) s += 1;
+        if (t.favorite) s += 1;
+        if (t.total != null && t.total! > 0) s += 1;
+        return s;
+      }
+
+      for (final t in current) {
+        final key = _canonicalPath(t.savePath);
+        final existingTask = byPath[key];
+        if (existingTask == null || score(t) >= score(existingTask)) {
+          byPath[key] = t;
+        }
+      }
+      final deduped =
+          byPath.values.toList()
+            ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+
+      if (changed || deduped.length != current.length) {
+        downloads.value = deduped;
         notifyListeners();
         await _saveState();
       }
@@ -680,6 +758,8 @@ class AppRepo extends ChangeNotifier {
         // would reset on next launch.
         'homeItems': homeItems.value.map((e) => e.toJson()).toList(),
 
+        'resume': _resumePositionsMs,
+
         // Persist the list of open browser tabs. Each entry is a URL. This
         // ensures the user’s open tabs are restored on the next launch.
         'openTabs': openTabs.value,
@@ -698,6 +778,7 @@ class AppRepo extends ChangeNotifier {
       favorites.value = [];
       autoSave.value = true;
       openTabs.value = [];
+      _resumePositionsMs.clear();
       return;
     }
     try {
@@ -711,6 +792,10 @@ class AppRepo extends ChangeNotifier {
                     DownloadTask.fromJson(Map<String, dynamic>.from(e as Map)),
               )
               .toList();
+      for (final t in tasks) {
+        t.savePath = _canonicalPath(t.savePath);
+        _normalizeTaskType(t);
+      }
       // Do not remove tasks even if their files are missing. Users may wish
       // to reattempt downloads or view history of previous downloads.
       downloads.value = tasks;
@@ -727,6 +812,14 @@ class AppRepo extends ChangeNotifier {
               )
               .toList();
       history.value = hist;
+      _resumePositionsMs
+        ..clear()
+        ..addAll(
+          (data['resume'] as Map<String, dynamic>? ?? {}).map(
+            (key, value) =>
+                MapEntry(_canonicalPath(key), (value as num).toInt()),
+          ),
+        );
       // Restore pop‑up blocking preference.
       blockPopup.value = data['blockPopup'] as bool? ?? false;
       autoSave.value = data['autoSave'] as bool? ?? true;
@@ -750,6 +843,7 @@ class AppRepo extends ChangeNotifier {
       favorites.value = [];
       autoSave.value = true;
       openTabs.value = [];
+      _resumePositionsMs.clear();
     }
   }
 
@@ -1290,34 +1384,248 @@ class AppRepo extends ChangeNotifier {
     return null;
   }
 
+  String _extensionFromUrl(String url) {
+    try {
+      final uri = Uri.parse(url);
+      final path = uri.path;
+      final dot = path.lastIndexOf('.');
+      if (dot == -1 || dot < path.lastIndexOf('/')) return 'bin';
+      final ext = path.substring(dot + 1);
+      return ext.toLowerCase();
+    } catch (_) {
+      return 'bin';
+    }
+  }
+
+  String _canonicalPath(String path) {
+    try {
+      var normalized = p.normalize(path);
+      if (normalized.startsWith('/private/')) {
+        normalized = normalized.replaceFirst('/private', '');
+        if (!normalized.startsWith('/')) {
+          normalized = '/$normalized';
+        }
+      }
+      return normalized;
+    } catch (_) {
+      return path;
+    }
+  }
+
+  String _defaultExtensionForType(String type) {
+    switch (type) {
+      case 'video':
+        return 'mp4';
+      case 'audio':
+        return 'mp3';
+      case 'image':
+        return 'jpg';
+      default:
+        return 'bin';
+    }
+  }
+
+  String _typeFromExtension(String? ext) {
+    if (ext == null || ext.isEmpty) return 'file';
+    if (ext.startsWith('.')) ext = ext.substring(1);
+    final lower = ext.toLowerCase();
+    if (lower == 'mp4' ||
+        lower == 'mov' ||
+        lower == 'm4v' ||
+        lower == 'webm' ||
+        lower == 'mkv' ||
+        lower == 'ts' ||
+        lower == 'm3u8') {
+      return 'video';
+    }
+    if (lower == 'mp3' ||
+        lower == 'm4a' ||
+        lower == 'aac' ||
+        lower == 'ogg' ||
+        lower == 'wav' ||
+        lower == 'flac' ||
+        lower == 'opus') {
+      return 'audio';
+    }
+    if (lower == 'png' ||
+        lower == 'jpg' ||
+        lower == 'jpeg' ||
+        lower == 'gif' ||
+        lower == 'webp' ||
+        lower == 'bmp' ||
+        lower == 'svg' ||
+        lower == 'heic' ||
+        lower == 'heif') {
+      return 'image';
+    }
+    return 'file';
+  }
+
+  void _normalizeTaskType(DownloadTask t) {
+    final current = t.type;
+    final resolved = resolvedTaskType(t, explicitOverride: current);
+    if (resolved != current) {
+      t.type = resolved;
+    }
+  }
+
+  String resolvedTaskType(DownloadTask t, {String? explicitOverride}) {
+    final explicit = explicitOverride ?? t.type;
+    if (explicit == 'video' || explicit == 'audio' || explicit == 'image') {
+      return explicit;
+    }
+    final ext = p.extension(t.savePath).replaceFirst('.', '');
+    final mapped = _typeFromExtension(ext);
+    if (mapped != 'file') return mapped;
+    final inferred = _inferType(t.savePath);
+    if (inferred != 'file') return inferred;
+    return explicit;
+  }
+
+  String? _extractInnerUrl(String url) {
+    try {
+      final uri = Uri.parse(url);
+      for (final entry in uri.queryParameters.entries) {
+        final value = entry.value;
+        if (value.isEmpty) continue;
+        final decoded = Uri.decodeComponent(value);
+        if (decoded.startsWith('http://') || decoded.startsWith('https://')) {
+          return decoded;
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  String? _detectExtensionFromFile(String path) {
+    try {
+      final file = File(path);
+      if (!file.existsSync()) return null;
+      final bytes = file.openSync().readSync(16);
+      if (bytes.length >= 12) {
+        final ftyp = String.fromCharCodes(bytes.sublist(4, 8));
+        if (ftyp == 'ftyp') return 'mp4';
+      }
+      if (bytes.length >= 4) {
+        final b0 = bytes[0];
+        final b1 = bytes[1];
+        final b2 = bytes[2];
+        final b3 = bytes[3];
+        if (b0 == 0x49 && b1 == 0x44 && b2 == 0x33) return 'mp3';
+        if (b0 == 0x4F && b1 == 0x67 && b2 == 0x67 && b3 == 0x53) return 'ogg';
+        if (b0 == 0x1A && b1 == 0x45 && b2 == 0xDF && b3 == 0xA3) return 'mkv';
+        if (b0 == 0x52 && b1 == 0x49 && b2 == 0x46 && b3 == 0x46) {
+          try {
+            final tag = String.fromCharCodes(bytes.sublist(8, 12));
+            if (tag == 'AVI ') return 'avi';
+            if (tag == 'WAVE') return 'wav';
+          } catch (_) {}
+        }
+        if (b0 == 0x66 && b1 == 0x4C && b2 == 0x61 && b3 == 0x43) return 'flac';
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  String? _extensionFromContentType(String? contentType) {
+    if (contentType == null) return null;
+    final lower = contentType.toLowerCase();
+    if (lower.contains('audio/mp4')) return 'm4a';
+    if (lower.contains('audio/mpeg')) return 'mp3';
+    if (lower.contains('mp4') || lower.contains('mpeg-4')) return 'mp4';
+    if (lower.contains('quicktime')) return 'mov';
+    if (lower.contains('webm')) return 'webm';
+    if (lower.contains('matroska')) return 'mkv';
+    if (lower.contains('mp3')) return 'mp3';
+    if (lower.contains('aac')) return 'aac';
+    if (lower.contains('m4a')) return 'm4a';
+    if (lower.contains('wav')) return 'wav';
+    if (lower.contains('ogg')) return 'ogg';
+    if (lower.contains('image/png')) return 'png';
+    if (lower.contains('image/jpeg')) return 'jpg';
+    if (lower.contains('image/gif')) return 'gif';
+    if (lower.contains('image/webp')) return 'webp';
+    return null;
+  }
+
+  String? _filenameFromContentDisposition(String? header) {
+    if (header == null || header.isEmpty) return null;
+    final utf8Match = RegExp(
+      r"filename\*=(?:UTF-8'')?([^;]+)",
+      caseSensitive: false,
+    ).firstMatch(header);
+    if (utf8Match != null) {
+      final raw = utf8Match.group(1);
+      if (raw != null) {
+        try {
+          return Uri.decodeFull(raw);
+        } catch (_) {
+          return raw;
+        }
+      }
+    }
+    final quotedMatch = RegExp(
+      r'filename="([^"]+)"',
+      caseSensitive: false,
+    ).firstMatch(header);
+    if (quotedMatch != null) {
+      return quotedMatch.group(1);
+    }
+    final bareMatch = RegExp(
+      r'filename=([^;]+)',
+      caseSensitive: false,
+    ).firstMatch(header);
+    if (bareMatch != null) {
+      return bareMatch.group(1)?.trim();
+    }
+    return null;
+  }
+
+  String? _extensionFromFilename(String? filename) {
+    if (filename == null || filename.isEmpty) return null;
+    final dot = filename.lastIndexOf('.');
+    if (dot < 0 || dot == filename.length - 1) return null;
+    return filename.substring(dot + 1).toLowerCase();
+  }
+
   /// Guess the media type from a URL extension. Defaults to 'video' if
   /// the extension is unknown. Used when enqueuing downloads.
   String _inferType(String url) {
-    final u = url.toLowerCase();
-    if (u.contains('.mp3') ||
-        u.contains('.m4a') ||
-        u.contains('.aac') ||
-        u.contains('.ogg') ||
-        u.contains('.wav') ||
-        u.contains('.flac')) {
+    final nested = _extractInnerUrl(url);
+    final target = (nested ?? url).toLowerCase();
+    if (target.contains('mime%3daudio') || target.contains('mime=audio')) {
       return 'audio';
     }
-    if (u.contains('.png') ||
-        u.contains('.jpg') ||
-        u.contains('.jpeg') ||
-        u.contains('.gif') ||
-        u.contains('.webp') ||
-        u.contains('.bmp') ||
-        u.contains('.svg')) {
+    if (target.contains('mime%3dimage') || target.contains('mime=image')) {
       return 'image';
     }
-    if (u.contains('.m3u8') ||
-        u.contains('.mpd') ||
-        u.contains('.mp4') ||
-        u.contains('.mov') ||
-        u.contains('.m4v') ||
-        u.contains('.webm') ||
-        u.contains('.mkv')) {
+    if (target.contains('mime%3dvideo') || target.contains('mime=video')) {
+      return 'video';
+    }
+    if (target.contains('.mp3') ||
+        target.contains('.m4a') ||
+        target.contains('.aac') ||
+        target.contains('.ogg') ||
+        target.contains('.wav') ||
+        target.contains('.flac')) {
+      return 'audio';
+    }
+    if (target.contains('.png') ||
+        target.contains('.jpg') ||
+        target.contains('.jpeg') ||
+        target.contains('.gif') ||
+        target.contains('.webp') ||
+        target.contains('.bmp') ||
+        target.contains('.svg')) {
+      return 'image';
+    }
+    if (target.contains('.m3u8') ||
+        target.contains('.mpd') ||
+        target.contains('.mp4') ||
+        target.contains('.mov') ||
+        target.contains('.m4v') ||
+        target.contains('.webm') ||
+        target.contains('.mkv')) {
       return 'video';
     }
     return 'file';
@@ -1423,6 +1731,7 @@ class AppRepo extends ChangeNotifier {
           await f.delete();
         }
       } catch (_) {}
+      _resumePositionsMs.remove(_canonicalPath(t.savePath));
       if (t.thumbnailPath != null) {
         try {
           final f2 = File(t.thumbnailPath!);
@@ -1730,21 +2039,55 @@ class AppRepo extends ChangeNotifier {
   }
 
   /// Adds a media hit or merges if URL already exists.
+
+  String _normalizeHitType(String url, String rawType, String contentType) {
+    final lowerType = (rawType.isEmpty ? '' : rawType.toLowerCase());
+    final lowerCt = contentType.toLowerCase();
+    if (lowerCt.startsWith('image/')) return 'image';
+    if (lowerCt.startsWith('audio/')) return 'audio';
+    if (lowerCt.startsWith('video/')) return 'video';
+    if (lowerType == 'image' || lowerType == 'audio' || lowerType == 'video') {
+      return lowerType;
+    }
+    final inferred = _inferType(url);
+    if (inferred != 'file') return inferred;
+    return lowerType.isNotEmpty ? lowerType : 'video';
+  }
+
+  String _mergeHitType(String existing, String incoming) {
+    if (existing == incoming) return existing;
+    final priority = {'video': 1, 'audio': 2, 'image': 3};
+    final currentScore = priority[existing] ?? 0;
+    final incomingScore = priority[incoming] ?? 0;
+    return incomingScore >= currentScore ? incoming : existing;
+  }
+
   void addHit(MediaHit h) {
+    final normalizedType = _normalizeHitType(h.url, h.type, h.contentType);
+    final normalizedHit = h.copyWith(type: normalizedType);
     final list = [...hits.value];
-    final idx = list.indexWhere((e) => e.url == h.url);
+    final idx = list.indexWhere((e) => e.url == normalizedHit.url);
     if (idx >= 0) {
       final cur = list[idx];
+      final mergedType = _mergeHitType(cur.type, normalizedType);
+      final mergedContentType =
+          cur.contentType.isNotEmpty
+              ? cur.contentType
+              : normalizedHit.contentType;
+      final mergedPoster =
+          cur.poster.isNotEmpty ? cur.poster : normalizedHit.poster;
+      final mergedDuration =
+          cur.durationSeconds ?? normalizedHit.durationSeconds;
       list[idx] = cur.copyWith(
-        type: cur.type.isEmpty ? h.type : cur.type,
-        contentType: cur.contentType.isEmpty ? h.contentType : cur.contentType,
-        poster: cur.poster.isEmpty ? h.poster : cur.poster,
-        durationSeconds: cur.durationSeconds ?? h.durationSeconds,
+        type: mergedType,
+        contentType: mergedContentType,
+        poster: mergedPoster,
+        durationSeconds: mergedDuration,
       );
-      hits.value = list;
     } else {
-      hits.value = [...list, h];
+      list.add(normalizedHit);
     }
+    hits.value = list;
   }
 
   /// Creates a unique file path in the persistent downloads directory with
@@ -1756,7 +2099,9 @@ class AppRepo extends ChangeNotifier {
     if (!await downloadDir.exists()) {
       await downloadDir.create(recursive: true);
     }
-    return '${downloadDir.path}/${DateTime.now().millisecondsSinceEpoch}.$ext';
+    final raw =
+        '${downloadDir.path}/${DateTime.now().millisecondsSinceEpoch}.$ext';
+    return _canonicalPath(raw);
   }
 
   /// Requests permission to save media to gallery. Throws if denied.
@@ -1837,12 +2182,13 @@ class AppRepo extends ChangeNotifier {
       }
 
       final kind = isHls ? 'hls' : (isDash ? 'dash' : 'file');
-      final ext =
-          (isHls || isDash)
-              ? 'mp4'
-              : (url.split('?').first.split('.').lastOrNull ?? 'bin');
+      final innerUrl = _extractInnerUrl(url) ?? url;
+      final type = _inferType(innerUrl);
+      var ext = (isHls || isDash) ? 'mp4' : _extensionFromUrl(innerUrl);
+      if (ext.isEmpty || ext == 'bin') {
+        ext = _defaultExtensionForType(type);
+      }
       final out = await _tempFilePath(ext);
-      final type = _inferType(url);
 
       final task = DownloadTask(
         url: url,
@@ -1969,6 +2315,7 @@ class AppRepo extends ChangeNotifier {
           final rc = await session.getReturnCode();
           if (rc != null && rc.isValueSuccess()) {
             t.state = 'done';
+            _normalizeTaskType(t);
             // propagate update to downloads list
             _notifyDownloadsUpdated();
             notifyListeners();
@@ -2291,6 +2638,7 @@ class AppRepo extends ChangeNotifier {
           _ffmpegSessions.remove(t);
           if (rc != null && rc.isValueSuccess()) {
             t.state = 'done';
+            _normalizeTaskType(t);
             // propagate update to downloads list
             _notifyDownloadsUpdated();
             notifyListeners();
@@ -2354,6 +2702,7 @@ class AppRepo extends ChangeNotifier {
                     final rc2 = await s2.getReturnCode();
                     if (rc2 != null && rc2.isValueSuccess()) {
                       t.state = 'done';
+                      _normalizeTaskType(t);
                       _notifyDownloadsUpdated();
                       notifyListeners();
                       await _generatePreview(t);
@@ -2547,6 +2896,7 @@ class AppRepo extends ChangeNotifier {
             t.state = 'done';
             // finalise progress
             t.received = t.total ?? t.received;
+            _normalizeTaskType(t);
             // generate preview and optionally save to gallery
             _notifyDownloadsUpdated();
             notifyListeners();
@@ -2593,7 +2943,7 @@ class AppRepo extends ChangeNotifier {
 
   Future<void> _runTaskFile(DownloadTask t, {required bool resume}) async {
     try {
-      final file = File(t.savePath);
+      var file = File(t.savePath);
       int start = 0;
       if (resume && await file.exists()) {
         try {
@@ -2669,6 +3019,64 @@ class AppRepo extends ChangeNotifier {
         options: opts,
         cancelToken: token,
       );
+      final headers = resp.headers;
+      final contentType = headers.value(HttpHeaders.contentTypeHeader);
+      final contentDisposition = headers.value('content-disposition');
+      final beforeType = t.type;
+      var newType = beforeType;
+      final filename = _filenameFromContentDisposition(contentDisposition);
+      final filenameExt = _extensionFromFilename(filename);
+      final headerType =
+          filenameExt != null ? _typeFromExtension(filenameExt) : null;
+      if (headerType != null && headerType != 'file') {
+        newType = headerType;
+      }
+      if (contentType != null) {
+        final lowerCt = contentType.toLowerCase();
+        if (lowerCt.startsWith('audio/')) {
+          newType = 'audio';
+        } else if (lowerCt.startsWith('image/')) {
+          newType = 'image';
+        } else if (lowerCt.startsWith('video/') &&
+            (newType == beforeType ||
+                (newType != 'audio' && newType != 'image'))) {
+          newType = 'video';
+        }
+      }
+      if (newType != beforeType) {
+        t.type = newType;
+        _normalizeTaskType(t);
+        _notifyDownloadsUpdated();
+        notifyListeners();
+      }
+      if (filename != null && filename.isNotEmpty) {
+        final shouldUpdateName = (t.name == null || t.name!.isEmpty);
+        if (shouldUpdateName) {
+          t.name = filename;
+          _notifyDownloadsUpdated();
+          notifyListeners();
+        }
+      }
+      final suggestedExt =
+          filenameExt ??
+          _extensionFromContentType(contentType) ??
+          _defaultExtensionForType(t.type);
+      final currentExt = p.extension(t.savePath).replaceFirst('.', '');
+      if ((currentExt.isEmpty || currentExt == 'bin') &&
+          suggestedExt.isNotEmpty &&
+          suggestedExt != 'bin') {
+        try {
+          final newPath = p.setExtension(t.savePath, '.$suggestedExt');
+          await file.rename(newPath);
+          final canonical = _canonicalPath(newPath);
+          t.savePath = canonical;
+          file = File(canonical);
+          start = resume && await file.exists() ? await file.length() : start;
+          _normalizeTaskType(t);
+          _notifyDownloadsUpdated();
+          notifyListeners();
+        } catch (_) {}
+      }
       final sink = file.openWrite(mode: FileMode.append);
       int receivedSince = 0;
       final totalHeader = resp.headers.value(HttpHeaders.contentLengthHeader);
@@ -2693,12 +3101,32 @@ class AppRepo extends ChangeNotifier {
       }
       await sink.flush();
       await sink.close();
+      final detectedExt =
+          _extensionFromContentType(contentType) ??
+          _detectExtensionFromFile(file.path);
+      final currentExtAfter = p.extension(file.path).replaceFirst('.', '');
+      if (detectedExt != null &&
+          detectedExt.isNotEmpty &&
+          detectedExt != 'bin' &&
+          currentExtAfter != detectedExt) {
+        try {
+          final newPath = p.setExtension(file.path, '.$detectedExt');
+          await file.rename(newPath);
+          final canonical = _canonicalPath(newPath);
+          t.savePath = canonical;
+          file = File(canonical);
+          _normalizeTaskType(t);
+          _notifyDownloadsUpdated();
+          notifyListeners();
+        } catch (_) {}
+      }
       _dioTokens.remove(t);
       if (token.isCancelled) {
         // paused by user; keep state as paused
         return;
       }
       t.state = 'done';
+      _normalizeTaskType(t);
       // final update of downloads list and global listeners
       _notifyDownloadsUpdated();
       notifyListeners();
@@ -2752,9 +3180,40 @@ class AppRepo extends ChangeNotifier {
 class SystemPip {
   static const MethodChannel _ch = MethodChannel('app.pip');
   static String? _lastUrl;
+  static final StreamController<int?> _stopEventsController =
+      StreamController<int?>.broadcast();
+  static bool _handlerBound = false;
+
+  static void _ensureHandlerBound() {
+    if (_handlerBound) return;
+    _ch.setMethodCallHandler((call) async {
+      if (call.method == 'onPiPStopped') {
+        int? position;
+        final args = call.arguments;
+        if (args is Map) {
+          final value = args['positionMs'];
+          if (value is int) {
+            position = value;
+          }
+        } else if (args is int) {
+          position = args;
+        }
+        _stopEventsController.add(position);
+        return null;
+      }
+      return null;
+    });
+    _handlerBound = true;
+  }
+
+  static Stream<int?> get stopEvents {
+    _ensureHandlerBound();
+    return _stopEventsController.stream;
+  }
 
   /// 只準備原生播放器（不啟動 PiP）
   static Future<bool> prepare({required String url, int? positionMs}) async {
+    _ensureHandlerBound();
     try {
       final params = <String, dynamic>{
         'url': url,
@@ -2768,11 +3227,17 @@ class SystemPip {
   }
 
   /// 預先建立原生 PiP 播放資源，但不觸發進入 PiP。
-  static Future<bool> prime({required String url, int? positionMs}) async {
+  static Future<bool> prime({
+    required String url,
+    int? positionMs,
+    bool? isPlaying,
+  }) async {
+    _ensureHandlerBound();
     try {
       final params = <String, dynamic>{
         'url': url,
         if (positionMs != null) 'positionMs': positionMs,
+        if (isPlaying != null) 'isPlaying': isPlaying,
       };
       final ok = await _ch.invokeMethod('prime', params);
       return ok == true;
@@ -2782,6 +3247,7 @@ class SystemPip {
   }
 
   static Future<void> updateHostViewFrame(Rect rect) async {
+    _ensureHandlerBound();
     try {
       await _ch.invokeMethod('updateHostViewFrame', {
         'x': rect.left,
@@ -2793,6 +3259,7 @@ class SystemPip {
   }
 
   static Future<bool> isAvailable() async {
+    _ensureHandlerBound();
     try {
       final ok = await _ch.invokeMethod('isAvailable');
       // Avoid recursion: just log the value, do not call isAvailable() again.
@@ -2803,7 +3270,12 @@ class SystemPip {
     }
   }
 
-  static Future<bool> enter({String? url, int? positionMs}) async {
+  static Future<bool> enter({
+    String? url,
+    int? positionMs,
+    bool? isPlaying,
+  }) async {
+    _ensureHandlerBound();
     try {
       // If a new URL is provided and differs from the last PiP source, force-exit first.
       if (url != null && _lastUrl != null && _lastUrl != url) {
@@ -2817,6 +3289,7 @@ class SystemPip {
       final params = <String, dynamic>{
         if (url != null) 'url': url,
         if (positionMs != null) 'positionMs': positionMs,
+        if (isPlaying != null) 'isPlaying': isPlaying,
       };
 
       final ok = await _ch.invokeMethod('enter', params);
@@ -2830,6 +3303,7 @@ class SystemPip {
   }
 
   static Future<int?> exit() async {
+    _ensureHandlerBound();
     try {
       final pos = await _ch.invokeMethod('exit');
       if (pos is int) {

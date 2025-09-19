@@ -15,8 +15,11 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     let flutterVC = FlutterViewController(project: nil, nibName: nil, bundle: nil)
     GeneratedPluginRegistrant.register(with: flutterVC)
 
-    // Delegate PiP setup to central manager
-    NativePiPManager.shared.configure(with: flutterVC)
+    if let registrar = flutterVC.registrar(forPlugin: "NativePlayerViewFactory") {
+      let messenger = registrar.messenger()
+      PlayerEngine.shared.configureChannels(messenger: messenger)
+      registrar.register(NativePlayerViewFactory(messenger: messenger), withId: "native-player-view")
+    }
 
     window.rootViewController = flutterVC
     self.window = window

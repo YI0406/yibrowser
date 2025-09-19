@@ -19,8 +19,11 @@ import AVFoundation
 
     let result = super.application(application, didFinishLaunchingWithOptions: launchOptions)
 
-    if let controller = window?.rootViewController as? FlutterViewController {
-      NativePiPManager.shared.configure(with: controller)
+    if let controller = window?.rootViewController as? FlutterViewController,
+       let registrar = controller.registrar(forPlugin: "NativePlayerViewFactory") {
+      let messenger = registrar.messenger()
+      PlayerEngine.shared.configureChannels(messenger: messenger)
+      registrar.register(NativePlayerViewFactory(messenger: messenger), withId: "native-player-view")
     }
 
     // 提醒（僅註解）：Xcode > Signing & Capabilities 要勾選：

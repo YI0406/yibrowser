@@ -18,6 +18,9 @@ import 'package:path/path.dart' as path;
 // playing remote videos from the browser. This also brings in the
 // VideoPlayerPage class used in the play callbacks.
 import 'media.dart';
+import 'video_player_page.dart';
+import 'image_preview_page.dart';
+import 'package:share_plus/share_plus.dart';
 import 'dart:io' show Platform;
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -62,6 +65,18 @@ class BrowserPage extends StatefulWidget {
   State<BrowserPage> createState() => _BrowserPageState();
 }
 
+enum _ToolbarMenuAction {
+  toggleSniffer,
+  openResources,
+  openDownloads,
+  openFavorites,
+  openHistory,
+  toggleBlockPopup,
+  blockExternalApp,
+  addHome,
+  goHome,
+}
+
 class _BrowserPageState extends State<BrowserPage> {
   // Global key used to control the Scaffold (e.g. open the end drawer) from
   // contexts where Scaffold.of(context) does not resolve correctly, such as
@@ -90,6 +105,12 @@ class _BrowserPageState extends State<BrowserPage> {
   String? _userAgent; // resolved UA string used by WebView
   bool _uaInitialized = false;
 
+  bool _blockExternalApp = false; // 阻擋由網頁開啟第三方 App
+
+  static const double _edgeSwipeWidth = 32.0;
+  static const double _edgeSwipeDistanceThreshold = 48.0;
+  static const double _edgeSwipeVelocityThreshold = 700.0;
+
   String _uaForMode(String mode) {
     switch (mode) {
       case 'ipad':
@@ -104,15 +125,58 @@ class _BrowserPageState extends State<BrowserPage> {
     }
   }
 
+  bool _hasRenderableFile(String path) {
+    try {
+      final file = File(path);
+      if (!file.existsSync()) return false;
+      return file.lengthSync() > 0;
+    } catch (_) {
+      return false;
+    }
+  }
+
   Widget _buildThumb(DownloadTask t) {
+    final resolvedType = AppRepo.I.resolvedTaskType(t);
+    final isDone = t.state.toLowerCase() == 'done';
+    if (resolvedType == 'image') {
+      if (isDone && _hasRenderableFile(t.savePath)) {
+        final file = File(t.savePath);
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: Image.file(
+            file,
+            fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) => const Icon(Icons.image),
+          ),
+        );
+      }
+      return Container(
+        color: Colors.grey.shade300,
+        alignment: Alignment.center,
+        child: const Icon(Icons.image, color: Colors.black54),
+      );
+    }
+
+    if (resolvedType == 'audio') {
+      return Container(
+        color: Colors.deepPurple.shade200,
+        alignment: Alignment.center,
+        child: const Icon(Icons.audiotrack, color: Colors.white),
+      );
+    }
+
     final thumbPath = t.thumbnailPath;
     if (thumbPath != null && File(thumbPath).existsSync()) {
-      return Image.file(File(thumbPath), fit: BoxFit.cover);
+      return Image.file(
+        File(thumbPath),
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => const Icon(Icons.movie),
+      );
     }
 
     // 如果影片檔還存在，但縮圖沒有 → 背景再抓一次縮圖
     final f = File(t.savePath);
-    if (f.existsSync()) {
+    if (isDone && f.existsSync() && resolvedType == 'video') {
       _regenThumbAsync(t); // 非同步抽圖
     }
 
@@ -124,6 +188,12 @@ class _BrowserPageState extends State<BrowserPage> {
   }
 
   Future<void> _regenThumbAsync(DownloadTask t) async {
+    if (AppRepo.I.resolvedTaskType(t) != 'video') {
+      return;
+    }
+    if (t.state.toLowerCase() != 'done') {
+      return;
+    }
     try {
       final outDir = path.join(
         (await getApplicationDocumentsDirectory()).path,
@@ -157,7 +227,14 @@ class _BrowserPageState extends State<BrowserPage> {
     _miniUrl = url;
 
     try {
-      final ctrl = VideoPlayerController.networkUrl(Uri.parse(url));
+      final bgOptions =
+          Platform.isIOS
+              ? VideoPlayerOptions(allowBackgroundPlayback: true)
+              : null;
+      final ctrl = VideoPlayerController.networkUrl(
+        Uri.parse(url),
+        videoPlayerOptions: bgOptions,
+      );
       _miniCtrl = ctrl;
       await ctrl.initialize();
       await ctrl.play();
@@ -740,11 +817,7 @@ class _BrowserPageState extends State<BrowserPage> {
               tabs: List<_TabInfo>.from(infos),
               onAdd: () {
                 setState(() {
-                  final tab = _TabData();
-                  tab.urlCtrl.addListener(() {
-                    if (mounted) setState(() {});
-                  });
-                  _tabs.add(tab);
+                  _tabs.add(_createTab());
                   _currentTabIndex = _tabs.length - 1;
                 });
                 _updateOpenTabs();
@@ -761,7 +834,10 @@ class _BrowserPageState extends State<BrowserPage> {
                   final removed = _tabs.removeAt(index);
                   removed.urlCtrl.dispose();
                   removed.progress.dispose();
-                  if (_currentTabIndex >= _tabs.length) {
+                  if (_tabs.isEmpty) {
+                    _tabs.add(_createTab());
+                    _currentTabIndex = 0;
+                  } else if (_currentTabIndex >= _tabs.length) {
                     _currentTabIndex = _tabs.length - 1;
                   } else if (_currentTabIndex > index) {
                     _currentTabIndex -= 1;
@@ -776,6 +852,41 @@ class _BrowserPageState extends State<BrowserPage> {
   }
 
   // Removed the obsolete _showHome flag. Home navigation happens via RootNav.
+
+  _TabData _createTab({String initialUrl = 'about:blank'}) {
+    final tab = _TabData(initialUrl: initialUrl);
+    tab.urlCtrl.addListener(() {
+      if (mounted) setState(() {});
+    });
+    return tab;
+  }
+
+  void _ensureActiveTab() {
+    if (_tabs.isEmpty) {
+      final tab = _createTab();
+      if (mounted) {
+        setState(() {
+          _tabs.add(tab);
+          _currentTabIndex = 0;
+        });
+      } else {
+        _tabs.add(tab);
+        _currentTabIndex = 0;
+      }
+      _updateOpenTabs();
+      _persistCurrentTabIndex();
+    } else if (_currentTabIndex < 0 || _currentTabIndex >= _tabs.length) {
+      final newIndex = _tabs.isEmpty ? 0 : (_tabs.length - 1);
+      if (mounted) {
+        setState(() {
+          _currentTabIndex = newIndex;
+        });
+      } else {
+        _currentTabIndex = newIndex;
+      }
+      _persistCurrentTabIndex();
+    }
+  }
 
   /// Builds the custom home page widget. Displays a list of user saved
   /// shortcuts. Items can be reordered by dragging, tapped to open
@@ -832,6 +943,7 @@ class _BrowserPageState extends State<BrowserPage> {
       subtitle: Text(item.url, maxLines: 1, overflow: TextOverflow.ellipsis),
       onTap: () {
         // Navigate to the URL on the current tab.
+        _ensureActiveTab();
         if (_tabs.isNotEmpty) {
           final tab = _tabs[_currentTabIndex];
           tab.urlCtrl.text = item.url;
@@ -1002,18 +1114,11 @@ class _BrowserPageState extends State<BrowserPage> {
     final savedTabs = repo.openTabs.value;
     if (savedTabs.isNotEmpty) {
       for (final url in savedTabs) {
-        final tab = _TabData(initialUrl: url);
-        tab.urlCtrl.addListener(() {
-          if (mounted) setState(() {});
-        });
-        _tabs.add(tab);
+        _tabs.add(_createTab(initialUrl: url));
       }
       _currentTabIndex = 0;
     } else {
-      _tabs.add(_TabData());
-      _tabs[0].urlCtrl.addListener(() {
-        if (mounted) setState(() {});
-      });
+      _tabs.add(_createTab());
     }
     // Save the restored tabs back into the repo in case they were just
     // created from saved state. This ensures that any default blank tab
@@ -1040,6 +1145,7 @@ class _BrowserPageState extends State<BrowserPage> {
     repo.pendingOpenUrl.addListener(() {
       final pending = repo.pendingOpenUrl.value;
       if (pending != null && pending.isNotEmpty) {
+        _ensureActiveTab();
         if (_tabs.isNotEmpty) {
           final tab = _tabs[_currentTabIndex];
           tab.urlCtrl.text = pending;
@@ -1061,6 +1167,24 @@ class _BrowserPageState extends State<BrowserPage> {
         repo.setSnifferEnabled(saved);
       }
     }();
+    // Load saved blockExternalApp preference, default to false if not set.
+    () async {
+      final sp = await SharedPreferences.getInstance();
+      _blockExternalApp = sp.getBool('block_external_app') ?? false;
+      if (mounted) setState(() {});
+    }();
+  }
+
+  void _toggleBlockExternalAppSetting() async {
+    final next = !_blockExternalApp;
+    _blockExternalApp = next;
+    final sp = await SharedPreferences.getInstance();
+    await sp.setBool('block_external_app', next);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(next ? '已開啟「阻擋外部 App」' : '已關閉「阻擋外部 App」')),
+    );
+    setState(() {});
   }
 
   @override
@@ -1090,10 +1214,6 @@ class _BrowserPageState extends State<BrowserPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       key: _scaffoldKey,
-      // Provide a right‑hand drawer that slides in to show favourites, history
-      // and settings such as the pop‑up blocker. When the menu icon is
-      // pressed, this drawer will open. Clicking outside closes it.
-      endDrawer: Drawer(child: SafeArea(child: _buildEndDrawer(context))),
       appBar: AppBar(
         automaticallyImplyLeading: false,
         titleSpacing: 0,
@@ -1138,15 +1258,44 @@ class _BrowserPageState extends State<BrowserPage> {
                     onSubmitted: (v) => _go(v),
                   ),
                 ),
+                ValueListenableBuilder<List<String>>(
+                  valueListenable: repo.favorites,
+                  builder: (context, favs, _) {
+                    String? curUrl;
+                    if (_tabs.isNotEmpty) {
+                      curUrl = _tabs[_currentTabIndex].currentUrl;
+                    }
+                    final isFav = curUrl != null && favs.contains(curUrl);
+                    final currentUrl = curUrl;
+                    return IconButton(
+                      icon: Icon(
+                        isFav ? Icons.favorite : Icons.favorite_border,
+                      ),
+                      color: isFav ? Colors.redAccent : null,
+                      tooltip: isFav ? '取消收藏' : '收藏',
+                      visualDensity: VisualDensity.compact,
+                      onPressed:
+                          currentUrl == null
+                              ? null
+                              : () {
+                                repo.toggleFavoriteUrl(currentUrl);
+                                setState(() {});
+                              },
+                    );
+                  },
+                ),
                 IconButton(
                   icon: const Icon(Icons.refresh),
                   tooltip: '重新整理',
+                  visualDensity: VisualDensity.compact,
                   onPressed: () {
                     if (_tabs.isNotEmpty) {
                       _tabs[_currentTabIndex].controller?.reload();
                     }
                   },
                 ),
+                const SizedBox(width: 4),
+                _buildToolbarMenuButton(),
               ],
             ),
             // Loading progress bar for the current tab
@@ -1173,244 +1322,354 @@ class _BrowserPageState extends State<BrowserPage> {
               index: _currentTabIndex,
               children: [
                 for (int tabIndex = 0; tabIndex < _tabs.length; tabIndex++)
-                  InAppWebView(
-                    key: _tabs[tabIndex].webviewKey,
-                    initialSettings: InAppWebViewSettings(
-                      userAgent: _userAgent,
-                      allowsInlineMediaPlayback: true,
-                      mediaPlaybackRequiresUserGesture: false,
-                      useOnLoadResource: true,
-                      javaScriptEnabled: true,
-                      allowsBackForwardNavigationGestures: true,
-                    ),
-                    initialUrlRequest: URLRequest(
-                      url: WebUri(
-                        (() {
-                          final s = _tabs[tabIndex].urlCtrl.text.trim();
-                          return s.isEmpty ? 'about:blank' : s;
-                        })(),
-                      ),
-                    ),
-                    onWebViewCreated: (c) {
-                      final tab = _tabs[tabIndex];
-                      tab.controller = c;
-                      // Register the JavaScript handler that receives sniffed media info.
-                      c.addJavaScriptHandler(
-                        handlerName: 'sniffer',
-                        callback: (args) {
-                          if (!repo.snifferEnabled.value) {
-                            return {'ok': false, 'ignored': true};
-                          }
-                          final map = Map<String, dynamic>.from(args.first);
-                          final url = map['url'] ?? '';
-                          final type = map['type'] ?? 'video';
-                          final contentType = map['contentType'] ?? '';
-                          final poster = map['poster'] as String? ?? '';
-                          double? dur;
-                          final d = map['duration'];
-                          if (d is num) {
-                            dur = d.toDouble();
-                          }
-                          repo.addHit(
-                            MediaHit(
-                              url: url,
-                              type: type,
-                              contentType: contentType,
-                              poster: poster,
-                              durationSeconds: dur,
-                            ),
+                  Stack(
+                    children: [
+                      InAppWebView(
+                        key: _tabs[tabIndex].webviewKey,
+                        initialSettings: InAppWebViewSettings(
+                          userAgent: _userAgent,
+                          allowsInlineMediaPlayback: true,
+                          mediaPlaybackRequiresUserGesture: false,
+                          useOnLoadResource: true,
+                          javaScriptEnabled: true,
+                          allowsBackForwardNavigationGestures: true,
+                        ),
+                        initialUrlRequest: URLRequest(
+                          url: WebUri(
+                            (() {
+                              final s = _tabs[tabIndex].urlCtrl.text.trim();
+                              return s.isEmpty ? 'about:blank' : s;
+                            })(),
+                          ),
+                        ),
+                        onWebViewCreated: (c) {
+                          final tab = _tabs[tabIndex];
+                          tab.controller = c;
+                          // Register the JavaScript handler that receives sniffed media info.
+                          c.addJavaScriptHandler(
+                            handlerName: 'sniffer',
+                            callback: (args) {
+                              if (!repo.snifferEnabled.value) {
+                                return {'ok': false, 'ignored': true};
+                              }
+                              final map = Map<String, dynamic>.from(args.first);
+                              final url = (map['url'] ?? '').toString();
+                              final type = (map['type'] ?? 'video').toString();
+                              final contentType =
+                                  (map['contentType'] ?? '').toString();
+                              final poster = map['poster'] as String? ?? '';
+                              double? dur;
+                              final d = map['duration'];
+                              if (d is num) {
+                                dur = d.toDouble();
+                              }
+                              repo.addHit(
+                                MediaHit(
+                                  url: url,
+                                  type: type,
+                                  contentType: contentType,
+                                  poster: poster,
+                                  durationSeconds: dur,
+                                ),
+                              );
+                              return {'ok': true};
+                            },
                           );
-                          return {'ok': true};
                         },
-                      );
-                    },
-                    onLoadStart: (c, u) async {
-                      if (u != null) {
-                        final tab = _tabs[tabIndex];
-                        final s = u.toString();
-                        final isBlank = s.trim().toLowerCase().startsWith(
-                          'about:blank',
-                        );
-                        tab.urlCtrl.text = isBlank ? '' : s;
-                        tab.currentUrl = isBlank ? null : s;
-                        if (!isBlank) AppRepo.I.currentPageUrl.value = s;
-                        if (mounted) setState(() {});
-                      }
-                    },
-                    onUpdateVisitedHistory: (c, url, androidIsReload) async {
-                      if (url != null) {
-                        final tab = _tabs[tabIndex];
-                        final s = url.toString();
-                        final isBlank = s.trim().toLowerCase().startsWith(
-                          'about:blank',
-                        );
-                        tab.urlCtrl.text = isBlank ? '' : s;
-                        tab.currentUrl = isBlank ? null : s;
-                        if (!isBlank) AppRepo.I.currentPageUrl.value = s;
-                        if (mounted) setState(() {});
-                      }
-                    },
-                    onLoadStop: (c, u) async {
-                      // 注入嗅探腳本並同步開關
-                      await c.evaluateJavascript(source: Sniffer.jsHook);
-                      await c.evaluateJavascript(
-                        source: Sniffer.jsSetEnabled(repo.snifferEnabled.value),
-                      );
-
-                      final curUrl = await c.getUrl();
-                      final title = await c.getTitle();
-                      if (curUrl != null) {
-                        final tab = _tabs[tabIndex];
-                        final s = curUrl.toString();
-                        final isBlank = s.trim().toLowerCase().startsWith(
-                          'about:blank',
-                        );
-
-                        tab.urlCtrl.text = isBlank ? '' : s;
-                        tab.currentUrl = isBlank ? null : s;
-                        if (!isBlank) AppRepo.I.currentPageUrl.value = s;
-                        tab.pageTitle = title;
-
-                        // about:blank 不寫入歷史；復原的第一筆載入也跳過
-                        if (!isBlank) {
-                          if (!tab.skipInitialHistory) {
-                            repo.addHistory(s, title ?? '');
-                          } else {
-                            tab.skipInitialHistory = false;
-                          }
-                        } else {
-                          tab.skipInitialHistory = false;
-                        }
-                        if (mounted) setState(() {});
-                      }
-                    },
-                    onTitleChanged: (c, title) {
-                      final tab = _tabs[tabIndex];
-                      tab.pageTitle = title;
-                      if (mounted) setState(() {});
-                    },
-                    onProgressChanged: (c, progress) {
-                      final tab = _tabs[tabIndex];
-                      tab.progress.value = progress / 100.0;
-                    },
-                    onCreateWindow: (ctl, createWindowRequest) async {
-                      final req = createWindowRequest.request;
-                      final uri = req?.url;
-                      if (repo.blockPopup.value && uri != null) {
-                        // If pop‑ups are blocked, load the URL in the same WebView and
-                        // prevent a new window from being created.
-                        ctl.loadUrl(urlRequest: URLRequest(url: uri));
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('彈出視窗已被阻擋')),
-                        );
-                        return true;
-                      }
-                      return false;
-                    },
-                    onLoadResource: (c, r) async {
-                      if (!repo.snifferEnabled.value) {
-                        return;
-                      }
-                      final url = r.url.toString();
-                      final ct = '';
-                      if (Sniffer.looksLikeMedia(url, contentType: ct)) {
-                        repo.addHit(
-                          MediaHit(
-                            url: url,
-                            type: ct.startsWith('audio/') ? 'audio' : 'video',
-                            contentType: ct,
-                          ),
-                        );
-                      }
-                    },
-                    shouldInterceptRequest: (c, r) async {
-                      if (!repo.snifferEnabled.value) {
-                        return null;
-                      }
-                      final url = r.url.toString();
-                      final ct = r.headers?['content-type'] ?? '';
-                      if (Sniffer.looksLikeMedia(url, contentType: ct)) {
-                        repo.addHit(
-                          MediaHit(
-                            url: url,
-                            type:
-                                ct.toString().startsWith('audio/')
-                                    ? 'audio'
-                                    : 'video',
-                            contentType: ct,
-                          ),
-                        );
-                      }
-                      return null;
-                    },
-                    onLongPressHitTestResult: (c, res) async {
-                      String? link = res.extra;
-                      String type = 'video';
-                      if (link == null || link.isEmpty) {
-                        try {
-                          final raw = await c.evaluateJavascript(
-                            source: Sniffer.jsQueryActiveMedia,
-                          );
-                          if (raw is String && raw.startsWith('[')) {
-                            final List<dynamic> decoded = jsonDecode(raw);
-                            if (decoded.isNotEmpty) {
-                              final Map<String, dynamic> first =
-                                  Map<String, dynamic>.from(
-                                    decoded.first as Map,
-                                  );
-                              link = (first['url'] ?? '') as String;
-                              type = (first['type'] ?? 'video') as String;
+                        onLoadStart: (c, u) async {
+                          // 雙保險：硬攔非 Web scheme（極少數情況仍可能觸發）
+                          if (_blockExternalApp && u != null) {
+                            final scheme = (u.scheme ?? '').toLowerCase();
+                            const allowed = {
+                              'http',
+                              'https',
+                              'about',
+                              'data',
+                              'blob',
+                              'file',
+                            };
+                            if (!allowed.contains(scheme)) {
+                              // 直接停止這次導航，避免外部 App 被開啟
+                              try {
+                                await c.stopLoading();
+                              } catch (_) {}
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('已阻擋網頁嘗試開啟外部 App'),
+                                  ),
+                                );
+                              }
+                              return;
                             }
                           }
-                        } catch (_) {}
-                      }
-                      if (link == null || link.isEmpty) return;
-                      if (!mounted) return;
-                      showModalBottomSheet(
-                        context: context,
-                        builder:
-                            (_) => SafeArea(
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  ListTile(
-                                    title: Text(
-                                      link!,
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
+                          if (u != null) {
+                            final tab = _tabs[tabIndex];
+                            final s = u.toString();
+                            final isBlank = s.trim().toLowerCase().startsWith(
+                              'about:blank',
+                            );
+                            tab.urlCtrl.text = isBlank ? '' : s;
+                            tab.currentUrl = isBlank ? null : s;
+                            if (!isBlank) AppRepo.I.currentPageUrl.value = s;
+                            if (mounted) setState(() {});
+                          }
+                        },
+                        onUpdateVisitedHistory: (
+                          c,
+                          url,
+                          androidIsReload,
+                        ) async {
+                          if (url != null) {
+                            final tab = _tabs[tabIndex];
+                            final s = url.toString();
+                            final isBlank = s.trim().toLowerCase().startsWith(
+                              'about:blank',
+                            );
+                            tab.urlCtrl.text = isBlank ? '' : s;
+                            tab.currentUrl = isBlank ? null : s;
+                            if (!isBlank) AppRepo.I.currentPageUrl.value = s;
+                            if (mounted) setState(() {});
+                          }
+                        },
+                        onLoadStop: (c, u) async {
+                          // 注入嗅探腳本並同步開關
+                          await c.evaluateJavascript(source: Sniffer.jsHook);
+                          await c.evaluateJavascript(
+                            source: Sniffer.jsSetEnabled(
+                              repo.snifferEnabled.value,
+                            ),
+                          );
+
+                          final curUrl = await c.getUrl();
+                          final title = await c.getTitle();
+                          if (curUrl != null) {
+                            final tab = _tabs[tabIndex];
+                            final s = curUrl.toString();
+                            final isBlank = s.trim().toLowerCase().startsWith(
+                              'about:blank',
+                            );
+
+                            tab.urlCtrl.text = isBlank ? '' : s;
+                            tab.currentUrl = isBlank ? null : s;
+                            if (!isBlank) AppRepo.I.currentPageUrl.value = s;
+                            tab.pageTitle = title;
+
+                            // about:blank 不寫入歷史；復原的第一筆載入也跳過
+                            if (!isBlank) {
+                              if (!tab.skipInitialHistory) {
+                                repo.addHistory(s, title ?? '');
+                              } else {
+                                tab.skipInitialHistory = false;
+                              }
+                            } else {
+                              tab.skipInitialHistory = false;
+                            }
+                            if (mounted) setState(() {});
+                          }
+                        },
+                        onTitleChanged: (c, title) {
+                          final tab = _tabs[tabIndex];
+                          tab.pageTitle = title;
+                          if (mounted) setState(() {});
+                        },
+                        onProgressChanged: (c, progress) {
+                          final tab = _tabs[tabIndex];
+                          tab.progress.value = progress / 100.0;
+                        },
+                        onCreateWindow: (ctl, createWindowRequest) async {
+                          final req = createWindowRequest.request;
+                          final uri = req?.url;
+                          if (uri != null) {
+                            final scheme = (uri.scheme ?? '').toLowerCase();
+                            const allowed = {
+                              'http',
+                              'https',
+                              'about',
+                              'data',
+                              'blob',
+                              'file',
+                            };
+                            // 先處理外部 App 阻擋：目標是攔截像 x.com 這類用 window.open(...) 觸發的 twitter:// 等
+                            if (_blockExternalApp &&
+                                !allowed.contains(scheme)) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('已阻擋網頁嘗試開啟外部 App'),
+                                ),
+                              );
+                              // 消化這次開窗要求（不交給系統），避免跳去外部 App
+                              return true;
+                            }
+                            // 其餘一般彈窗（http/https）交給「阻擋彈出視窗」設定處理
+                            if (repo.blockPopup.value) {
+                              ctl.loadUrl(urlRequest: URLRequest(url: uri));
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('彈出視窗已被阻擋')),
+                              );
+                              return true;
+                            }
+                          }
+                          return false;
+                        },
+                        onLoadResource: (c, r) async {
+                          if (!repo.snifferEnabled.value) {
+                            return;
+                          }
+                          final url = r.url.toString();
+                          final ct = '';
+                          if (Sniffer.looksLikeMedia(url, contentType: ct)) {
+                            repo.addHit(
+                              MediaHit(
+                                url: url,
+                                type:
+                                    ct.startsWith('audio/') ? 'audio' : 'video',
+                                contentType: ct,
+                              ),
+                            );
+                          }
+                        },
+                        shouldInterceptRequest: (c, r) async {
+                          if (!repo.snifferEnabled.value) {
+                            return null;
+                          }
+                          final url = r.url.toString();
+                          final ct = r.headers?['content-type'] ?? '';
+                          if (Sniffer.looksLikeMedia(url, contentType: ct)) {
+                            repo.addHit(
+                              MediaHit(
+                                url: url,
+                                type:
+                                    ct.toString().startsWith('audio/')
+                                        ? 'audio'
+                                        : 'video',
+                                contentType: ct,
+                              ),
+                            );
+                          }
+                          return null;
+                        },
+                        shouldOverrideUrlLoading: (
+                          controller,
+                          navigationAction,
+                        ) async {
+                          final uri = navigationAction.request.url;
+                          if (uri != null) {
+                            final scheme = (uri.scheme ?? '').toLowerCase();
+                            // 常見 Web/內嵌允許的 scheme
+                            const allowed = {
+                              'http',
+                              'https',
+                              'about',
+                              'data',
+                              'blob',
+                              'file',
+                            };
+                            if (!allowed.contains(scheme)) {
+                              // e.g. line://, fb://, intent://, tg://, itms-apps:// ...
+                              if (_blockExternalApp) {
+                                // 阻擋由網頁嘗試開啟第三方 App
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('已阻擋網頁嘗試開啟外部 App'),
                                     ),
-                                    subtitle: Text(type),
-                                  ),
-                                  Row(
-                                    mainAxisAlignment: MainAxisAlignment.end,
+                                  );
+                                }
+                                return NavigationActionPolicy.CANCEL;
+                              }
+                            }
+                          }
+                          return NavigationActionPolicy.ALLOW;
+                        },
+                        onLongPressHitTestResult: (c, res) async {
+                          String? link = res.extra;
+                          String type = 'video';
+                          if (link == null || link.isEmpty) {
+                            try {
+                              final raw = await c.evaluateJavascript(
+                                source: Sniffer.jsQueryActiveMedia,
+                              );
+                              if (raw is String && raw.startsWith('[')) {
+                                final List<dynamic> decoded = jsonDecode(raw);
+                                if (decoded.isNotEmpty) {
+                                  final Map<String, dynamic> first =
+                                      Map<String, dynamic>.from(
+                                        decoded.first as Map,
+                                      );
+                                  link = (first['url'] ?? '') as String;
+                                  type = (first['type'] ?? 'video') as String;
+                                }
+                              }
+                            } catch (_) {}
+                          }
+                          if (link == null || link.isEmpty) return;
+                          if (!mounted) return;
+                          showModalBottomSheet(
+                            context: context,
+                            builder:
+                                (_) => SafeArea(
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
                                     children: [
-                                      TextButton.icon(
-                                        icon: const Icon(Icons.play_arrow),
-                                        label: const Text('播放'),
-                                        onPressed: () {
-                                          Navigator.pop(context);
-                                          // 使用內建播放器播放（支援 iOS 子母畫面 PiP）。
-                                          _playMedia(link!);
-                                        },
+                                      ListTile(
+                                        title: Text(
+                                          link!,
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                        subtitle: Text(type),
                                       ),
-                                      const SizedBox(width: 8),
-                                      FilledButton.icon(
-                                        icon: const Icon(Icons.download),
-                                        label: const Text('下載'),
-                                        onPressed: () {
-                                          Navigator.pop(context);
-                                          _confirmDownload(link!);
-                                        },
+                                      Row(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.end,
+                                        children: [
+                                          TextButton.icon(
+                                            icon: const Icon(Icons.play_arrow),
+                                            label: const Text('播放'),
+                                            onPressed: () {
+                                              Navigator.pop(context);
+                                              // 使用內建播放器播放（支援 iOS 子母畫面 PiP）。
+                                              _playMedia(link!);
+                                            },
+                                          ),
+                                          const SizedBox(width: 8),
+                                          FilledButton.icon(
+                                            icon: const Icon(Icons.download),
+                                            label: const Text('下載'),
+                                            onPressed: () {
+                                              Navigator.pop(context);
+                                              _confirmDownload(link!);
+                                            },
+                                          ),
+                                          const SizedBox(width: 12),
+                                        ],
                                       ),
-                                      const SizedBox(width: 12),
+                                      const SizedBox(height: 8),
                                     ],
                                   ),
-                                  const SizedBox(height: 8),
-                                ],
-                              ),
+                                ),
+                          );
+                        },
+                      ),
+                      Positioned.fill(
+                        child: Row(
+                          children: [
+                            _buildEdgeSwipeArea(
+                              isLeft: true,
+                              tabIndex: tabIndex,
                             ),
-                      );
-                    },
+                            const Expanded(
+                              child: IgnorePointer(child: SizedBox.expand()),
+                            ),
+                            _buildEdgeSwipeArea(
+                              isLeft: false,
+                              tabIndex: tabIndex,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
               ],
             ),
@@ -1428,11 +1687,7 @@ class _BrowserPageState extends State<BrowserPage> {
     }
     setState(() {
       _tabs.clear();
-      final tab = _TabData();
-      tab.urlCtrl.addListener(() {
-        if (mounted) setState(() {});
-      });
-      _tabs.add(tab);
+      _tabs.add(_createTab());
       _currentTabIndex = 0;
       _persistCurrentTabIndex();
     });
@@ -1447,12 +1702,13 @@ class _BrowserPageState extends State<BrowserPage> {
         builder: (context, box) {
           final shortest = MediaQuery.of(context).size.shortestSide;
           final bool tablet = shortest >= 600;
-          return Row(
-            mainAxisAlignment:
-                tablet
-                    ? MainAxisAlignment.spaceEvenly
-                    : MainAxisAlignment.start,
-            children: [
+          Widget pad(Widget child) => Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 2.0),
+            child: child,
+          );
+
+          final navItems = <Widget>[
+            pad(
               IconButton(
                 icon: const Icon(Icons.arrow_back),
                 tooltip: '返回',
@@ -1463,6 +1719,8 @@ class _BrowserPageState extends State<BrowserPage> {
                   }
                 },
               ),
+            ),
+            pad(
               IconButton(
                 icon: const Icon(Icons.arrow_forward),
                 tooltip: '前進',
@@ -1473,233 +1731,322 @@ class _BrowserPageState extends State<BrowserPage> {
                   }
                 },
               ),
-              // Sniffer enable/disable toggle
-              ValueListenableBuilder<bool>(
-                valueListenable: repo.snifferEnabled,
-                builder: (context, on, _) {
-                  return IconButton(
-                    icon: Icon(on ? Icons.visibility : Icons.visibility_off),
-                    color: on ? Colors.green : null,
-                    tooltip: on ? '嗅探：開啟' : '嗅探：關閉',
-                    onPressed: () async {
-                      final next = !on;
-                      repo.setSnifferEnabled(next);
-                      // Persist snifferEnabled to preferences
-                      final sp = await SharedPreferences.getInstance();
-                      await sp.setBool('sniffer_enabled', next);
-                      // apply to current page
-                      if (_tabs.isNotEmpty) {
-                        final tab = _tabs[_currentTabIndex];
-                        if (tab.controller != null) {
-                          await tab.controller!.evaluateJavascript(
-                            source: Sniffer.jsSetEnabled(next),
-                          );
-                        }
-                      }
-                      if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text(next ? '已開啟嗅探' : '已關閉嗅探')),
-                        );
-                      }
-                    },
-                  );
-                },
-              ),
-              // Detected resources icon with badge
-              ValueListenableBuilder<List<MediaHit>>(
-                valueListenable: repo.hits,
-                builder: (context, list, _) {
-                  final int detected = list.length;
-                  return Stack(
-                    clipBehavior: Clip.none,
-                    children: [
-                      IconButton(
-                        icon: const Icon(Icons.search),
-                        tooltip: '偵測到的資源',
-                        onPressed: _openDetectedSheet,
-                      ),
-                      if (detected > 0)
-                        Positioned(
-                          right: 0,
-                          top: 2,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 4,
-                              vertical: 1,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.redAccent,
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Text(
-                              '$detected',
-                              style: const TextStyle(
-                                fontSize: 10,
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                        ),
-                    ],
-                  );
-                },
-              ),
-              // Favourite current page button (filled if current page is favourited)
-              ValueListenableBuilder<List<String>>(
-                valueListenable: repo.favorites,
-                builder: (context, favs, _) {
-                  String? curUrl;
-                  if (_tabs.isNotEmpty) {
-                    curUrl = _tabs[_currentTabIndex].currentUrl;
-                  }
-                  final isFav = curUrl != null && favs.contains(curUrl);
-                  return IconButton(
-                    icon: Icon(isFav ? Icons.favorite : Icons.favorite_border),
-                    color: isFav ? Colors.redAccent : null,
-                    tooltip: isFav ? '取消收藏' : '收藏',
-                    onPressed: () {
-                      final url =
-                          (_tabs.isNotEmpty)
-                              ? _tabs[_currentTabIndex].currentUrl
-                              : null;
-                      if (url != null) {
-                        repo.toggleFavoriteUrl(url);
-                        setState(() {});
-                      }
-                    },
-                  );
-                },
-              ),
-              // Downloads list with badge; shows how many download tasks exist.
-              ValueListenableBuilder<List<DownloadTask>>(
-                valueListenable: repo.downloads,
-                builder: (context, list, _) {
-                  final count = list.where(_isDownloadTaskEntry).length;
-                  return Stack(
-                    clipBehavior: Clip.none,
-                    children: [
-                      IconButton(
-                        icon: const Icon(Icons.file_download),
-                        tooltip: '下載清單',
-                        onPressed: _openDownloadsSheet,
-                      ),
-                      if (count > 0)
-                        Positioned(
-                          right: 0,
-                          top: 2,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 4,
-                              vertical: 1,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.redAccent,
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Text(
-                              '$count',
-                              style: const TextStyle(
-                                fontSize: 10,
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                        ),
-                    ],
-                  );
-                },
-              ),
-              // Add current page to home screen
-              IconButton(
-                icon: const Icon(Icons.add),
-                tooltip: '加入主頁',
-                onPressed: _showAddToHomeDialog,
-              ),
-              // Navigate to the home screen via callback
-              Padding(
-                padding: const EdgeInsets.only(right: 4.0), // adjust spacing
-                child: IconButton(
-                  icon: const Icon(Icons.home),
-                  tooltip: '主頁',
-                  onPressed: () {
-                    if (widget.onGoHome != null) {
-                      widget.onGoHome!();
-                    }
-                  },
-                ),
-              ),
-              // Custom tab count button
-              GestureDetector(
-                onTap: _openTabManager,
-                onLongPress: () async {
-                  final overlay =
-                      Overlay.of(context).context.findRenderObject()
-                          as RenderBox;
-                  final box =
-                      _tabButtonKey.currentContext?.findRenderObject()
-                          as RenderBox?;
-                  if (box == null) return;
-                  final position = RelativeRect.fromRect(
-                    Rect.fromPoints(
-                      box.localToGlobal(Offset.zero, ancestor: overlay),
-                      box.localToGlobal(
-                        box.size.bottomRight(Offset.zero),
-                        ancestor: overlay,
-                      ),
+            ),
+          ];
+
+          final tabButton = pad(
+            GestureDetector(
+              onTap: _openTabManager,
+              onLongPress: () async {
+                final overlay =
+                    Overlay.of(context).context.findRenderObject() as RenderBox;
+                final box =
+                    _tabButtonKey.currentContext?.findRenderObject()
+                        as RenderBox?;
+                if (box == null) return;
+                final position = RelativeRect.fromRect(
+                  Rect.fromPoints(
+                    box.localToGlobal(Offset.zero, ancestor: overlay),
+                    box.localToGlobal(
+                      box.size.bottomRight(Offset.zero),
+                      ancestor: overlay,
                     ),
-                    Offset.zero & overlay.size,
-                  );
-                  final action = await showMenu<String>(
-                    context: context,
-                    position: position,
-                    items: const [
-                      PopupMenuItem<String>(
-                        value: 'clear',
-                        child: ListTile(
-                          leading: Icon(Icons.delete_sweep),
-                          title: Text('清除全部分頁'),
-                        ),
-                      ),
-                    ],
-                  );
-                  if (action == 'clear') {
-                    _clearAllTabs();
-                    if (mounted) {
-                      ScaffoldMessenger.of(
-                        context,
-                      ).showSnackBar(const SnackBar(content: Text('已清除全部分頁')));
-                    }
-                  }
-                },
-                child: Container(
-                  key: _tabButtonKey,
-                  width: 28,
-                  height: 28,
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.surfaceVariant,
-                    border: Border.all(
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.outline.withOpacity(0.8),
-                      width: 1.2,
-                    ),
-                    borderRadius: BorderRadius.circular(6),
                   ),
-                  alignment: Alignment.center,
-                  child: Text(
-                    '${_tabs.length}',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                      color: Theme.of(context).colorScheme.onSurface,
+                  Offset.zero & overlay.size,
+                );
+                final action = await showMenu<String>(
+                  context: context,
+                  position: position,
+                  items: const [
+                    PopupMenuItem<String>(
+                      value: 'clear',
+                      child: ListTile(
+                        leading: Icon(Icons.delete_sweep),
+                        title: Text('清除全部分頁'),
+                      ),
                     ),
+                  ],
+                );
+                if (action == 'clear') {
+                  _clearAllTabs();
+                  if (mounted) {
+                    ScaffoldMessenger.of(
+                      context,
+                    ).showSnackBar(const SnackBar(content: Text('已清除全部分頁')));
+                  }
+                }
+              },
+              child: Container(
+                key: _tabButtonKey,
+                width: 28,
+                height: 28,
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surfaceVariant,
+                  border: Border.all(
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.outline.withOpacity(0.8),
+                    width: 1.2,
+                  ),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                alignment: Alignment.center,
+                child: Text(
+                  '${_tabs.length}',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: Theme.of(context).colorScheme.onSurface,
                   ),
                 ),
               ),
+            ),
+          );
+
+          if (tablet) {
+            return Row(children: [...navItems, const Spacer(), tabButton]);
+          }
+
+          return Row(
+            children: [
+              Expanded(
+                child: Wrap(
+                  spacing: 4,
+                  runSpacing: 4,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  alignment: WrapAlignment.start,
+                  children: navItems,
+                ),
+              ),
+              tabButton,
             ],
           );
+        },
+      ),
+    );
+  }
+
+  Widget _buildToolbarMenuButton() {
+    return AnimatedBuilder(
+      animation: Listenable.merge([
+        repo.snifferEnabled,
+        repo.hits,
+        repo.downloads,
+        repo.favorites,
+        repo.history,
+        repo.blockPopup,
+      ]),
+      builder: (context, _) {
+        final snifferOn = repo.snifferEnabled.value;
+        final detected = repo.hits.value.length;
+        final downloadCount =
+            repo.downloads.value.where(_isDownloadTaskEntry).length;
+        final favoriteCount = repo.favorites.value.length;
+        final historyCount = repo.history.value.length;
+        final blockPopupOn = repo.blockPopup.value;
+        final badgeCount = detected + downloadCount;
+        final colorScheme = Theme.of(context).colorScheme;
+        final borderColor = colorScheme.outline.withOpacity(0.6);
+
+        PopupMenuItem<_ToolbarMenuAction> buildItem(
+          _ToolbarMenuAction action,
+          IconData icon,
+          String label, {
+          Color? iconColor,
+        }) {
+          return PopupMenuItem<_ToolbarMenuAction>(
+            value: action,
+            child: Row(
+              children: [
+                Icon(icon, color: iconColor),
+                const SizedBox(width: 12),
+                Expanded(child: Text(label)),
+              ],
+            ),
+          );
+        }
+
+        return PopupMenuButton<_ToolbarMenuAction>(
+          tooltip: '功能選單',
+          position: PopupMenuPosition.under,
+          offset: const Offset(0, 8),
+          padding: EdgeInsets.zero,
+          onSelected: (action) async {
+            switch (action) {
+              case _ToolbarMenuAction.toggleSniffer:
+                await _toggleSniffer();
+                break;
+              case _ToolbarMenuAction.openResources:
+                _openDetectedSheet();
+                break;
+              case _ToolbarMenuAction.openDownloads:
+                _openDownloadsSheet();
+                break;
+              case _ToolbarMenuAction.openFavorites:
+                await _openFavoritesPage();
+                break;
+              case _ToolbarMenuAction.openHistory:
+                await _openHistoryPage();
+                break;
+              case _ToolbarMenuAction.toggleBlockPopup:
+                _toggleBlockPopupSetting();
+                break;
+              case _ToolbarMenuAction.blockExternalApp:
+                _toggleBlockExternalAppSetting();
+                break;
+              case _ToolbarMenuAction.addHome:
+                _showAddToHomeDialog();
+                break;
+              case _ToolbarMenuAction.goHome:
+                if (widget.onGoHome != null) {
+                  widget.onGoHome!();
+                }
+                break;
+            }
+          },
+          itemBuilder: (context) {
+            final entries = <PopupMenuEntry<_ToolbarMenuAction>>[
+              buildItem(
+                _ToolbarMenuAction.toggleSniffer,
+                snifferOn ? Icons.toggle_on : Icons.toggle_off,
+                '嗅探',
+                iconColor: snifferOn ? Colors.green : null,
+              ),
+              buildItem(
+                _ToolbarMenuAction.openResources,
+                Icons.search,
+                detected > 0 ? '資源（$detected）' : '資源',
+              ),
+              buildItem(
+                _ToolbarMenuAction.openDownloads,
+                Icons.file_download,
+                downloadCount > 0 ? '下載清單（$downloadCount）' : '下載清單',
+              ),
+              const PopupMenuDivider(),
+              buildItem(
+                _ToolbarMenuAction.openFavorites,
+                Icons.favorite,
+                favoriteCount > 0 ? '我的收藏（$favoriteCount）' : '我的收藏',
+                iconColor: favoriteCount > 0 ? Colors.redAccent : null,
+              ),
+              buildItem(
+                _ToolbarMenuAction.openHistory,
+                Icons.history,
+                historyCount > 0 ? '瀏覽記錄（$historyCount）' : '瀏覽記錄',
+                iconColor: historyCount > 0 ? colorScheme.primary : null,
+              ),
+              buildItem(
+                _ToolbarMenuAction.toggleBlockPopup,
+                blockPopupOn ? Icons.toggle_on : Icons.toggle_off,
+                '阻擋彈出視窗',
+                iconColor: blockPopupOn ? Colors.redAccent : null,
+              ),
+              buildItem(
+                _ToolbarMenuAction.blockExternalApp,
+                _blockExternalApp ? Icons.toggle_on : Icons.toggle_off,
+                '阻擋外部App',
+                iconColor:
+                    _blockExternalApp
+                        ? Theme.of(context).colorScheme.primary
+                        : null,
+              ),
+              const PopupMenuDivider(),
+              buildItem(_ToolbarMenuAction.addHome, Icons.add, '加入主頁'),
+              buildItem(_ToolbarMenuAction.goHome, Icons.home, '主頁'),
+            ];
+            return entries;
+          },
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(4.0),
+                child: Icon(
+                  Icons.more_horiz,
+                  color: Theme.of(context).colorScheme.onSurface,
+                ),
+              ),
+              if (badgeCount > 0)
+                Positioned(
+                  right: -2,
+                  top: -2,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 4,
+                      vertical: 1,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.redAccent,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    constraints: const BoxConstraints(
+                      minWidth: 18,
+                      minHeight: 16,
+                    ),
+                    child: Text(
+                      badgeCount > 99 ? '99+' : '$badgeCount',
+                      style: const TextStyle(
+                        fontSize: 10,
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildEdgeSwipeArea({required bool isLeft, required int tabIndex}) {
+    double drag = 0;
+    return SizedBox(
+      width: _edgeSwipeWidth,
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onHorizontalDragStart: (_) {
+          drag = 0;
+        },
+        onHorizontalDragUpdate: (details) {
+          final delta = details.delta.dx;
+          if (isLeft) {
+            drag += delta;
+            if (drag < 0) drag = 0;
+          } else {
+            drag -= delta;
+            if (drag < 0) drag = 0;
+          }
+        },
+        onHorizontalDragCancel: () {
+          drag = 0;
+        },
+        onHorizontalDragEnd: (details) {
+          final controller =
+              tabIndex < _tabs.length ? _tabs[tabIndex].controller : null;
+          if (controller == null) {
+            drag = 0;
+            return;
+          }
+          final velocity = details.primaryVelocity ?? 0.0;
+          final directionalVelocity = isLeft ? velocity : -velocity;
+          final exceededDistance = drag > _edgeSwipeDistanceThreshold;
+          final exceededVelocity =
+              directionalVelocity > _edgeSwipeVelocityThreshold;
+          if (exceededDistance || exceededVelocity) {
+            if (isLeft) {
+              controller.canGoBack().then((can) {
+                if (can) controller.goBack();
+              });
+            } else {
+              controller.canGoForward().then((can) {
+                if (can) controller.goForward();
+              });
+            }
+          }
+          drag = 0;
         },
       ),
     );
@@ -1717,13 +2064,13 @@ class _BrowserPageState extends State<BrowserPage> {
             ? (text.startsWith('http') ? text : 'https://$text')
             : await _buildSearchUrl(text);
 
-    if (_tabs.isNotEmpty) {
-      final tab = _tabs[_currentTabIndex];
-      tab.urlCtrl.text = dest;
-      tab.currentUrl = dest;
-      await tab.controller?.loadUrl(urlRequest: URLRequest(url: WebUri(dest)));
-      _updateOpenTabs();
-    }
+    _ensureActiveTab();
+    if (_tabs.isEmpty) return;
+    final tab = _tabs[_currentTabIndex];
+    tab.urlCtrl.text = dest;
+    tab.currentUrl = dest;
+    await tab.controller?.loadUrl(urlRequest: URLRequest(url: WebUri(dest)));
+    _updateOpenTabs();
   }
 
   /// Adds the current page URL to favorites.
@@ -1738,6 +2085,71 @@ class _BrowserPageState extends State<BrowserPage> {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(const SnackBar(content: Text('已更新收藏狀態')));
+  }
+
+  Future<void> _toggleSniffer() async {
+    final next = !repo.snifferEnabled.value;
+    repo.setSnifferEnabled(next);
+    final sp = await SharedPreferences.getInstance();
+    await sp.setBool('sniffer_enabled', next);
+    if (_tabs.isNotEmpty) {
+      final tab = _tabs[_currentTabIndex];
+      final controller = tab.controller;
+      if (controller != null) {
+        await controller.evaluateJavascript(source: Sniffer.jsSetEnabled(next));
+      }
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(next ? '已開啟嗅探' : '已關閉嗅探')));
+  }
+
+  Future<void> _openFavoritesPage() async {
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder:
+            (_) => FavoritesPage(
+              onOpen: (String url) {
+                if (_tabs.isEmpty) return;
+                final tab = _tabs[_currentTabIndex];
+                tab.controller?.loadUrl(
+                  urlRequest: URLRequest(url: WebUri(url)),
+                );
+              },
+              prettyName: _prettyFileName,
+            ),
+      ),
+    );
+  }
+
+  Future<void> _openHistoryPage() async {
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder:
+            (_) => HistoryPage(
+              onOpen: (String url) {
+                if (_tabs.isNotEmpty) {
+                  final tab = _tabs[_currentTabIndex];
+                  tab.controller?.loadUrl(
+                    urlRequest: URLRequest(url: WebUri(url)),
+                  );
+                }
+              },
+            ),
+      ),
+    );
+  }
+
+  void _toggleBlockPopupSetting() {
+    final next = !repo.blockPopup.value;
+    repo.setBlockPopup(next);
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(next ? '已開啟阻擋彈出視窗' : '已關閉阻擋彈出視窗')));
   }
 
   /// Prompts the user to confirm downloading the given URL. If confirmed, enqueues the download.
@@ -1863,187 +2275,6 @@ class _BrowserPageState extends State<BrowserPage> {
               ],
             ),
           ),
-    );
-  }
-
-  /// Builds the side drawer that slides in from the right. The drawer
-  /// contains sections for favourites, browsing history and the pop‑up
-  /// blocking toggle. Tapping a favourite or history item loads it in
-  /// the current WebView and closes the drawer. Each section has an
-  /// optional clear button to remove all entries.
-  Widget _buildEndDrawer(BuildContext context) {
-    return ListView(
-      padding: EdgeInsets.zero,
-      children: [
-        // Favourites section
-        ValueListenableBuilder<List<String>>(
-          valueListenable: repo.favorites,
-          builder: (context, favs, _) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                ExpansionTile(
-                  leading: const Icon(Icons.favorite),
-                  title: Text('我的收藏（${favs.length}）'),
-                  childrenPadding: const EdgeInsets.only(
-                    left: 16,
-                    right: 8,
-                    bottom: 8,
-                  ),
-                  children: [
-                    if (favs.isEmpty)
-                      const ListTile(
-                        dense: true,
-                        title: Text('尚無收藏', style: TextStyle(fontSize: 14)),
-                      )
-                    else ...[
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: IconButton(
-                          icon: const Icon(Icons.delete_sweep),
-                          tooltip: '清除全部',
-                          onPressed: () {
-                            repo.clearFavorites();
-                          },
-                        ),
-                      ),
-                      const Divider(height: 1),
-                      ...favs.map((url) {
-                        final display = _prettyFileName(url);
-                        return ListTile(
-                          dense: true,
-                          title: Text(
-                            display,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          subtitle: Text(
-                            url,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey,
-                            ),
-                          ),
-                          trailing: IconButton(
-                            icon: const Icon(Icons.delete),
-                            tooltip: '移除收藏',
-                            onPressed: () {
-                              repo.removeFavoriteUrl(url);
-                            },
-                          ),
-                          onTap: () {
-                            Navigator.of(context).pop();
-                            if (_tabs.isNotEmpty) {
-                              final tab = _tabs[_currentTabIndex];
-                              tab.controller?.loadUrl(
-                                urlRequest: URLRequest(url: WebUri(url)),
-                              );
-                            }
-                          },
-                        );
-                      }),
-                    ],
-                  ],
-                ),
-                const Divider(height: 1),
-              ],
-            );
-          },
-        ),
-        // History section header
-        ValueListenableBuilder<List<HistoryEntry>>(
-          valueListenable: repo.history,
-          builder: (context, hist, _) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                ListTile(
-                  leading: const Icon(Icons.history),
-                  title: Text('瀏覽記錄（${hist.length}）'),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (hist.isNotEmpty)
-                        IconButton(
-                          icon: const Icon(Icons.delete_sweep),
-                          tooltip: '清除全部',
-                          onPressed: () {
-                            repo.clearHistory();
-                          },
-                        ),
-                      IconButton(
-                        icon: const Icon(Icons.chevron_right),
-                        tooltip: '查看更多',
-                        onPressed: () {
-                          // Close the drawer and show the full history page. The
-                          // callback passed to HistoryPage will simply load the
-                          // URL; the HistoryPage itself will handle popping.
-                          Navigator.of(context).pop();
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder:
-                                  (_) => HistoryPage(
-                                    onOpen: (String url) {
-                                      if (_tabs.isNotEmpty) {
-                                        final tab = _tabs[_currentTabIndex];
-                                        tab.controller?.loadUrl(
-                                          urlRequest: URLRequest(
-                                            url: WebUri(url),
-                                          ),
-                                        );
-                                      }
-                                    },
-                                  ),
-                            ),
-                          );
-                        },
-                      ),
-                    ],
-                  ),
-                  // Allow tapping anywhere on the tile to open the history page
-                  onTap: () {
-                    // Same as tapping the chevron: close drawer then open history page.
-                    Navigator.of(context).pop();
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder:
-                            (_) => HistoryPage(
-                              onOpen: (String url) {
-                                if (_tabs.isNotEmpty) {
-                                  final tab = _tabs[_currentTabIndex];
-                                  tab.controller?.loadUrl(
-                                    urlRequest: URLRequest(url: WebUri(url)),
-                                  );
-                                }
-                              },
-                            ),
-                      ),
-                    );
-                  },
-                ),
-                const Divider(height: 1),
-              ],
-            );
-          },
-        ),
-        const SizedBox(height: 8),
-        // Pop‑up blocking toggle
-        ValueListenableBuilder<bool>(
-          valueListenable: repo.blockPopup,
-          builder: (context, block, _) {
-            return SwitchListTile(
-              secondary: const Icon(Icons.block),
-              title: const Text('阻擋彈出視窗'),
-              value: block,
-              onChanged: (v) {
-                repo.setBlockPopup(v);
-              },
-            );
-          },
-        ),
-      ],
     );
   }
 
@@ -2382,6 +2613,7 @@ class _BrowserPageState extends State<BrowserPage> {
                     ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
               // 檢查並補齊缺失縮圖（重啟後快取丟失時自動重建）
               for (final t in tasks) {
+                if (AppRepo.I.resolvedTaskType(t) != 'video') continue;
                 final p = t.thumbnailPath;
                 if (p == null || p.isEmpty || !File(p).existsSync()) {
                   _regenThumbAsync(t); // 背景抽圖，完成會 setState + 持久化
@@ -2467,6 +2699,7 @@ class _BrowserPageState extends State<BrowserPage> {
         isHls &&
         t.state == 'downloading' &&
         (t.total != null && t.received < t.total!);
+    final resolvedType = AppRepo.I.resolvedTaskType(t);
 
     // --- Speed calculation setup ---
 
@@ -2735,7 +2968,7 @@ class _BrowserPageState extends State<BrowserPage> {
           style: const TextStyle(fontSize: 12),
         ),
       );
-    } else if (t.type == 'video' || t.type == 'audio') {
+    } else if (resolvedType == 'video' || resolvedType == 'audio') {
       subtitleWidgets.add(
         const Text('時長: 解析中…', style: TextStyle(fontSize: 12)),
       );
@@ -2805,18 +3038,50 @@ class _BrowserPageState extends State<BrowserPage> {
           ],
         ),
         onTap: () async {
-          // 僅在已完成的情況下點擊播放
-          if ((t.state).toString().toLowerCase() == 'done') {
-            String playPath = t.savePath;
-            try {
-              if (playPath.isEmpty || !File(playPath).existsSync()) {
-                playPath = t.url;
-              }
-            } catch (_) {
-              playPath = t.url;
+          if ((t.state).toString().toLowerCase() != 'done') return;
+          String? filePath = t.savePath.isNotEmpty ? t.savePath : null;
+          if (filePath != null && !File(filePath).existsSync()) {
+            filePath = null;
+          }
+          if (resolvedType == 'video' || resolvedType == 'audio') {
+            final target = filePath ?? t.url;
+            _playMedia(target);
+            return;
+          }
+          if (resolvedType == 'image') {
+            if (filePath != null) {
+              final imagePath = filePath;
+              if (!mounted) return;
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder:
+                      (_) => ImagePreviewPage(
+                        filePath: imagePath,
+                        title: t.name ?? path.basename(imagePath),
+                      ),
+                ),
+              );
+            } else if (mounted) {
+              ScaffoldMessenger.of(
+                context,
+              ).showSnackBar(const SnackBar(content: Text('檔案已不存在')));
             }
-            // 使用內建播放器播放（支援 iOS 子母畫面 PiP）
-            _playMedia(playPath);
+            return;
+          }
+          if (filePath != null) {
+            try {
+              await Share.shareXFiles([XFile(filePath)]);
+            } catch (e) {
+              if (mounted) {
+                ScaffoldMessenger.of(
+                  context,
+                ).showSnackBar(SnackBar(content: Text('匯出失敗: $e')));
+              }
+            }
+          } else if (mounted) {
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(const SnackBar(content: Text('檔案已不存在')));
           }
         },
       );
@@ -2829,6 +3094,76 @@ class _BrowserPageState extends State<BrowserPage> {
         (_) => DateTime.now(),
       ),
       builder: (_, __) => buildTile(),
+    );
+  }
+}
+
+class FavoritesPage extends StatelessWidget {
+  const FavoritesPage({
+    super.key,
+    required this.onOpen,
+    required this.prettyName,
+  });
+
+  final void Function(String url) onOpen;
+  final String Function(String url) prettyName;
+
+  @override
+  Widget build(BuildContext context) {
+    final repo = AppRepo.I;
+    return ValueListenableBuilder<List<String>>(
+      valueListenable: repo.favorites,
+      builder: (context, favs, _) {
+        return Scaffold(
+          appBar: AppBar(
+            title: Text('我的收藏（${favs.length}）'),
+            actions: [
+              if (favs.isNotEmpty)
+                IconButton(
+                  icon: const Icon(Icons.delete_sweep),
+                  tooltip: '清除全部',
+                  onPressed: () => repo.clearFavorites(),
+                ),
+            ],
+          ),
+          body: SafeArea(
+            child:
+                favs.isEmpty
+                    ? const Center(child: Text('尚無收藏'))
+                    : ListView.separated(
+                      itemCount: favs.length,
+                      separatorBuilder: (_, __) => const Divider(height: 1),
+                      itemBuilder: (context, index) {
+                        final url = favs[index];
+                        final display = prettyName(url);
+                        return ListTile(
+                          leading: const Icon(Icons.bookmark_outline),
+                          title: Text(
+                            display,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          subtitle: Text(
+                            url,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.delete),
+                            tooltip: '移除收藏',
+                            onPressed: () => repo.removeFavoriteUrl(url),
+                          ),
+                          onTap: () {
+                            Navigator.of(context).pop();
+                            onOpen(url);
+                          },
+                        );
+                      },
+                    ),
+          ),
+        );
+      },
     );
   }
 }

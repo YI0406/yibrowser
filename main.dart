@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'browser.dart';
 import 'home.dart';
 import 'media.dart';
+import 'video_player_page.dart';
 import 'setting.dart';
 import 'soure.dart';
 import 'package:flutter_in_app_pip/flutter_in_app_pip.dart';
@@ -196,11 +197,21 @@ class _MiniPlayerWidgetState extends State<MiniPlayerWidget> {
     // Support both local and remote videos. If the path looks like an HTTP(S)
     // URL then stream it directly rather than reading from disk. This
     // enables playing videos discovered in the browser via the mini player.
+    final bgOptions =
+        Platform.isIOS
+            ? VideoPlayerOptions(allowBackgroundPlayback: true)
+            : null;
     if (widget.data.path.startsWith('http://') ||
         widget.data.path.startsWith('https://')) {
-      _vc = VideoPlayerController.network(widget.data.path);
+      _vc = VideoPlayerController.network(
+        widget.data.path,
+        videoPlayerOptions: bgOptions,
+      );
     } else {
-      _vc = VideoPlayerController.file(File(widget.data.path));
+      _vc = VideoPlayerController.file(
+        File(widget.data.path),
+        videoPlayerOptions: bgOptions,
+      );
     }
     _vc
       ..initialize().then((_) {
