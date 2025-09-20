@@ -1841,6 +1841,19 @@ class AppRepo extends ChangeNotifier {
     _saveState();
   }
 
+  /// Add a page URL to favourites if it is not already present.
+  void addFavoriteUrl(String url) {
+    final trimmed = url.trim();
+    if (trimmed.isEmpty) return;
+    final list = [...favorites.value];
+    if (list.contains(trimmed)) {
+      return;
+    }
+    list.add(trimmed);
+    favorites.value = list;
+    _saveState();
+  }
+
   /// Remove a specific favourite URL. Persists the updated list.
   void removeFavoriteUrl(String url) {
     final list = [...favorites.value];

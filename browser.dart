@@ -78,6 +78,8 @@ enum _ToolbarMenuAction {
   goHome,
 }
 
+enum _LinkContextMenuAction { copyLink, openInNewTab, addFavorite, addHome }
+
 class _BrowserPageState extends State<BrowserPage> {
   // Global key used to control the Scaffold (e.g. open the end drawer) from
   // contexts where Scaffold.of(context) does not resolve correctly, such as
@@ -661,6 +663,218 @@ class _BrowserPageState extends State<BrowserPage> {
     repo.setOpenTabs(urls);
   }
 
+  bool _looksLikeLikelyUrl(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return false;
+    if (trimmed.startsWith('/') ||
+        trimmed.startsWith('./') ||
+        trimmed.startsWith('../')) {
+      return true;
+    }
+    if (trimmed.startsWith('//')) {
+      return true;
+    }
+    final lower = trimmed.toLowerCase();
+    if (lower.startsWith('http://') ||
+        lower.startsWith('https://') ||
+        lower.startsWith('file://') ||
+        lower.startsWith('about:') ||
+        lower.startsWith('data:') ||
+        lower.startsWith('blob:') ||
+        lower.startsWith('ftp://')) {
+      return true;
+    }
+    final uri = Uri.tryParse(trimmed);
+    if (uri == null) return false;
+    if (uri.hasScheme && uri.scheme.length > 1) return true;
+    if (uri.host.isNotEmpty) return true;
+    return false;
+  }
+
+  Future<String?> _resolveHitTestUrl(
+    InAppWebViewController controller,
+    String link,
+  ) async {
+    final trimmed = link.trim();
+    if (trimmed.isEmpty) return null;
+    final script =
+        '(() => { try { return new URL(${jsonEncode(trimmed)}, window.location.href).href; } catch (e) { return ${jsonEncode(trimmed)}; } })();';
+    try {
+      final result = await controller.evaluateJavascript(source: script);
+      if (result is String && result.isNotEmpty) {
+        return result;
+      }
+    } catch (_) {}
+    return trimmed;
+  }
+
+  void _showSnackBar(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _handleLinkContextMenu(String url) async {
+    final action = await _showLinkContextMenu(url);
+    if (action == null) return;
+    switch (action) {
+      case _LinkContextMenuAction.copyLink:
+        await Clipboard.setData(ClipboardData(text: url));
+        _showSnackBar('已複製連結');
+        break;
+      case _LinkContextMenuAction.openInNewTab:
+        await _openLinkInNewTab(url);
+        _showSnackBar('已在新分頁開啟');
+        break;
+      case _LinkContextMenuAction.addFavorite:
+        _addUrlToFavorites(url);
+        break;
+      case _LinkContextMenuAction.addHome:
+        _showAddToHomeDialog(initialUrl: url);
+        break;
+    }
+  }
+
+  Future<_LinkContextMenuAction?> _showLinkContextMenu(String url) {
+    return showGeneralDialog<_LinkContextMenuAction>(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: 'link-menu',
+      barrierColor: Colors.black45,
+      transitionDuration: const Duration(milliseconds: 150),
+      pageBuilder: (context, animation, secondaryAnimation) {
+        final theme = Theme.of(context);
+        final colorScheme = theme.colorScheme;
+        Widget buildItem(
+          IconData icon,
+          String label,
+          _LinkContextMenuAction action,
+        ) {
+          return ListTile(
+            leading: Icon(icon, color: colorScheme.primary),
+            title: Text(label),
+            dense: true,
+            visualDensity: VisualDensity.compact,
+            onTap: () => Navigator.of(context).pop(action),
+          );
+        }
+
+        return SafeArea(
+          child: Align(
+            alignment: Alignment.centerRight,
+            child: Padding(
+              padding: const EdgeInsets.only(right: 12),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.18),
+                      blurRadius: 18,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
+                ),
+                child: Material(
+                  color: colorScheme.surface,
+                  borderRadius: BorderRadius.circular(12),
+                  clipBehavior: Clip.antiAlias,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 280),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 12,
+                          ),
+                          child: Text(
+                            url,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: colorScheme.onSurface.withOpacity(0.75),
+                            ),
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        const Divider(height: 1),
+                        buildItem(
+                          Icons.copy,
+                          '複製連結',
+                          _LinkContextMenuAction.copyLink,
+                        ),
+                        const Divider(height: 1),
+                        buildItem(
+                          Icons.open_in_new,
+                          '在新分頁開啟',
+                          _LinkContextMenuAction.openInNewTab,
+                        ),
+                        const Divider(height: 1),
+                        buildItem(
+                          Icons.bookmark_add,
+                          '收藏網址',
+                          _LinkContextMenuAction.addFavorite,
+                        ),
+                        const Divider(height: 1),
+                        buildItem(
+                          Icons.home,
+                          '加入主頁',
+                          _LinkContextMenuAction.addHome,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+      transitionBuilder: (context, animation, secondaryAnimation, child) {
+        final curved = CurvedAnimation(
+          parent: animation,
+          curve: Curves.easeOutCubic,
+        );
+        return FadeTransition(
+          opacity: curved,
+          child: SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(0.15, 0),
+              end: Offset.zero,
+            ).animate(curved),
+            child: child,
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _openLinkInNewTab(String url) async {
+    final target = url.trim();
+    if (target.isEmpty) return;
+    final tab = _createTab(initialUrl: target);
+    tab.currentUrl = target;
+    setState(() {
+      _tabs.add(tab);
+      _currentTabIndex = _tabs.length - 1;
+    });
+    _updateOpenTabs();
+    await _persistCurrentTabIndex();
+  }
+
+  void _addUrlToFavorites(String url) {
+    final target = url.trim();
+    if (target.isEmpty) return;
+    if (repo.favorites.value.contains(target)) {
+      _showSnackBar('網址已在收藏');
+      return;
+    }
+    repo.addFavoriteUrl(target);
+    _showSnackBar('已加入收藏');
+  }
+
   Future<void> _persistCurrentTabIndex() async {
     try {
       final sp = await SharedPreferences.getInstance();
@@ -1055,24 +1269,33 @@ class _BrowserPageState extends State<BrowserPage> {
     );
   }
 
-  /// Prompt the user to add the current page to the home screen. Prefills
-  /// the dialog with the current title (or derived file name) and URL.
-  void _showAddToHomeDialog() {
-    // Use the active tab's title and current URL as defaults. Fall back to
-    // deriving a file name from the URL when no title exists.
-    String? tabTitle;
-    String? tabUrl;
-    if (_tabs.isNotEmpty) {
-      final tab = _tabs[_currentTabIndex];
-      tabTitle = tab.pageTitle;
-      tabUrl = tab.currentUrl;
+  /// Prompt the user to add a page to the home screen. When [initialUrl]
+  /// or [initialName] are provided they are used to prefill the dialog,
+  /// otherwise the current tab's information is used.
+  void _showAddToHomeDialog({String? initialUrl, String? initialName}) {
+    String? tabTitle =
+        (initialName != null && initialName.trim().isNotEmpty)
+            ? initialName.trim()
+            : null;
+    String? tabUrl =
+        (initialUrl != null && initialUrl.trim().isNotEmpty)
+            ? initialUrl.trim()
+            : null;
+    if ((tabTitle == null || tabTitle.isEmpty) ||
+        (tabUrl == null || tabUrl.isEmpty)) {
+      if (_tabs.isNotEmpty) {
+        final tab = _tabs[_currentTabIndex];
+        tabTitle = tabTitle ?? tab.pageTitle;
+        tabUrl = tabUrl ?? tab.currentUrl;
+      }
     }
+    final defaultUrl = tabUrl ?? '';
     final defaultName =
         (tabTitle != null && tabTitle.trim().isNotEmpty)
             ? tabTitle.trim()
-            : (tabUrl != null ? _prettyFileName(tabUrl) : '');
+            : (defaultUrl.isNotEmpty ? _prettyFileName(defaultUrl) : '');
     final nameCtrl = TextEditingController(text: defaultName);
-    final urlCtrlLocal = TextEditingController(text: tabUrl ?? '');
+    final urlCtrlLocal = TextEditingController(text: defaultUrl);
     showDialog(
       context: context,
       builder: (_) {
@@ -1550,6 +1773,12 @@ class _BrowserPageState extends State<BrowserPage> {
                     children: [
                       InAppWebView(
                         key: _tabs[tabIndex].webviewKey,
+                        contextMenu: ContextMenu(
+                          // ignore: deprecated_member_use
+                          options: ContextMenuOptions(
+                            hideDefaultSystemContextMenuItems: true,
+                          ),
+                        ),
                         initialSettings: InAppWebViewSettings(
                           userAgent: _userAgent,
                           allowsInlineMediaPlayback: true,
@@ -1777,18 +2006,44 @@ class _BrowserPageState extends State<BrowserPage> {
                           return NavigationActionPolicy.ALLOW;
                         },
                         onLongPressHitTestResult: (c, res) async {
-                          String? link = res.extra;
-                          String type = 'video';
-                          // If hit-test tells us it's an image, trust that first.
+                          final extra = res.extra?.toString();
+                          InAppWebViewHitTestResultType? hitType;
+                          String typeString = '';
                           try {
-                            final t = res.type;
-                            if (t == InAppWebViewHitTestResultType.IMAGE_TYPE ||
-                                t ==
-                                    InAppWebViewHitTestResultType
-                                        .SRC_IMAGE_ANCHOR_TYPE) {
-                              type = 'image';
-                            }
+                            hitType = res.type;
+                            typeString = hitType.toString();
                           } catch (_) {}
+                          final bool isImageHit =
+                              hitType ==
+                                  InAppWebViewHitTestResultType.IMAGE_TYPE ||
+                              hitType ==
+                                  InAppWebViewHitTestResultType
+                                      .SRC_IMAGE_ANCHOR_TYPE ||
+                              typeString.contains('IMAGE');
+                          final bool isAnchorHit =
+                              hitType ==
+                                  InAppWebViewHitTestResultType
+                                      .SRC_ANCHOR_TYPE ||
+                              hitType ==
+                                  InAppWebViewHitTestResultType
+                                      .SRC_IMAGE_ANCHOR_TYPE ||
+                              typeString.contains('ANCHOR');
+
+                          if (extra != null &&
+                              extra.trim().isNotEmpty &&
+                              (isAnchorHit ||
+                                  (!isImageHit &&
+                                      _looksLikeLikelyUrl(extra)))) {
+                            final resolved = await _resolveHitTestUrl(c, extra);
+                            if (resolved != null &&
+                                resolved.trim().isNotEmpty) {
+                              await _handleLinkContextMenu(resolved);
+                              return;
+                            }
+                          }
+
+                          String? link = extra;
+                          String type = isImageHit ? 'image' : 'video';
                           if (link == null || link.isEmpty) {
                             try {
                               final raw = await c.evaluateJavascript(
@@ -1802,10 +2057,10 @@ class _BrowserPageState extends State<BrowserPage> {
                                         decoded.first as Map,
                                       );
                                   link = (first['url'] ?? '') as String;
-                                  // Improved type detection logic for image/audio/video/mp3
+
                                   final rawType =
                                       (first['type'] ?? '') as String;
-                                  String lowerUrl = link!.toLowerCase();
+                                  final lowerUrl = link!.toLowerCase();
                                   if (rawType.startsWith('image/') ||
                                       lowerUrl.endsWith('.png') ||
                                       lowerUrl.endsWith('.jpg') ||
@@ -1837,8 +2092,8 @@ class _BrowserPageState extends State<BrowserPage> {
                           }
                           if (link == null || link.isEmpty) return;
 
-                          // Final pass: correct type by URL extension if needed
-                          final lowerUrl = link!.toLowerCase();
+                          final resolvedLink = link!;
+                          final lowerUrl = resolvedLink.toLowerCase();
                           if (lowerUrl.endsWith('.png') ||
                               lowerUrl.endsWith('.jpg') ||
                               lowerUrl.endsWith('.jpeg') ||
@@ -1874,7 +2129,7 @@ class _BrowserPageState extends State<BrowserPage> {
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     SelectableText(
-                                      link!,
+                                      resolvedLink,
                                       maxLines: 4,
                                       onTap: () {},
                                     ),
@@ -1894,7 +2149,7 @@ class _BrowserPageState extends State<BrowserPage> {
                                           icon: const Icon(Icons.copy),
                                           onPressed: () async {
                                             await Clipboard.setData(
-                                              ClipboardData(text: link!),
+                                              ClipboardData(text: resolvedLink),
                                             );
                                             if (context.mounted) {
                                               ScaffoldMessenger.of(
@@ -1922,7 +2177,7 @@ class _BrowserPageState extends State<BrowserPage> {
                                       label: const Text('播放'),
                                       onPressed: () {
                                         Navigator.pop(context);
-                                        _playMedia(link!);
+                                        _playMedia(resolvedLink);
                                       },
                                     ),
                                   FilledButton.icon(
@@ -1930,7 +2185,7 @@ class _BrowserPageState extends State<BrowserPage> {
                                     label: const Text('下載'),
                                     onPressed: () {
                                       Navigator.pop(context);
-                                      _confirmDownload(link!);
+                                      _confirmDownload(resolvedLink);
                                     },
                                   ),
                                 ],
