@@ -124,7 +124,128 @@ class _BrowserPageState extends State<BrowserPage> {
   static const double _edgeSwipeWidth = 32.0;
   static const double _edgeSwipeDistanceThreshold = 48.0;
   static const double _edgeSwipeVelocityThreshold = 700.0;
+  bool _iosLinkMenuBridgeReady = false;
+  String? _lastIosLinkMenuUrl;
+  DateTime? _lastIosLinkMenuTime;
 
+  static const String _kIosLinkContextMenuJS = r'''
+(() => {
+  if (window.__flutterIosLinkMenuInstalled) {
+    return;
+  }
+  window.__flutterIosLinkMenuInstalled = true;
+
+  const LONG_PRESS_DELAY = 450;
+  let activeAnchor = null;
+  let longPressTimer = null;
+
+  const ensureStyle = () => {
+    if (document.getElementById('flutter-ios-link-menu-style')) {
+      return;
+    }
+    const style = document.createElement('style');
+    style.id = 'flutter-ios-link-menu-style';
+    style.textContent = 'a, a * { -webkit-touch-callout: none !important; }';
+    document.documentElement.appendChild(style);
+  };
+
+  const resolveHref = (anchor) => {
+    if (!anchor) {
+      return null;
+    }
+    let href = anchor.getAttribute('href') || '';
+    if (!href && anchor.href) {
+      href = anchor.href;
+    }
+    if (!href) {
+      return null;
+    }
+    try {
+      return new URL(href, window.location.href).href;
+    } catch (err) {
+      return href;
+    }
+  };
+
+  const clearPending = () => {
+    if (longPressTimer !== null) {
+      clearTimeout(longPressTimer);
+      longPressTimer = null;
+    }
+    activeAnchor = null;
+  };
+
+  document.addEventListener(
+    'touchstart',
+    (event) => {
+      if (!event || (event.touches && event.touches.length > 1)) {
+        clearPending();
+        return;
+      }
+      ensureStyle();
+      const anchor =
+        event.target && event.target.closest
+          ? event.target.closest('a[href]')
+          : null;
+      if (!anchor) {
+        clearPending();
+        return;
+      }
+      if (longPressTimer !== null) {
+        clearTimeout(longPressTimer);
+      }
+      activeAnchor = anchor;
+      longPressTimer = setTimeout(() => {
+        const resolved = resolveHref(activeAnchor);
+        clearPending();
+        if (
+          resolved &&
+          window.flutter_inappwebview &&
+          window.flutter_inappwebview.callHandler
+        ) {
+          window.flutter_inappwebview.callHandler('linkLongPress', resolved);
+        }
+      }, LONG_PRESS_DELAY);
+    },
+    { passive: true }
+  );
+
+  document.addEventListener(
+    'touchmove',
+    (event) => {
+      if (!activeAnchor) {
+        return;
+      }
+      if (!event || !event.target || !event.target.closest) {
+        clearPending();
+        return;
+      }
+      const anchor = event.target.closest('a[href]');
+      if (!anchor || anchor !== activeAnchor) {
+        clearPending();
+      }
+    },
+    { passive: true }
+  );
+
+  document.addEventListener('touchend', clearPending, { passive: true });
+  document.addEventListener('touchcancel', clearPending, { passive: true });
+
+  document.addEventListener(
+    'contextmenu',
+    (event) => {
+      const anchor =
+        event && event.target && event.target.closest
+          ? event.target.closest('a[href]')
+          : null;
+      if (anchor) {
+        event.preventDefault();
+      }
+    },
+    { capture: true }
+  );
+})();
+''';
   String _uaForMode(String mode) {
     switch (mode) {
       case 'ipad':
@@ -713,6 +834,20 @@ class _BrowserPageState extends State<BrowserPage> {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _injectIosLinkContextMenuBridge(
+    InAppWebViewController controller,
+  ) async {
+    if (!Platform.isIOS) {
+      return;
+    }
+    try {
+      await controller.evaluateJavascript(source: _kIosLinkContextMenuJS);
+      _iosLinkMenuBridgeReady = true;
+    } catch (_) {
+      _iosLinkMenuBridgeReady = false;
+    }
   }
 
   Future<void> _handleLinkContextMenu(String url) async {
@@ -1829,6 +1964,32 @@ class _BrowserPageState extends State<BrowserPage> {
                               return {'ok': true};
                             },
                           );
+                          if (Platform.isIOS) {
+                            c.addJavaScriptHandler(
+                              handlerName: 'linkLongPress',
+                              callback: (args) async {
+                                if (args.isEmpty) {
+                                  return {'handled': false};
+                                }
+                                final dynamic raw = args.first;
+                                if (raw is! String) {
+                                  return {'handled': false};
+                                }
+                                final resolved = await _resolveHitTestUrl(
+                                  c,
+                                  raw,
+                                );
+                                final normalized = resolved?.trim();
+                                if (normalized == null || normalized.isEmpty) {
+                                  return {'handled': false};
+                                }
+                                _lastIosLinkMenuUrl = normalized;
+                                _lastIosLinkMenuTime = DateTime.now();
+                                await _handleLinkContextMenu(normalized);
+                                return {'handled': true};
+                              },
+                            );
+                          }
                         },
                         onLoadStart: (c, u) async {
                           // 雙保險：硬攔非 Web scheme（極少數情況仍可能觸發）
@@ -1845,6 +2006,8 @@ class _BrowserPageState extends State<BrowserPage> {
                             }
                             return;
                           }
+                          _iosLinkMenuBridgeReady = false;
+                          await _injectIosLinkContextMenuBridge(c);
                           if (u != null) {
                             final tab = _tabs[tabIndex];
                             final s = u.toString();
@@ -1875,6 +2038,7 @@ class _BrowserPageState extends State<BrowserPage> {
                           }
                         },
                         onLoadStop: (c, u) async {
+                          await _injectIosLinkContextMenuBridge(c);
                           // 注入嗅探腳本並同步開關
                           await c.evaluateJavascript(source: Sniffer.jsHook);
                           await c.evaluateJavascript(
@@ -2029,16 +2193,45 @@ class _BrowserPageState extends State<BrowserPage> {
                                       .SRC_IMAGE_ANCHOR_TYPE ||
                               typeString.contains('ANCHOR');
 
-                          if (extra != null &&
-                              extra.trim().isNotEmpty &&
+                          final candidate = extra?.trim();
+                          final hasCandidateLink =
+                              candidate != null && candidate.isNotEmpty;
+                          if (hasCandidateLink &&
                               (isAnchorHit ||
                                   (!isImageHit &&
-                                      _looksLikeLikelyUrl(extra)))) {
-                            final resolved = await _resolveHitTestUrl(c, extra);
-                            if (resolved != null &&
-                                resolved.trim().isNotEmpty) {
-                              await _handleLinkContextMenu(resolved);
+                                      _looksLikeLikelyUrl(candidate)))) {
+                            if (_iosLinkMenuBridgeReady &&
+                                Platform.isIOS &&
+                                isAnchorHit) {
                               return;
+                            }
+                            if (Platform.isIOS &&
+                                _lastIosLinkMenuUrl != null &&
+                                _lastIosLinkMenuTime != null) {
+                              final difference = DateTime.now().difference(
+                                _lastIosLinkMenuTime!,
+                              );
+                              if (difference < const Duration(seconds: 1) &&
+                                  _lastIosLinkMenuUrl == candidate) {
+                                return;
+                              }
+                            }
+                            final resolved = await _resolveHitTestUrl(
+                              c,
+                              candidate!,
+                            );
+                            if (resolved != null) {
+                              final normalizedResolved = resolved.trim();
+                              if (normalizedResolved.isNotEmpty) {
+                                if (Platform.isIOS) {
+                                  _lastIosLinkMenuUrl = normalizedResolved;
+                                  _lastIosLinkMenuTime = DateTime.now();
+                                }
+                                await _handleLinkContextMenu(
+                                  normalizedResolved,
+                                );
+                                return;
+                              }
                             }
                           }
 
