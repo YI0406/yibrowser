@@ -3,6 +3,7 @@ import 'soure.dart';
 import 'dart:io' show Platform;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:photo_manager/photo_manager.dart';
 
 /// SettingPage exposes preferences such as whether downloads are
 /// automatically saved to the photo album and provides a way to clear
@@ -186,10 +187,43 @@ class _SettingPageState extends State<SettingPage> {
                 title: const Text('自動儲存到相簿'),
                 value: on,
                 onChanged: (v) {
-                  repo.setAutoSave(v);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text(v ? '下載完成後將自動存入相簿' : '已關閉自動存相簿')),
-                  );
+                  () async {
+                    if (v) {
+                      try {
+                        final perm =
+                            await PhotoManager.requestPermissionExtend();
+                        if (!perm.isAuth) {
+                          repo.setAutoSave(false);
+                          if (!mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: const Text('自動儲存需要相簿權限，請前往設定開啟。'),
+                              action: SnackBarAction(
+                                label: '前往設定',
+                                onPressed: () {
+                                  PhotoManager.openSetting();
+                                },
+                              ),
+                            ),
+                          );
+                          return;
+                        }
+                      } catch (_) {
+                        repo.setAutoSave(false);
+                        if (!mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('無法確認相簿權限，請手動檢查設定。')),
+                        );
+                        return;
+                      }
+                    }
+
+                    repo.setAutoSave(v);
+                    if (!mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text(v ? '下載完成後將自動存入相簿' : '已關閉自動存相簿')),
+                    );
+                  }();
                 },
               );
             },

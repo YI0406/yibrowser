@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
@@ -85,6 +86,9 @@ class _BrowserPageState extends State<BrowserPage> {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   // Global key for the tab count button (for anchored popup menu)
   final GlobalKey _tabButtonKey = GlobalKey();
+  // Global key for the toolbar menu button so we can reopen the menu at the
+  // same location after toggling quick actions.
+  final GlobalKey _menuButtonKey = GlobalKey();
 
   // List of open tabs. At least one tab is always present.
   final List<_TabData> _tabs = [];
@@ -1225,14 +1229,22 @@ class _BrowserPageState extends State<BrowserPage> {
       try {
         final dynamic rawMap = action.toMap();
         if (rawMap is Map) {
-          final dynamic appLinkFlag =
-              rawMap['shouldPerformAppLink'] ??
-              rawMap['iosShouldPerformAppLink'] ??
-              rawMap['shouldOpenExternalApp'] ??
-              rawMap['androidShouldOpenExternalApp'] ??
-              rawMap['androidShouldLeaveApplication'];
-          if (appLinkFlag is bool && appLinkFlag) {
-            shouldBlock = true;
+          final keysToCheck = [
+            'shouldPerformAppLink',
+            'iosShouldPerformAppLink',
+            'iosShouldOpenExternalApp',
+            'shouldOpenExternalApp',
+            'shouldOpenApp',
+            'shouldOpenAppLink',
+            'androidShouldOpenExternalApp',
+            'androidShouldLeaveApplication',
+          ];
+          for (final key in keysToCheck) {
+            final dynamic flag = rawMap[key];
+            if (flag is bool && flag) {
+              shouldBlock = true;
+              break;
+            }
           }
         }
       } catch (_) {}
@@ -1245,14 +1257,87 @@ class _BrowserPageState extends State<BrowserPage> {
     NavigationAction? action,
   }) {
     if (!_blockExternalApp) return false;
-    if (uri == null) return false;
-    final scheme = (uri.scheme ?? '').toLowerCase();
-    if (!_kWebSchemes.contains(scheme)) {
+
+    String? scheme = uri?.scheme;
+    String? rawUrl = uri?.toString();
+
+    if (action != null) {
+      try {
+        final req = action.request;
+        if (rawUrl == null || rawUrl.isEmpty) {
+          rawUrl = req.url?.toString();
+        }
+        if ((scheme == null || scheme.isEmpty) && req.url != null) {
+          scheme = req.url!.scheme;
+          uri ??= req.url;
+        }
+        // Fallback: some versions only expose raw URL via toMap()
+        if (rawUrl == null || rawUrl.isEmpty) {
+          try {
+            final m = req.toMap();
+            final u = m['url'];
+            if (u is String && u.isNotEmpty) {
+              rawUrl = u;
+            }
+          } catch (_) {}
+        }
+      } catch (_) {}
+    }
+
+    if ((scheme == null || scheme.isEmpty) && rawUrl != null) {
+      try {
+        final parsed = WebUri(rawUrl);
+        scheme = parsed.scheme;
+        uri ??= parsed;
+      } catch (_) {
+        try {
+          scheme = Uri.tryParse(rawUrl)?.scheme;
+        } catch (_) {}
+      }
+    }
+
+    final normalizedScheme = (scheme ?? '').toLowerCase();
+    final normalizedRaw = (rawUrl ?? '').toLowerCase();
+
+    if (normalizedScheme.isNotEmpty &&
+        !_kWebSchemes.contains(normalizedScheme)) {
       return true;
     }
+
+    if (normalizedScheme.isEmpty && normalizedRaw.isNotEmpty) {
+      const suspiciousPrefixes = [
+        'intent:',
+        'intent://',
+        'line://',
+        'line:',
+        'whatsapp://',
+        'whatsapp:',
+        'tg://',
+        'twitter://',
+        'fb://',
+        'instagram://',
+        'weixin://',
+        'weibo://',
+        'alipay://',
+        'alipays://',
+        'taobao://',
+        'pinduoduo://',
+        'mqq://',
+        'mailto:',
+        'tel:',
+        'sms:',
+      ];
+      for (final prefix in suspiciousPrefixes) {
+        if (normalizedRaw.startsWith(prefix)) {
+          return true;
+        }
+      }
+    }
+
     if (action != null && _navigationActionRequestsExternalApp(action)) {
       return true;
     }
+
     return false;
   }
 
@@ -1607,6 +1692,9 @@ class _BrowserPageState extends State<BrowserPage> {
                             navigationAction.request.url,
                             action: navigationAction,
                           )) {
+                            try {
+                              await controller.stopLoading();
+                            } catch (_) {}
                             if (mounted) {
                               ScaffoldMessenger.of(context).showSnackBar(
                                 const SnackBar(
@@ -1730,6 +1818,42 @@ class _BrowserPageState extends State<BrowserPage> {
     _updateOpenTabs();
   }
 
+  /// Renders an icon with a numeric badge (if count > 0).
+  Widget _iconWithBadge({
+    required Widget icon,
+    required int count,
+    EdgeInsetsGeometry iconPadding = const EdgeInsets.all(8.0),
+  }) {
+    if (count <= 0) return Padding(padding: iconPadding, child: icon);
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Padding(padding: iconPadding, child: icon),
+        Positioned(
+          right: -2,
+          top: -2,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.error,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            constraints: const BoxConstraints(minWidth: 18),
+            child: Text(
+              count > 99 ? '99+' : '$count',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 10,
+                fontWeight: FontWeight.bold,
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   /// Toolbar with back/forward/refresh and a button to load the current URL into the address bar.
   Widget _toolbar() {
     return Padding(
@@ -1765,6 +1889,64 @@ class _BrowserPageState extends State<BrowserPage> {
                     final tab = _tabs[_currentTabIndex];
                     tab.controller?.goForward();
                   }
+                },
+              ),
+            ),
+          ];
+
+          // Right side controls (all aligned right): Sniffer, Resources, Downloads
+          final rightSideButtons = <Widget>[
+            // Sniffer toggle (eye icon)
+            pad(
+              ValueListenableBuilder<bool>(
+                valueListenable: repo.snifferEnabled,
+                builder: (context, on, _) {
+                  return IconButton(
+                    tooltip: '嗅探',
+                    onPressed: _toggleSniffer,
+                    icon: Icon(on ? Icons.visibility : Icons.visibility_off),
+                    color: on ? Colors.green : null,
+                    visualDensity: VisualDensity.compact,
+                  );
+                },
+              ),
+            ),
+            // Resources (detected hits) with live badge
+            pad(
+              ValueListenableBuilder<List<MediaHit>>(
+                valueListenable: repo.hits,
+                builder: (context, hits, _) {
+                  final detected = hits.length;
+                  return IconButton(
+                    tooltip: detected > 0 ? '資源（$detected）' : '資源',
+                    onPressed: _openDetectedSheet,
+                    visualDensity: VisualDensity.compact,
+                    icon: _iconWithBadge(
+                      icon: const Icon(Icons.search),
+                      count: detected,
+                      iconPadding: const EdgeInsets.all(8.0),
+                    ),
+                  );
+                },
+              ),
+            ),
+            // Downloads with live badge (only count real download tasks)
+            pad(
+              ValueListenableBuilder<List<DownloadTask>>(
+                valueListenable: repo.downloads,
+                builder: (context, list, _) {
+                  final downloadCount = list.where(_isDownloadTaskEntry).length;
+                  return IconButton(
+                    tooltip:
+                        downloadCount > 0 ? '下載清單（$downloadCount）' : '下載清單',
+                    onPressed: _openDownloadsSheet,
+                    visualDensity: VisualDensity.compact,
+                    icon: _iconWithBadge(
+                      icon: const Icon(Icons.file_download),
+                      count: downloadCount,
+                      iconPadding: const EdgeInsets.all(8.0),
+                    ),
+                  );
                 },
               ),
             ),
@@ -1840,7 +2022,14 @@ class _BrowserPageState extends State<BrowserPage> {
           );
 
           if (tablet) {
-            return Row(children: [...navItems, const Spacer(), tabButton]);
+            return Row(
+              children: [
+                ...navItems,
+                const Spacer(),
+                ...rightSideButtons,
+                tabButton,
+              ],
+            );
           }
 
           return Row(
@@ -1854,6 +2043,7 @@ class _BrowserPageState extends State<BrowserPage> {
                   children: navItems,
                 ),
               ),
+              ...rightSideButtons,
               tabButton,
             ],
           );
@@ -1873,168 +2063,171 @@ class _BrowserPageState extends State<BrowserPage> {
         repo.blockPopup,
       ]),
       builder: (context, _) {
-        final snifferOn = repo.snifferEnabled.value;
-        final detected = repo.hits.value.length;
-        final downloadCount =
-            repo.downloads.value.where(_isDownloadTaskEntry).length;
-        final favoriteCount = repo.favorites.value.length;
-        final historyCount = repo.history.value.length;
-        final blockPopupOn = repo.blockPopup.value;
-        final badgeCount = detected + downloadCount;
-        final colorScheme = Theme.of(context).colorScheme;
-        final borderColor = colorScheme.outline.withOpacity(0.6);
-
-        PopupMenuItem<_ToolbarMenuAction> buildItem(
-          _ToolbarMenuAction action,
-          IconData icon,
-          String label, {
-          Color? iconColor,
-        }) {
-          return PopupMenuItem<_ToolbarMenuAction>(
-            value: action,
-            child: Row(
-              children: [
-                Icon(icon, color: iconColor),
-                const SizedBox(width: 12),
-                Expanded(child: Text(label)),
-              ],
-            ),
-          );
-        }
-
-        return PopupMenuButton<_ToolbarMenuAction>(
+        return IconButton(
+          key: _menuButtonKey,
           tooltip: '功能選單',
-          position: PopupMenuPosition.under,
-          offset: const Offset(0, 8),
           padding: EdgeInsets.zero,
-          onSelected: (action) async {
-            switch (action) {
-              case _ToolbarMenuAction.toggleSniffer:
-                await _toggleSniffer();
-                break;
-              case _ToolbarMenuAction.openResources:
-                _openDetectedSheet();
-                break;
-              case _ToolbarMenuAction.openDownloads:
-                _openDownloadsSheet();
-                break;
-              case _ToolbarMenuAction.openFavorites:
-                await _openFavoritesPage();
-                break;
-              case _ToolbarMenuAction.openHistory:
-                await _openHistoryPage();
-                break;
-              case _ToolbarMenuAction.toggleBlockPopup:
-                _toggleBlockPopupSetting();
-                break;
-              case _ToolbarMenuAction.blockExternalApp:
-                _toggleBlockExternalAppSetting();
-                break;
-              case _ToolbarMenuAction.addHome:
-                _showAddToHomeDialog();
-                break;
-              case _ToolbarMenuAction.goHome:
-                if (widget.onGoHome != null) {
-                  widget.onGoHome!();
-                }
-                break;
-            }
-          },
-          itemBuilder: (context) {
-            final entries = <PopupMenuEntry<_ToolbarMenuAction>>[
-              buildItem(
-                _ToolbarMenuAction.toggleSniffer,
-                snifferOn ? Icons.toggle_on : Icons.toggle_off,
-                '嗅探',
-                iconColor: snifferOn ? Colors.green : null,
-              ),
-              buildItem(
-                _ToolbarMenuAction.openResources,
-                Icons.search,
-                detected > 0 ? '資源（$detected）' : '資源',
-              ),
-              buildItem(
-                _ToolbarMenuAction.openDownloads,
-                Icons.file_download,
-                downloadCount > 0 ? '下載清單（$downloadCount）' : '下載清單',
-              ),
-              const PopupMenuDivider(),
-              buildItem(
-                _ToolbarMenuAction.openFavorites,
-                Icons.favorite,
-                favoriteCount > 0 ? '我的收藏（$favoriteCount）' : '我的收藏',
-                iconColor: favoriteCount > 0 ? Colors.redAccent : null,
-              ),
-              buildItem(
-                _ToolbarMenuAction.openHistory,
-                Icons.history,
-                historyCount > 0 ? '瀏覽記錄（$historyCount）' : '瀏覽記錄',
-                iconColor: historyCount > 0 ? colorScheme.primary : null,
-              ),
-              buildItem(
-                _ToolbarMenuAction.toggleBlockPopup,
-                blockPopupOn ? Icons.toggle_on : Icons.toggle_off,
-                '阻擋彈出視窗',
-                iconColor: blockPopupOn ? Colors.redAccent : null,
-              ),
-              buildItem(
-                _ToolbarMenuAction.blockExternalApp,
-                _blockExternalApp ? Icons.toggle_on : Icons.toggle_off,
-                '阻擋外部App',
-                iconColor:
-                    _blockExternalApp
-                        ? Theme.of(context).colorScheme.primary
-                        : null,
-              ),
-              const PopupMenuDivider(),
-              buildItem(_ToolbarMenuAction.addHome, Icons.add, '加入主頁'),
-              buildItem(_ToolbarMenuAction.goHome, Icons.home, '主頁'),
-            ];
-            return entries;
-          },
-          child: Stack(
-            clipBehavior: Clip.none,
-            children: [
-              Padding(
-                padding: const EdgeInsets.all(4.0),
-                child: Icon(
-                  Icons.more_horiz,
-                  color: Theme.of(context).colorScheme.onSurface,
-                ),
-              ),
-              if (badgeCount > 0)
-                Positioned(
-                  right: -2,
-                  top: -2,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 4,
-                      vertical: 1,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.redAccent,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    constraints: const BoxConstraints(
-                      minWidth: 18,
-                      minHeight: 16,
-                    ),
-                    child: Text(
-                      badgeCount > 99 ? '99+' : '$badgeCount',
-                      style: const TextStyle(
-                        fontSize: 10,
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-                ),
-            ],
+          constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+          onPressed: _showToolbarMenu,
+          icon: Icon(
+            Icons.more_horiz,
+            color: Theme.of(context).colorScheme.onSurface,
           ),
         );
       },
     );
+  }
+
+  Future<void> _showToolbarMenu() async {
+    final keyContext = _menuButtonKey.currentContext;
+    if (keyContext == null) return;
+    final renderObject = keyContext.findRenderObject();
+    if (renderObject is! RenderBox) return;
+    final overlay = Overlay.of(context);
+    if (overlay == null) return;
+    final overlayBox = overlay.context.findRenderObject();
+    if (overlayBox is! RenderBox) return;
+
+    final repo = AppRepo.I;
+    final detected = repo.hits.value.length;
+    final downloadCount = repo.downloads.value.length;
+    final favoriteCount = repo.favorites.value.length;
+    final historyCount = repo.history.value.length;
+    final blockPopupOn = repo.blockPopup.value;
+    final snifferOn = repo.snifferEnabled.value;
+
+    PopupMenuItem<_ToolbarMenuAction> buildItem(
+      _ToolbarMenuAction action,
+      IconData icon,
+      String label, {
+      Color? iconColor,
+    }) {
+      return PopupMenuItem<_ToolbarMenuAction>(
+        value: action,
+        child: Row(
+          children: [
+            Icon(icon, color: iconColor),
+            const SizedBox(width: 12),
+            Expanded(child: Text(label)),
+          ],
+        ),
+      );
+    }
+
+    final colorScheme = Theme.of(context).colorScheme;
+    final topLeft = renderObject.localToGlobal(
+      Offset.zero,
+      ancestor: overlayBox,
+    );
+    final bottomRight = renderObject.localToGlobal(
+      renderObject.size.bottomRight(Offset.zero),
+      ancestor: overlayBox,
+    );
+    final position = RelativeRect.fromRect(
+      Rect.fromPoints(topLeft, bottomRight),
+      Offset.zero & overlayBox.size,
+    ).shift(const Offset(0, 8));
+
+    final entries = <PopupMenuEntry<_ToolbarMenuAction>>[
+      buildItem(
+        _ToolbarMenuAction.toggleSniffer,
+        snifferOn ? Icons.toggle_on : Icons.toggle_off,
+        '嗅探',
+        iconColor: snifferOn ? Colors.green : null,
+      ),
+      buildItem(
+        _ToolbarMenuAction.openResources,
+        Icons.search,
+        detected > 0 ? '資源（$detected）' : '資源',
+      ),
+      buildItem(
+        _ToolbarMenuAction.openDownloads,
+        Icons.file_download,
+        downloadCount > 0 ? '下載清單（$downloadCount）' : '下載清單',
+      ),
+      const PopupMenuDivider(),
+      buildItem(
+        _ToolbarMenuAction.openFavorites,
+        Icons.favorite,
+        favoriteCount > 0 ? '我的收藏（$favoriteCount）' : '我的收藏',
+        iconColor: favoriteCount > 0 ? Colors.redAccent : null,
+      ),
+      buildItem(
+        _ToolbarMenuAction.openHistory,
+        Icons.history,
+        historyCount > 0 ? '瀏覽記錄（$historyCount）' : '瀏覽記錄',
+        iconColor: historyCount > 0 ? colorScheme.primary : null,
+      ),
+      buildItem(
+        _ToolbarMenuAction.toggleBlockPopup,
+        blockPopupOn ? Icons.toggle_on : Icons.toggle_off,
+        '阻擋彈出視窗',
+        iconColor: blockPopupOn ? Colors.redAccent : null,
+      ),
+      buildItem(
+        _ToolbarMenuAction.blockExternalApp,
+        _blockExternalApp ? Icons.toggle_on : Icons.toggle_off,
+        '阻擋外部App',
+        iconColor:
+            _blockExternalApp ? Theme.of(context).colorScheme.primary : null,
+      ),
+      const PopupMenuDivider(),
+      buildItem(_ToolbarMenuAction.addHome, Icons.add, '加入主頁'),
+      buildItem(_ToolbarMenuAction.goHome, Icons.home, '主頁'),
+    ];
+
+    final selected = await showMenu<_ToolbarMenuAction>(
+      context: context,
+      position: position,
+      items: entries,
+    );
+    if (!mounted || selected == null) {
+      return;
+    }
+
+    final keepOpen =
+        selected == _ToolbarMenuAction.toggleSniffer ||
+        selected == _ToolbarMenuAction.toggleBlockPopup ||
+        selected == _ToolbarMenuAction.blockExternalApp;
+
+    switch (selected) {
+      case _ToolbarMenuAction.toggleSniffer:
+        await _toggleSniffer();
+        break;
+      case _ToolbarMenuAction.openResources:
+        _openDetectedSheet();
+        break;
+      case _ToolbarMenuAction.openDownloads:
+        _openDownloadsSheet();
+        break;
+      case _ToolbarMenuAction.openFavorites:
+        await _openFavoritesPage();
+        break;
+      case _ToolbarMenuAction.openHistory:
+        await _openHistoryPage();
+        break;
+      case _ToolbarMenuAction.toggleBlockPopup:
+        _toggleBlockPopupSetting();
+        break;
+      case _ToolbarMenuAction.blockExternalApp:
+        _toggleBlockExternalAppSetting();
+        break;
+      case _ToolbarMenuAction.addHome:
+        _showAddToHomeDialog();
+        break;
+      case _ToolbarMenuAction.goHome:
+        if (widget.onGoHome != null) {
+          widget.onGoHome!();
+        }
+        break;
+    }
+
+    if (keepOpen && mounted) {
+      await Future.delayed(const Duration(milliseconds: 120));
+      if (mounted) {
+        _showToolbarMenu();
+      }
+    }
   }
 
   Widget _buildEdgeSwipeArea({required bool isLeft, required int tabIndex}) {
