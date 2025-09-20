@@ -227,7 +227,7 @@ class PurchaseService {
 
     final Map<String, dynamic> requestBody = {
       'receipt-data': appReceipt, // 直接送 base64，不要重新編碼
-      'password': 'f4fab465ff47436781eabee0c7efda7d',
+      //'password': '696ee25ee3514ff38c70a97a0e5133ca',
       'exclude-old-transactions': true,
     };
 

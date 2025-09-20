@@ -325,58 +325,78 @@ class _SettingPageState extends State<SettingPage> {
             ),
           ),
           const Divider(height: 1),
-          // Toggle for automatic saving to gallery
-          ValueListenableBuilder(
-            valueListenable: repo.autoSave,
-            builder: (_, bool on, __) {
-              return SwitchListTile(
-                title: const Text('自動儲存到相簿'),
-                value: on,
-                onChanged: (v) {
-                  () async {
-                    if (v) {
-                      try {
-                        final perm =
-                            await PhotoManager.requestPermissionExtend();
-                        if (!perm.isAuth) {
-                          repo.setAutoSave(false);
-                          if (!mounted) return;
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              duration: const Duration(seconds: 1),
-                              content: const Text('自動儲存需要相簿權限，請前往設定開啟。'),
-                              action: SnackBarAction(
-                                label: '前往設定',
-                                onPressed: () {
-                                  PhotoManager.openSetting();
-                                },
-                              ),
-                            ),
+          // Toggle for automatic saving to gallery（需高級版）
+          ValueListenableBuilder<bool>(
+            valueListenable: repo.premiumUnlocked,
+            builder: (context, premium, _) {
+              return ValueListenableBuilder<bool>(
+                valueListenable: repo.autoSave,
+                builder: (_, bool on, __) {
+                  var effectiveValue = on;
+                  if (!premium && effectiveValue) {
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      repo.setAutoSave(false);
+                    });
+                    effectiveValue = false;
+                  }
+                  return SwitchListTile(
+                    title: const Text('自動儲存到相簿'),
+                    subtitle: premium ? null : const Text('升級高級版後才可啟用。'),
+                    value: effectiveValue,
+                    onChanged: (v) {
+                      () async {
+                        if (!premium) {
+                          await PurchaseService().showPurchasePrompt(
+                            context,
+                            featureName: '自動儲存到相簿',
                           );
                           return;
                         }
-                      } catch (_) {
-                        repo.setAutoSave(false);
+                        if (v) {
+                          try {
+                            final perm =
+                                await PhotoManager.requestPermissionExtend();
+                            if (!perm.isAuth) {
+                              repo.setAutoSave(false);
+                              if (!mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  duration: const Duration(seconds: 1),
+                                  content: const Text('自動儲存需要相簿權限，請前往設定開啟。'),
+                                  action: SnackBarAction(
+                                    label: '前往設定',
+                                    onPressed: () {
+                                      PhotoManager.openSetting();
+                                    },
+                                  ),
+                                ),
+                              );
+                              return;
+                            }
+                          } catch (_) {
+                            repo.setAutoSave(false);
+                            if (!mounted) return;
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                duration: Duration(seconds: 1),
+                                content: Text('無法確認相簿權限，請手動檢查設定。'),
+                              ),
+                            );
+                            return;
+                          }
+                        }
+
+                        repo.setAutoSave(v);
                         if (!mounted) return;
                         ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            duration: Duration(seconds: 1),
-                            content: Text('無法確認相簿權限，請手動檢查設定。'),
+                          SnackBar(
+                            duration: const Duration(seconds: 1),
+                            content: Text(v ? '下載完成後將自動存入相簿' : '已關閉自動存相簿'),
                           ),
                         );
-                        return;
-                      }
-                    }
-
-                    repo.setAutoSave(v);
-                    if (!mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        duration: const Duration(seconds: 1),
-                        content: Text(v ? '下載完成後將自動存入相簿' : '已關閉自動存相簿'),
-                      ),
-                    );
-                  }();
+                      }();
+                    },
+                  );
                 },
               );
             },
