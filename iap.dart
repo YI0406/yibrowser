@@ -64,6 +64,9 @@ class PurchaseService {
 
     await _loadProducts();
     await _checkPreviousPurchase();
+    try {
+      onPurchaseUpdated?.call();
+    } catch (_) {}
   }
 
   // 新增初始化商店資訊的方法
@@ -408,5 +411,83 @@ class PurchaseService {
   // 釋放監聽器
   Future<void> dispose() async {
     await _subscription.cancel();
+  }
+
+  Future<void> showPurchasePrompt(
+    BuildContext context, {
+    String? featureName,
+  }) async {
+    if (isPremiumUnlocked) {
+      return;
+    }
+    final messenger = ScaffoldMessenger.of(context);
+    final theme = Theme.of(context);
+    final description =
+        featureName == null
+            ? '解鎖高級功能可去除廣告並開啟所有進階功能。'
+            : '使用$featureName需要先解鎖高級功能並去除廣告。';
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      builder: (ctx) {
+        final busy = isIapActive;
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text('升級至高級版', style: theme.textTheme.titleMedium),
+                const SizedBox(height: 8),
+                Text(description, style: theme.textTheme.bodyMedium),
+                const SizedBox(height: 16),
+                FilledButton(
+                  onPressed: busy ? null : () => Navigator.of(ctx).pop('buy'),
+                  child: const Text('解鎖高級功能＆去廣告'),
+                ),
+                const SizedBox(height: 8),
+                OutlinedButton(
+                  onPressed:
+                      busy ? null : () => Navigator.of(ctx).pop('restore'),
+                  child: const Text('還原購買'),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(),
+                  child: const Text('稍後再說'),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    if (action == 'buy') {
+      final ok = await buyPremium(context);
+      if (!messenger.mounted) return;
+      messenger.showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 1),
+          content: Text(ok ? '感謝購買，高級功能已解鎖。' : '購買未完成，請稍後再試。'),
+        ),
+      );
+    } else if (action == 'restore') {
+      final ok = await restore();
+      if (!messenger.mounted) return;
+      messenger.showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 1),
+          content: Text(ok ? '已還原購買。' : '未找到可還原的購買紀錄。'),
+        ),
+      );
+    }
+  }
+
+  Future<bool> ensurePremium({
+    required BuildContext context,
+    String? featureName,
+  }) async {
+    if (isPremiumUnlocked) return true;
+    await showPurchasePrompt(context, featureName: featureName);
+    return isPremiumUnlocked;
   }
 }

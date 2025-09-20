@@ -11,6 +11,7 @@ import 'package:share_plus/share_plus.dart';
 import 'video_player_page.dart';
 import 'image_preview_page.dart';
 import 'coventmp3.dart';
+import 'iap.dart';
 
 String formatDuration(Duration d) {
   final h = d.inHours;
@@ -299,6 +300,11 @@ class _MediaAllState extends State<_MediaAll> {
         ),
       );
     } else {
+      final ok = await PurchaseService().ensurePremium(
+        context: context,
+        featureName: '匯出',
+      );
+      if (!ok) return;
       await Share.shareXFiles([XFile(t.savePath)]);
     }
   }
@@ -328,6 +334,11 @@ class _MediaAllState extends State<_MediaAll> {
                 TextButton(
                   onPressed: () async {
                     if (_selected.isEmpty) return;
+                    final ok = await PurchaseService().ensurePremium(
+                      context: context,
+                      featureName: '匯出',
+                    );
+                    if (!ok) return;
                     try {
                       final files =
                           _selected.map((t) => XFile(t.savePath)).toList();
@@ -611,6 +622,11 @@ class _MediaAllState extends State<_MediaAll> {
                       if (action == 'rename') {
                         _renameTask(context, task);
                       } else if (action == 'edit-export') {
+                        final ok = await PurchaseService().ensurePremium(
+                          context: context,
+                          featureName: '編輯導出',
+                        );
+                        if (!ok) return;
                         if (!_fileHasContent(task.savePath)) {
                           if (!mounted) return;
                           ScaffoldMessenger.of(context).showSnackBar(
@@ -632,6 +648,11 @@ class _MediaAllState extends State<_MediaAll> {
                           ),
                         );
                       } else if (action == 'share') {
+                        final ok = await PurchaseService().ensurePremium(
+                          context: context,
+                          featureName: '匯出',
+                        );
+                        if (!ok) return;
                         if (File(task.savePath).existsSync()) {
                           await Share.shareXFiles([XFile(task.savePath)]);
                         }
@@ -671,6 +692,11 @@ class _MyFavorites extends StatelessWidget {
   const _MyFavorites();
 
   Future<void> _handleShare(BuildContext context, DownloadTask task) async {
+    final ok = await PurchaseService().ensurePremium(
+      context: context,
+      featureName: '匯出',
+    );
+    if (!ok) return;
     if (!File(task.savePath).existsSync()) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(duration: Duration(seconds: 1), content: Text('檔案已不存在')),
@@ -718,6 +744,11 @@ class _MyFavorites extends StatelessWidget {
         ),
       );
     } else {
+      final ok = await PurchaseService().ensurePremium(
+        context: context,
+        featureName: '匯出',
+      );
+      if (!ok) return;
       await Share.shareXFiles([XFile(task.savePath)]);
     }
   }
@@ -870,6 +901,11 @@ class _MyFavorites extends StatelessWidget {
                         ),
                   );
                 } else if (action == 'edit-export') {
+                  final ok = await PurchaseService().ensurePremium(
+                    context: context,
+                    featureName: '編輯導出',
+                  );
+                  if (!ok) return;
                   if (!_fileHasContent(task.savePath)) {
                     ScaffoldMessenger.of(
                       context,
@@ -889,6 +925,11 @@ class _MyFavorites extends StatelessWidget {
                     ),
                   );
                 } else if (action == 'share') {
+                  final ok = await PurchaseService().ensurePremium(
+                    context: context,
+                    featureName: '匯出',
+                  );
+                  if (!ok) return;
                   await _handleShare(context, task);
                 } else if (action == 'delete') {
                   await AppRepo.I.removeTasks([task]);

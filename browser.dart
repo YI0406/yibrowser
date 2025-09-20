@@ -6,7 +6,7 @@ import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/log.dart';
 import 'package:ffmpeg_kit_flutter_new/session.dart';
 import 'soure.dart';
-
+import 'iap.dart';
 import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
 import 'dart:convert';
@@ -906,7 +906,7 @@ class _BrowserPageState extends State<BrowserPage> {
         _addUrlToFavorites(url);
         break;
       case _LinkContextMenuAction.addHome:
-        _showAddToHomeDialog(initialUrl: url);
+        await _showAddToHomeDialog(initialUrl: url);
         break;
     }
   }
@@ -1453,7 +1453,17 @@ class _BrowserPageState extends State<BrowserPage> {
   /// Prompt the user to add a page to the home screen. When [initialUrl]
   /// or [initialName] are provided they are used to prefill the dialog,
   /// otherwise the current tab's information is used.
-  void _showAddToHomeDialog({String? initialUrl, String? initialName}) {
+  Future<void> _showAddToHomeDialog({
+    String? initialUrl,
+    String? initialName,
+  }) async {
+    if (AppRepo.I.hasReachedFreeHomeShortcutLimit) {
+      await PurchaseService().showPurchasePrompt(
+        context,
+        featureName: '新增更多主頁捷徑',
+      );
+      return;
+    }
     String? tabTitle =
         (initialName != null && initialName.trim().isNotEmpty)
             ? initialName.trim()
@@ -1477,7 +1487,7 @@ class _BrowserPageState extends State<BrowserPage> {
             : (defaultUrl.isNotEmpty ? _prettyFileName(defaultUrl) : '');
     final nameCtrl = TextEditingController(text: defaultName);
     final urlCtrlLocal = TextEditingController(text: defaultUrl);
-    showDialog(
+    await showDialog(
       context: context,
       builder: (_) {
         return AlertDialog(
@@ -2604,33 +2614,67 @@ class _BrowserPageState extends State<BrowserPage> {
             // Sniffer toggle (eye icon)
             pad(
               ValueListenableBuilder<bool>(
-                valueListenable: repo.snifferEnabled,
-                builder: (context, on, _) {
-                  return IconButton(
-                    tooltip: '嗅探',
-                    onPressed: _toggleSniffer,
-                    icon: Icon(on ? Icons.visibility : Icons.visibility_off),
-                    color: on ? Colors.green : null,
-                    visualDensity: VisualDensity.compact,
+                valueListenable: AppRepo.I.premiumUnlocked,
+                builder: (context, premium, _) {
+                  return ValueListenableBuilder<bool>(
+                    valueListenable: repo.snifferEnabled,
+                    builder: (context, on, __) {
+                      final active = premium && on;
+                      return IconButton(
+                        tooltip: premium ? '嗅探' : '嗅探（需高級版）',
+                        onPressed: () async {
+                          if (!premium) {
+                            await PurchaseService().showPurchasePrompt(
+                              context,
+                              featureName: '嗅探功能',
+                            );
+                            return;
+                          }
+                          await _toggleSniffer();
+                        },
+                        icon: Icon(
+                          active ? Icons.visibility : Icons.visibility_off,
+                        ),
+                        color: active ? Colors.green : null,
+                        visualDensity: VisualDensity.compact,
+                      );
+                    },
                   );
                 },
               ),
             ),
             // Resources (detected hits) with live badge
             pad(
-              ValueListenableBuilder<List<MediaHit>>(
-                valueListenable: repo.hits,
-                builder: (context, hits, _) {
-                  final detected = hits.length;
-                  return IconButton(
-                    tooltip: detected > 0 ? '資源（$detected）' : '資源',
-                    onPressed: _openDetectedSheet,
-                    visualDensity: VisualDensity.compact,
-                    icon: _iconWithBadge(
-                      icon: const Icon(Icons.search),
-                      count: detected,
-                      iconPadding: const EdgeInsets.all(8.0),
-                    ),
+              ValueListenableBuilder<bool>(
+                valueListenable: AppRepo.I.premiumUnlocked,
+                builder: (context, premium, _) {
+                  return ValueListenableBuilder<List<MediaHit>>(
+                    valueListenable: repo.hits,
+                    builder: (context, hits, __) {
+                      final detected = hits.length;
+                      return IconButton(
+                        tooltip:
+                            premium
+                                ? (detected > 0 ? '資源（$detected）' : '資源')
+                                : '資源（需高級版）',
+                        onPressed: () async {
+                          if (!premium) {
+                            await PurchaseService().showPurchasePrompt(
+                              context,
+                              featureName: '嗅探資源',
+                            );
+                            return;
+                          }
+                          await _openDetectedSheet();
+                        },
+                        visualDensity: VisualDensity.compact,
+                        icon: _iconWithBadge(
+                          icon: const Icon(Icons.search),
+                          count: detected,
+                          iconPadding: const EdgeInsets.all(8.0),
+                        ),
+                      );
+                    },
                   );
                 },
               ),
@@ -2903,7 +2947,7 @@ class _BrowserPageState extends State<BrowserPage> {
         await _toggleSniffer();
         break;
       case _ToolbarMenuAction.openResources:
-        _openDetectedSheet();
+        await _openDetectedSheet();
         break;
       case _ToolbarMenuAction.openDownloads:
         _openDownloadsSheet();
@@ -2921,7 +2965,7 @@ class _BrowserPageState extends State<BrowserPage> {
         _toggleBlockExternalAppSetting();
         break;
       case _ToolbarMenuAction.addHome:
-        _showAddToHomeDialog();
+        await _showAddToHomeDialog();
         break;
       case _ToolbarMenuAction.goHome:
         if (widget.onGoHome != null) {
@@ -3025,6 +3069,13 @@ class _BrowserPageState extends State<BrowserPage> {
   }
 
   Future<void> _toggleSniffer() async {
+    final ok = await PurchaseService().ensurePremium(
+      context: context,
+      featureName: '嗅探功能',
+    );
+    if (!ok) {
+      return;
+    }
     final next = !repo.snifferEnabled.value;
     repo.setSnifferEnabled(next);
     final sp = await SharedPreferences.getInstance();
@@ -3225,8 +3276,15 @@ class _BrowserPageState extends State<BrowserPage> {
   }
 
   /// Shows a bottom sheet listing all detected media resources with download buttons.
-  void _openDetectedSheet() {
-    showModalBottomSheet(
+  Future<void> _openDetectedSheet() async {
+    final ok = await PurchaseService().ensurePremium(
+      context: context,
+      featureName: '嗅探資源',
+    );
+    if (!ok) {
+      return;
+    }
+    await showModalBottomSheet(
       context: context,
       builder: (_) {
         return SafeArea(
@@ -4003,6 +4061,11 @@ class _BrowserPageState extends State<BrowserPage> {
           }
           if (resolvedType == 'image') {
             if (filePath != null) {
+              final ok = await PurchaseService().ensurePremium(
+                context: context,
+                featureName: '匯出',
+              );
+              if (!ok) return;
               final imagePath = filePath;
               if (!mounted) return;
               Navigator.of(context).push(

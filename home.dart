@@ -3,6 +3,7 @@ import 'soure.dart';
 import 'package:flutter/services.dart';
 import 'dart:math' as math;
 import 'dart:async';
+import 'iap.dart';
 
 /// HomePage displays a grid of shortcuts. Each shortcut shows its favicon,
 /// name and actions to edit or delete. The grid supports drag‑and‑drop
@@ -219,7 +220,7 @@ class _HomePageState extends State<HomePage>
           IconButton(
             icon: const Icon(Icons.add),
             tooltip: '新增捷徑',
-            onPressed: _showAddDialog,
+            onPressed: _handleAddShortcut,
           ),
         ],
       ),
@@ -595,10 +596,17 @@ class _HomePageState extends State<HomePage>
     }
   }
 
-  void _showAddDialog() {
+  Future<void> _showAddDialog() async {
+    if (AppRepo.I.hasReachedFreeHomeShortcutLimit) {
+      await PurchaseService().showPurchasePrompt(
+        context,
+        featureName: '新增更多主頁捷徑',
+      );
+      return;
+    }
     final nameCtrl = TextEditingController();
     final urlCtrl = TextEditingController();
-    showDialog(
+    await showDialog(
       context: context,
       builder: (_) {
         return AlertDialog(
@@ -637,6 +645,17 @@ class _HomePageState extends State<HomePage>
         );
       },
     );
+  }
+
+  Future<void> _handleAddShortcut() async {
+    if (AppRepo.I.hasReachedFreeHomeShortcutLimit) {
+      await PurchaseService().showPurchasePrompt(
+        context,
+        featureName: '新增更多主頁捷徑',
+      );
+      return;
+    }
+    await _showAddDialog();
   }
 
   void _editItem(HomeItem item) {

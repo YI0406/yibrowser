@@ -1,5 +1,5 @@
 import 'dart:io';
-
+import 'iap.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as path;
 import 'package:share_plus/share_plus.dart';
@@ -24,6 +24,11 @@ class ImagePreviewPage extends StatelessWidget {
           IconButton(
             icon: const Icon(Icons.share),
             onPressed: () async {
+              final ok = await PurchaseService().ensurePremium(
+                context: context,
+                featureName: '匯出',
+              );
+              if (!ok) return;
               if (!File(filePath).existsSync()) return;
               await Share.shareXFiles([XFile(filePath)]);
             },

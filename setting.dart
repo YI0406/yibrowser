@@ -4,6 +4,7 @@ import 'dart:io' show Platform;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:photo_manager/photo_manager.dart';
+import 'iap.dart';
 
 /// SettingPage exposes preferences such as whether downloads are
 /// automatically saved to the photo album and provides a way to clear
@@ -187,29 +188,113 @@ class _SettingPageState extends State<SettingPage> {
       appBar: AppBar(title: const Text('設定')),
       body: ListView(
         children: [
-          const ListTile(title: Text('一般')),
-          const Divider(height: 1),
-          ListTile(
-            leading: const Icon(Icons.language_outlined),
-            title: const Text('User-Agent (UA)'),
-            subtitle: Text(_uaLabel[_uaMode ?? ''] ?? '未設定'),
-            trailing: DropdownButton<String>(
-              value:
-                  (_uaMode != null && _uaLabel.containsKey(_uaMode))
-                      ? _uaMode
-                      : null,
-              hint: const Text('選擇'),
-              items: const [
-                DropdownMenuItem(value: 'iphone', child: Text('iPhone')),
-                DropdownMenuItem(value: 'ipad', child: Text('iPad')),
-                DropdownMenuItem(value: 'android', child: Text('Android')),
-                DropdownMenuItem(value: 'windows', child: Text('Windows')),
-              ],
-              onChanged: (v) {
-                if (v == null) return;
-                _saveUaMode(v);
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: ValueListenableBuilder<bool>(
+              valueListenable: repo.premiumUnlocked,
+              builder: (context, premium, _) {
+                final purchase = PurchaseService();
+                final busy = purchase.isIapActive;
+                final description =
+                    premium ? '高級功能已啟用，廣告已移除。' : '升級後可使用編輯導出、嗅探、匯出等進階功能並去除廣告。';
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    FilledButton(
+                      onPressed:
+                          premium || busy
+                              ? null
+                              : () async {
+                                final ok = await purchase.buyPremium(context);
+                                if (!mounted) return;
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    duration: const Duration(seconds: 1),
+                                    content: Text(
+                                      ok ? '購買成功，已解鎖高級功能。' : '購買未完成',
+                                    ),
+                                  ),
+                                );
+                              },
+                      child: Text(premium ? '已解鎖高級功能' : '解鎖高級功能＆去廣告'),
+                    ),
+                    const SizedBox(height: 8),
+                    OutlinedButton(
+                      onPressed:
+                          busy
+                              ? null
+                              : () async {
+                                final ok = await purchase.restore();
+                                if (!mounted) return;
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    duration: const Duration(seconds: 1),
+                                    content: Text(
+                                      ok ? '已還原購買。' : '未找到可還原的購買紀錄。',
+                                    ),
+                                  ),
+                                );
+                              },
+                      child: const Text('還原購買'),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      description,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                );
               },
             ),
+          ),
+          const ListTile(title: Text('一般')),
+          const Divider(height: 1),
+          ValueListenableBuilder<bool>(
+            valueListenable: repo.premiumUnlocked,
+            builder: (context, premium, _) {
+              final subtitle = _uaLabel[_uaMode ?? ''] ?? '未設定';
+              return ListTile(
+                leading: const Icon(Icons.language_outlined),
+                title: const Text('User-Agent (UA)'),
+                subtitle: Text(premium ? subtitle : '$subtitle（需高級版）'),
+                onTap:
+                    premium
+                        ? null
+                        : () => PurchaseService().showPurchasePrompt(
+                          context,
+                          featureName: '更改 User-Agent',
+                        ),
+                trailing: IgnorePointer(
+                  ignoring: !premium,
+                  child: DropdownButton<String>(
+                    value:
+                        (_uaMode != null && _uaLabel.containsKey(_uaMode))
+                            ? _uaMode
+                            : null,
+                    hint: const Text('選擇'),
+                    items: const [
+                      DropdownMenuItem(value: 'iphone', child: Text('iPhone')),
+                      DropdownMenuItem(value: 'ipad', child: Text('iPad')),
+                      DropdownMenuItem(
+                        value: 'android',
+                        child: Text('Android'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'windows',
+                        child: Text('Windows'),
+                      ),
+                    ],
+                    onChanged:
+                        premium
+                            ? (v) {
+                              if (v == null) return;
+                              _saveUaMode(v);
+                            }
+                            : null,
+                  ),
+                ),
+              );
+            },
           ),
           const Divider(height: 1),
           ListTile(

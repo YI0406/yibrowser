@@ -16,6 +16,9 @@ class AdService with WidgetsBindingObserver {
       'ca-app-pub-1219775982243471/4619653589'; // 發布用（正式）
   static const String _testInterstitialId =
       'ca-app-pub-3940256099942544/4411468910'; // Google 官方測試（iOS）
+  /// 橫幅廣告單元 IDs
+  static const String _prodBannerId = 'ca-app-pub-1219775982243471/8917835715';
+  static const String _testBannerId = 'ca-app-pub-3940256099942544/2934735716';
 
   /// Pick the right Unit ID based on build mode
   static String get _currentInterstitialId =>
@@ -24,10 +27,16 @@ class AdService with WidgetsBindingObserver {
   static bool get isRelease => kReleaseMode;
 
   InterstitialAd? _interstitial;
+  BannerAd? _bannerAd;
   bool _adsDisabled = false; // VIP: true -> 關閉廣告
   DateTime? _lastShowTime;
   bool _hasShownThisResume = false;
-  static const Duration _minInterval = Duration(seconds: 30); // 防止過於頻繁
+  static const Duration _minInterval = Duration(minutes: 3); // 防止過於頻繁
+  bool _iapBusy = false;
+
+  final ValueNotifier<BannerAd?> bannerAdNotifier = ValueNotifier<BannerAd?>(
+    null,
+  );
 
   bool _observerAttached = false;
   void _attachObserver() {
@@ -42,6 +51,16 @@ class AdService with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _observerAttached = false;
     debugPrint("🧯 AdService 已釋放並取消前景偵測。");
+  }
+
+  static String get _currentBannerId =>
+      kReleaseMode ? _prodBannerId : _testBannerId;
+
+  void setIapBusy(bool busy) {
+    _iapBusy = busy;
+    if (busy) {
+      debugPrint('⏸️ 內購流程進行中，暫停插頁廣告顯示。');
+    }
   }
 
   /// Initialize the SDK and preload the first interstitial.
@@ -75,6 +94,7 @@ class AdService with WidgetsBindingObserver {
 
     if (!_adsDisabled) {
       await preloadInterstitial();
+      await _loadBannerAd();
       _attachObserver();
     } else {
       debugPrint("🔕 VIP 已解鎖（啟動時），跳過預載與前景偵測。");
@@ -91,6 +111,7 @@ class AdService with WidgetsBindingObserver {
       debugPrint("🔄 ensureReady(): 目前無快取廣告，開始預載…");
       await preloadInterstitial();
     }
+    await _loadBannerAd();
     _attachObserver();
   }
 
@@ -144,6 +165,10 @@ class AdService with WidgetsBindingObserver {
       debugPrint("🔕 showInterstitial(): VIP 狀態，禁止顯示。");
       return false;
     }
+    if (_iapBusy) {
+      debugPrint("⏸️ showInterstitial(): 內購流程進行中，暫停顯示。");
+      return false;
+    }
     final ad = _interstitial;
     if (ad == null) {
       debugPrint("🚫 showInterstitial(): 目前沒有可用的插頁廣告。");
@@ -160,6 +185,9 @@ class AdService with WidgetsBindingObserver {
     _detachObserver();
     _interstitial?.dispose();
     _interstitial = null;
+    _bannerAd?.dispose();
+    _bannerAd = null;
+    bannerAdNotifier.value = null;
   }
 
   /// 設定是否為 VIP（解鎖版）。VIP 會停用廣告與前景偵測並清掉快取。
@@ -170,6 +198,9 @@ class AdService with WidgetsBindingObserver {
       _detachObserver();
       _interstitial?.dispose();
       _interstitial = null;
+      _bannerAd?.dispose();
+      _bannerAd = null;
+      bannerAdNotifier.value = null;
     } else {
       debugPrint("🔔 非 VIP，啟用廣告。");
       ensureReady();
@@ -189,6 +220,7 @@ class AdService with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (_adsDisabled) return;
+    if (_iapBusy) return;
     if (state == AppLifecycleState.resumed) {
       _hasShownThisResume = false;
       // 小延遲，避免與頁面轉場/路由動畫衝突
@@ -212,6 +244,43 @@ class AdService with WidgetsBindingObserver {
           await preloadInterstitial();
         }
       });
+    }
+  }
+
+  Future<void> _loadBannerAd() async {
+    if (_adsDisabled) {
+      debugPrint('🔕 _loadBannerAd(): VIP 狀態，略過載入。');
+      return;
+    }
+    if (_bannerAd != null) {
+      debugPrint('ℹ️ _loadBannerAd(): 已有橫幅快取，略過重複載入。');
+      return;
+    }
+    final banner = BannerAd(
+      adUnitId: _currentBannerId,
+      size: AdSize.banner,
+      request: const AdRequest(),
+      listener: BannerAdListener(
+        onAdLoaded: (ad) {
+          debugPrint('🪧 橫幅廣告已載入。');
+          _bannerAd = ad as BannerAd;
+          bannerAdNotifier.value = _bannerAd;
+        },
+        onAdFailedToLoad: (ad, error) {
+          debugPrint('⚠️ 橫幅載入失敗：$error');
+          ad.dispose();
+          if (identical(_bannerAd, ad)) {
+            _bannerAd = null;
+            bannerAdNotifier.value = null;
+          }
+        },
+      ),
+    );
+    try {
+      await banner.load();
+    } catch (e) {
+      debugPrint('⚠️ 橫幅 load() 例外：$e');
+      banner.dispose();
     }
   }
 }

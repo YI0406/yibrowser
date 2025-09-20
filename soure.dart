@@ -492,6 +492,29 @@ class YtOption {
 /// It also handles downloading/ converting HLS media to MP4/MOV and saving
 /// downloaded files into the photo gallery.
 class AppRepo extends ChangeNotifier {
+  static const int freeHomeShortcutLimit = 5;
+
+  final ValueNotifier<bool> premiumUnlocked = ValueNotifier<bool>(false);
+
+  bool get isPremiumUnlocked => premiumUnlocked.value;
+
+  bool get hasReachedFreeHomeShortcutLimit =>
+      !isPremiumUnlocked && homeItems.value.length >= freeHomeShortcutLimit;
+
+  void setPremiumUnlocked(bool value) {
+    if (premiumUnlocked.value == value) return;
+    premiumUnlocked.value = value;
+    if (!value) {
+      if (snifferEnabled.value) {
+        snifferEnabled.value = false;
+      }
+      if (hits.value.isNotEmpty) {
+        hits.value = [];
+      }
+    }
+    notifyListeners();
+  }
+
   // --- HLS 探測參數（降低前置判斷時間） ---
   static const int _hlsProbeTimeoutMs = 1800; // 每個候選最長 1.8s
   static const int _hlsCandidateLimit = 8; // 最多嘗試 8 個候選
@@ -1938,6 +1961,9 @@ class AppRepo extends ChangeNotifier {
     final u = url.trim();
     final n = name.trim();
     if (u.isEmpty || n.isEmpty) return;
+    if (hasReachedFreeHomeShortcutLimit) {
+      return;
+    }
     final items = [...homeItems.value, HomeItem(url: u, name: n)];
     homeItems.value = items;
     notifyListeners();
@@ -2078,8 +2104,9 @@ class AppRepo extends ChangeNotifier {
   late String _stateFilePath;
 
   void setSnifferEnabled(bool on) {
-    if (snifferEnabled.value == on) return;
-    snifferEnabled.value = on;
+    final effective = isPremiumUnlocked ? on : false;
+    if (snifferEnabled.value == effective) return;
+    snifferEnabled.value = effective;
     notifyListeners();
   }
 

@@ -8,10 +8,13 @@ import 'soure.dart';
 import 'package:flutter_in_app_pip/flutter_in_app_pip.dart';
 import 'package:video_player/video_player.dart';
 import 'dart:io';
+import 'ads.dart';
+import 'iap.dart';
 import 'dart:async';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_analytics/firebase_analytics.dart';
 import 'package:firebase_analytics/observer.dart';
+import 'package:google_mobile_ads/google_mobile_ads.dart';
 
 /// Entry point of the application. Initializes WebView debugging and sets up
 /// the root navigation with three tabs: browser, media, and settings.
@@ -32,6 +35,20 @@ void main() async {
   await Sniffer.initWebViewDebug();
   // Load any persisted downloads so media lists persist across restarts.
   await AppRepo.I.init();
+  final purchaseService = PurchaseService();
+  purchaseService.onPurchaseUpdated = () {
+    final unlocked = purchaseService.isPremiumUnlocked;
+    AppRepo.I.setPremiumUnlocked(unlocked);
+    AdService.instance.setPremiumUnlocked(unlocked);
+  };
+  purchaseService.onIapBusyChanged = (busy) {
+    AdService.instance.setIapBusy(busy);
+  };
+  await purchaseService.initStoreInfo();
+  AppRepo.I.setPremiumUnlocked(purchaseService.isPremiumUnlocked);
+
+  await AdService.instance.init();
+  AdService.instance.setPremiumUnlocked(purchaseService.isPremiumUnlocked);
   runApp(const MyApp());
 }
 
@@ -154,19 +171,45 @@ class _RootNavState extends State<RootNav> {
           ),
         ],
       ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: index,
-        destinations: const [
-          // order: Media, Home, Browser, Settings
-          NavigationDestination(
-            icon: Icon(Icons.video_library_outlined),
-            label: '媒體',
-          ),
-          NavigationDestination(icon: Icon(Icons.home), label: '主頁'),
-          NavigationDestination(icon: Icon(Icons.public), label: '瀏覽器'),
-          NavigationDestination(icon: Icon(Icons.settings), label: '設定'),
-        ],
-        onDestinationSelected: (i) => setState(() => index = i),
+      bottomNavigationBar: ValueListenableBuilder<BannerAd?>(
+        valueListenable: AdService.instance.bannerAdNotifier,
+        builder: (context, banner, _) {
+          final navBar = NavigationBar(
+            selectedIndex: index,
+            destinations: const [
+              // order: Media, Home, Browser, Settings
+              NavigationDestination(
+                icon: Icon(Icons.video_library_outlined),
+                label: '媒體',
+              ),
+              NavigationDestination(icon: Icon(Icons.home), label: '主頁'),
+              NavigationDestination(icon: Icon(Icons.public), label: '瀏覽器'),
+              NavigationDestination(icon: Icon(Icons.settings), label: '設定'),
+            ],
+            onDestinationSelected: (i) => setState(() => index = i),
+          );
+          if (banner == null) {
+            return SafeArea(top: false, child: navBar);
+          }
+          return SafeArea(
+            top: false,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  alignment: Alignment.center,
+                  color: Theme.of(context).colorScheme.surface,
+                  child: SizedBox(
+                    width: banner.size.width.toDouble(),
+                    height: banner.size.height.toDouble(),
+                    child: AdWidget(ad: banner),
+                  ),
+                ),
+                navBar,
+              ],
+            ),
+          );
+        },
       ),
     );
   }
