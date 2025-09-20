@@ -1,10 +1,14 @@
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:convert';
 import 'package:open_filex/open_filex.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 import 'package:flutter/material.dart';
+import 'package:image/image.dart' as img;
 import 'package:path/path.dart' as p;
+import 'package:pdf/pdf.dart' as pdf;
+import 'package:pdf/widgets.dart' as pw;
 import 'package:video_player/video_player.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -51,6 +55,51 @@ const List<_ExportFormatOption> _audioFormatOptions = [
     label: 'WAV (PCM)',
     extension: 'wav',
     ffmpegArguments: '-vn -c:a pcm_s16le -ar 44100',
+  ),
+];
+
+const List<_ExportFormatOption> _imageFormatOptions = [
+  const _ExportFormatOption(
+    id: 'jpg',
+    label: 'JPG (圖片)',
+    extension: 'jpg',
+    ffmpegArguments: '',
+  ),
+  const _ExportFormatOption(
+    id: 'png',
+    label: 'PNG (圖片)',
+    extension: 'png',
+    ffmpegArguments: '',
+  ),
+  const _ExportFormatOption(
+    id: 'gif',
+    label: 'GIF (圖片)',
+    extension: 'gif',
+    ffmpegArguments: '',
+  ),
+  const _ExportFormatOption(
+    id: 'bmp',
+    label: 'BMP (圖片)',
+    extension: 'bmp',
+    ffmpegArguments: '',
+  ),
+  const _ExportFormatOption(
+    id: 'svg',
+    label: 'SVG (圖片)',
+    extension: 'svg',
+    ffmpegArguments: '',
+  ),
+  const _ExportFormatOption(
+    id: 'tiff',
+    label: 'TIFF (圖片)',
+    extension: 'tiff',
+    ffmpegArguments: '',
+  ),
+  const _ExportFormatOption(
+    id: 'pdf',
+    label: 'PDF (圖片)',
+    extension: 'pdf',
+    ffmpegArguments: '',
   ),
 ];
 
@@ -234,6 +283,9 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage> {
   }
 
   List<_ExportFormatOption> _resolveFormatOptions() {
+    if (widget.mediaType == 'image') {
+      return List<_ExportFormatOption>.from(_imageFormatOptions);
+    }
     if (widget.mediaType == 'audio') {
       return List<_ExportFormatOption>.from(_audioFormatOptions);
     }
@@ -246,6 +298,13 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage> {
       setState(() {
         _loadError = '找不到來源檔案';
         _initializing = false;
+      });
+      return;
+    }
+    if (widget.mediaType == 'image') {
+      setState(() {
+        _initializing = false;
+        _previewError = null;
       });
       return;
     }
@@ -337,7 +396,11 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage> {
           Card(
             child: ListTile(
               leading: Icon(
-                widget.mediaType == 'audio' ? Icons.audiotrack : Icons.movie,
+                widget.mediaType == 'audio'
+                    ? Icons.audiotrack
+                    : widget.mediaType == 'image'
+                    ? Icons.image
+                    : Icons.movie,
               ),
               title: Text(
                 widget.displayName?.trim().isNotEmpty == true
@@ -348,12 +411,15 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const SizedBox(height: 4),
-                  Text(
-                    '來源長度: ' +
-                        (_durationSeconds > 0
-                            ? _formatReadable(_mediaDuration)
-                            : '未知'),
-                  ),
+                  if (widget.mediaType == 'image')
+                    const Text('媒體類型: 圖片')
+                  else
+                    Text(
+                      '來源長度: ' +
+                          (_durationSeconds > 0
+                              ? _formatReadable(_mediaDuration)
+                              : '未知'),
+                    ),
                   const SizedBox(height: 4),
                   Text(
                     '來源路徑: ${widget.sourcePath}',
@@ -389,11 +455,7 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage> {
           ElevatedButton.icon(
             onPressed: _processing ? null : _startExport,
             icon: const Icon(Icons.save_alt),
-            label: Text(
-              _processing
-                  ? '匯出中…'
-                  : '匯出選取的${_selectedFormatOption.isVideo ? '視訊' : '音訊'}',
-            ),
+            label: Text(_processing ? '匯出中…' : _exportButtonLabel()),
           ),
           const SizedBox(height: 16),
           // Removed "最近匯出" card here.
@@ -406,7 +468,37 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage> {
     if (widget.mediaType == 'audio') {
       return _buildAudioPreview(theme);
     }
+    if (widget.mediaType == 'image') {
+      return _buildImagePreview(theme);
+    }
     return _buildVideoPreview(theme);
+  }
+
+  Widget _buildImagePreview(ThemeData theme) {
+    final file = File(widget.sourcePath);
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        color: theme.colorScheme.surfaceVariant,
+        constraints: const BoxConstraints(maxHeight: 320),
+        alignment: Alignment.center,
+        child: Image.file(
+          file,
+          fit: BoxFit.contain,
+          errorBuilder: (_, __, ___) {
+            return Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
+              children: const [
+                Icon(Icons.broken_image, size: 48),
+                SizedBox(height: 8),
+                Text('無法顯示圖片預覽'),
+              ],
+            );
+          },
+        ),
+      ),
+    );
   }
 
   Widget _buildVideoPreview(ThemeData theme) {
@@ -1085,6 +1177,12 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage> {
   }
 
   Widget _buildSelectionSection(ThemeData theme) {
+    if (widget.mediaType == 'image') {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: const [Text('此圖片會完整轉換為選擇的輸出格式。')],
+      );
+    }
     if (_durationSeconds <= 0) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1331,29 +1429,120 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage> {
     return name.substring(0, name.length - ext.length);
   }
 
+  Future<void> _convertImageFile(
+    String outputPath,
+    _ExportFormatOption option,
+  ) async {
+    final input = File(widget.sourcePath);
+    if (!await input.exists()) {
+      throw Exception('找不到來源圖片');
+    }
+    final bytes = await input.readAsBytes();
+    final decoded = img.decodeImage(bytes);
+    if (decoded == null) {
+      throw Exception('無法解析來源圖片');
+    }
+    final baked = img.bakeOrientation(decoded);
+    List<int> data;
+    switch (option.id) {
+      case 'jpg':
+        data = img.encodeJpg(baked, quality: 90);
+        break;
+      case 'png':
+        data = img.encodePng(baked);
+        break;
+      case 'gif':
+        data = img.encodeGif(baked);
+        break;
+      case 'bmp':
+        data = img.encodeBmp(baked);
+        break;
+      case 'tiff':
+        data = img.encodeTiff(baked);
+        break;
+      case 'svg':
+        final pngBytes = img.encodePng(baked);
+        final base64Data = base64Encode(pngBytes);
+        final svgContent = '''<?xml version="1.0" encoding="UTF-8"?>
+  <svg xmlns="http://www.w3.org/2000/svg" version="1.1" width="${baked.width}" height="${baked.height}" viewBox="0 0 ${baked.width} ${baked.height}">
+    <image href="data:image/png;base64,$base64Data" width="${baked.width}" height="${baked.height}" preserveAspectRatio="xMidYMid meet" />
+  </svg>
+  ''';
+        final outputFile = File(outputPath);
+        await outputFile.writeAsString(svgContent, flush: true);
+        return;
+      case 'pdf':
+        final pngBytes = img.encodePng(baked);
+        final doc = pw.Document();
+        final memoryImage = pw.MemoryImage(pngBytes);
+        final pageFormat = pdf.PdfPageFormat(
+          baked.width.toDouble(),
+          baked.height.toDouble(),
+        );
+        doc.addPage(
+          pw.Page(
+            pageFormat: pageFormat,
+            build: (_) => pw.Center(child: pw.Image(memoryImage)),
+          ),
+        );
+        data = await doc.save();
+        break;
+      default:
+        throw Exception('不支援的輸出格式');
+    }
+    final outputFile = File(outputPath);
+    await outputFile.writeAsBytes(data, flush: true);
+  }
+
+  Future<void> _handleExportSuccessFeedback(String outputPath) async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      await sp.setString(_kLastOutputPathKey, outputPath);
+    } catch (_) {}
+    if (!mounted) return;
+    try {
+      await Share.shareXFiles([XFile(outputPath)]);
+    } catch (_) {}
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 1),
+        content: Text('匯出完成：${p.basename(outputPath)}'),
+      ),
+    );
+  }
+
   Future<void> _startExport() async {
     if (_processing) return;
-    if (_durationSeconds <= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          duration: Duration(seconds: 1),
-          content: Text('無法取得媒體長度'),
-        ),
-      );
-      return;
+
+    Duration start = Duration.zero;
+    Duration end = Duration.zero;
+    Duration clipDuration = Duration.zero;
+    if (widget.mediaType != 'image') {
+      if (_durationSeconds <= 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            duration: Duration(seconds: 1),
+            content: Text('無法取得媒體長度'),
+          ),
+        );
+        return;
+      }
+      start = Duration(milliseconds: (_selection.start * 1000).round());
+      end = Duration(milliseconds: (_selection.end * 1000).round());
+      clipDuration = end - start;
+      if (clipDuration <= Duration.zero) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            duration: Duration(seconds: 1),
+            content: Text('請選擇有效的時間範圍'),
+          ),
+        );
+        return;
+      }
     }
-    final start = Duration(milliseconds: (_selection.start * 1000).round());
-    final end = Duration(milliseconds: (_selection.end * 1000).round());
-    final clipDuration = end - start;
-    if (clipDuration <= Duration.zero) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          duration: Duration(seconds: 1),
-          content: Text('請選擇有效的時間範圍'),
-        ),
-      );
-      return;
-    }
+
     final formatOption = _selectedFormatOption;
     final extension = formatOption.extension.toLowerCase();
     var outputName = _nameController.text.trim();
@@ -1377,6 +1566,49 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage> {
     }
     final dir = File(widget.sourcePath).parent;
     final outputPath = _uniqueOutputPath(dir.path, outputName);
+
+    setState(() {
+      _processing = true;
+      _progress = widget.mediaType == 'image' ? null : 0.0;
+      _cancelRequested = false;
+      _lastOutputPath = null;
+      _activeSessionId = null;
+    });
+
+    if (widget.mediaType == 'image') {
+      try {
+        await _convertImageFile(outputPath, formatOption);
+        if (!mounted) return;
+        setState(() {
+          _processing = false;
+          _progress = null;
+          _cancelRequested = false;
+          _lastOutputPath = outputPath;
+        });
+        await _handleExportSuccessFeedback(outputPath);
+      } catch (e) {
+        if (!mounted) return;
+        setState(() {
+          _processing = false;
+          _progress = null;
+          _cancelRequested = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            duration: const Duration(seconds: 1),
+            content: Text('圖片轉檔失敗: $e'),
+          ),
+        );
+        try {
+          final file = File(outputPath);
+          if (await file.exists()) {
+            await file.delete();
+          }
+        } catch (_) {}
+      }
+      return;
+    }
+
     final buffer = StringBuffer('-y ');
     if (start > Duration.zero) {
       buffer.write('-ss ${_ffmpegTimestamp(start)} ');
@@ -1387,13 +1619,6 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage> {
     }
     buffer.write('${formatOption.ffmpegArguments} ');
     buffer.write(_quotePath(outputPath));
-
-    setState(() {
-      _processing = true;
-      _progress = 0.0;
-      _cancelRequested = false;
-      _lastOutputPath = null;
-    });
 
     try {
       final session = await FFmpegKit.executeAsync(
@@ -1413,29 +1638,11 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage> {
               }
             });
           }
-          // Persist last output path after setState and before snack/share logic
           if (success) {
-            try {
-              final sp = await SharedPreferences.getInstance();
-              await sp.setString(_kLastOutputPathKey, outputPath);
-            } catch (_) {}
-          }
-          if (mounted) {
-            // Immediately open the share sheet after export success
-            if (success) {
-              try {
-                await Share.shareXFiles([XFile(outputPath)]);
-              } catch (_) {}
-            }
+            await _handleExportSuccessFeedback(outputPath);
+          } else if (mounted) {
             final messenger = ScaffoldMessenger.of(context);
-            if (success) {
-              messenger.showSnackBar(
-                SnackBar(
-                  duration: Duration(seconds: 1),
-                  content: Text('匯出完成：${p.basename(outputPath)}'),
-                ),
-              );
-            } else if (cancelled) {
+            if (cancelled) {
               messenger.showSnackBar(
                 const SnackBar(
                   duration: Duration(seconds: 1),
@@ -1492,7 +1699,10 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage> {
           _cancelRequested = false;
         });
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(duration: Duration(seconds: 1), content: Text('啟動轉檔失敗: $e')),
+          SnackBar(
+            duration: const Duration(seconds: 1),
+            content: Text('啟動轉檔失敗: $e'),
+          ),
         );
       }
     }
@@ -1510,12 +1720,19 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            duration: Duration(seconds: 1),
+            duration: const Duration(seconds: 1),
             content: Text('取消失敗，請稍後再試'),
           ),
         );
       }
     }
+  }
+
+  String _exportButtonLabel() {
+    if (widget.mediaType == 'image') {
+      return '匯出轉檔圖片';
+    }
+    return '匯出選取的${_selectedFormatOption.isVideo ? '視訊' : '音訊'}';
   }
 
   void _openOutputLocation(String path) {
