@@ -1199,28 +1199,56 @@ class _BrowserPageState extends State<BrowserPage> {
     setState(() {});
   }
 
+  bool _flagTruthy(dynamic value) {
+    if (value is bool) return value;
+    if (value is num) return value != 0;
+    if (value is String) {
+      final normalized = value.trim().toLowerCase();
+      return normalized == 'true' ||
+          normalized == '1' ||
+          normalized == 'yes' ||
+          normalized == 'y';
+    }
+    return false;
+  }
+
   bool _navigationActionRequestsExternalApp(NavigationAction action) {
     bool shouldBlock = false;
     try {
       final dynamic dynAction = action;
       final dynamic shouldPerformAppLink = dynAction.shouldPerformAppLink;
-      if (shouldPerformAppLink is bool && shouldPerformAppLink) {
+      if (_flagTruthy(shouldPerformAppLink)) {
         shouldBlock = true;
       }
       final dynamic iosShouldPerformAppLink = dynAction.iosShouldPerformAppLink;
-      if (iosShouldPerformAppLink is bool && iosShouldPerformAppLink) {
+      if (_flagTruthy(iosShouldPerformAppLink)) {
         shouldBlock = true;
       }
       final dynamic androidShouldOpenExternalApp =
           dynAction.androidShouldOpenExternalApp;
-      if (androidShouldOpenExternalApp is bool &&
-          androidShouldOpenExternalApp) {
+      if (_flagTruthy(androidShouldOpenExternalApp)) {
         shouldBlock = true;
       }
       final dynamic androidShouldLeaveApplication =
           dynAction.androidShouldLeaveApplication;
-      if (androidShouldLeaveApplication is bool &&
-          androidShouldLeaveApplication) {
+      if (_flagTruthy(androidShouldLeaveApplication)) {
+        shouldBlock = true;
+      }
+      final dynamic iosShouldOpenExternalApp =
+          dynAction.iosShouldOpenExternalApp;
+      if (_flagTruthy(iosShouldOpenExternalApp)) {
+        shouldBlock = true;
+      }
+      final dynamic iosShouldOpenApp = dynAction.iosShouldOpenApp;
+      if (_flagTruthy(iosShouldOpenApp)) {
+        shouldBlock = true;
+      }
+      final dynamic shouldOpenAppLink = dynAction.shouldOpenAppLink;
+      if (_flagTruthy(shouldOpenAppLink)) {
+        shouldBlock = true;
+      }
+      final dynamic shouldOpenExternalApp = dynAction.shouldOpenExternalApp;
+      if (_flagTruthy(shouldOpenExternalApp)) {
         shouldBlock = true;
       }
     } catch (_) {}
@@ -1238,12 +1266,42 @@ class _BrowserPageState extends State<BrowserPage> {
             'shouldOpenAppLink',
             'androidShouldOpenExternalApp',
             'androidShouldLeaveApplication',
+            'iosShouldOpenApp',
+            'iosWKNavigationActionShouldPerformAppLink',
+            'iosWKNavigationActionShouldOpenApp',
+            'shouldPerformAppLinkForCurrentRequest',
+            'shouldAllowExternalApp',
+            'shouldOpenExternalAppUrl',
           ];
           for (final key in keysToCheck) {
             final dynamic flag = rawMap[key];
-            if (flag is bool && flag) {
+            if (_flagTruthy(flag)) {
               shouldBlock = true;
               break;
+            }
+          }
+          if (!shouldBlock) {
+            final dynamic requestMap = rawMap['request'];
+            if (requestMap is Map) {
+              for (final key in keysToCheck) {
+                final dynamic flag = requestMap[key];
+                if (_flagTruthy(flag)) {
+                  shouldBlock = true;
+                  break;
+                }
+              }
+            }
+            if (!shouldBlock) {
+              final dynamic optionsMap = rawMap['options'];
+              if (optionsMap is Map) {
+                for (final key in keysToCheck) {
+                  final dynamic flag = optionsMap[key];
+                  if (_flagTruthy(flag)) {
+                    shouldBlock = true;
+                    break;
+                  }
+                }
+              }
             }
           }
         }
@@ -1384,6 +1442,18 @@ class _BrowserPageState extends State<BrowserPage> {
                         (_tabs.isNotEmpty
                             ? _tabs[_currentTabIndex].urlCtrl
                             : TextEditingController()),
+                    onTap: () {
+                      final ctrl =
+                          (_tabs.isNotEmpty
+                              ? _tabs[_currentTabIndex].urlCtrl
+                              : null);
+                      if (ctrl != null) {
+                        ctrl.selection = TextSelection(
+                          baseOffset: 0,
+                          extentOffset: ctrl.text.length,
+                        );
+                      }
+                    },
                     textInputAction: TextInputAction.go,
                     decoration: InputDecoration(
                       border: InputBorder.none,
@@ -1709,6 +1779,16 @@ class _BrowserPageState extends State<BrowserPage> {
                         onLongPressHitTestResult: (c, res) async {
                           String? link = res.extra;
                           String type = 'video';
+                          // If hit-test tells us it's an image, trust that first.
+                          try {
+                            final t = res.type;
+                            if (t == InAppWebViewHitTestResultType.IMAGE_TYPE ||
+                                t ==
+                                    InAppWebViewHitTestResultType
+                                        .SRC_IMAGE_ANCHOR_TYPE) {
+                              type = 'image';
+                            }
+                          } catch (_) {}
                           if (link == null || link.isEmpty) {
                             try {
                               final raw = await c.evaluateJavascript(
@@ -1722,57 +1802,140 @@ class _BrowserPageState extends State<BrowserPage> {
                                         decoded.first as Map,
                                       );
                                   link = (first['url'] ?? '') as String;
-                                  type = (first['type'] ?? 'video') as String;
+                                  // Improved type detection logic for image/audio/video/mp3
+                                  final rawType =
+                                      (first['type'] ?? '') as String;
+                                  String lowerUrl = link!.toLowerCase();
+                                  if (rawType.startsWith('image/') ||
+                                      lowerUrl.endsWith('.png') ||
+                                      lowerUrl.endsWith('.jpg') ||
+                                      lowerUrl.endsWith('.jpeg') ||
+                                      lowerUrl.endsWith('.gif') ||
+                                      lowerUrl.endsWith('.webp')) {
+                                    type = 'image';
+                                  } else if (rawType.startsWith('audio/') ||
+                                      lowerUrl.endsWith('.mp3') ||
+                                      lowerUrl.endsWith('.wav') ||
+                                      lowerUrl.endsWith('.ogg') ||
+                                      lowerUrl.endsWith('.m4a')) {
+                                    type = 'audio';
+                                  } else if (rawType.startsWith('video/') ||
+                                      lowerUrl.endsWith('.mp4') ||
+                                      lowerUrl.endsWith('.mkv') ||
+                                      lowerUrl.endsWith('.mov') ||
+                                      lowerUrl.endsWith('.webm')) {
+                                    type = 'video';
+                                  } else {
+                                    type =
+                                        rawType.isNotEmpty
+                                            ? rawType
+                                            : 'unknown';
+                                  }
                                 }
                               }
                             } catch (_) {}
                           }
                           if (link == null || link.isEmpty) return;
+
+                          // Final pass: correct type by URL extension if needed
+                          final lowerUrl = link!.toLowerCase();
+                          if (lowerUrl.endsWith('.png') ||
+                              lowerUrl.endsWith('.jpg') ||
+                              lowerUrl.endsWith('.jpeg') ||
+                              lowerUrl.endsWith('.gif') ||
+                              lowerUrl.endsWith('.webp') ||
+                              lowerUrl.endsWith('.bmp') ||
+                              lowerUrl.endsWith('.svg')) {
+                            type = 'image';
+                          } else if (lowerUrl.endsWith('.mp3') ||
+                              lowerUrl.endsWith('.wav') ||
+                              lowerUrl.endsWith('.ogg') ||
+                              lowerUrl.endsWith('.m4a') ||
+                              lowerUrl.endsWith('.aac') ||
+                              lowerUrl.endsWith('.flac')) {
+                            type = 'audio';
+                          } else if (lowerUrl.endsWith('.mp4') ||
+                              lowerUrl.endsWith('.mkv') ||
+                              lowerUrl.endsWith('.mov') ||
+                              lowerUrl.endsWith('.webm') ||
+                              lowerUrl.endsWith('.m4v') ||
+                              lowerUrl.endsWith('.ts')) {
+                            type = 'video';
+                          }
+
                           if (!mounted) return;
-                          showModalBottomSheet(
+                          showDialog(
                             context: context,
-                            builder:
-                                (_) => SafeArea(
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      ListTile(
-                                        title: Text(
-                                          link!,
-                                          maxLines: 2,
-                                          overflow: TextOverflow.ellipsis,
+                            builder: (_) {
+                              return AlertDialog(
+                                title: const Text('偵測到媒體'),
+                                content: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    SelectableText(
+                                      link!,
+                                      maxLines: 4,
+                                      onTap: () {},
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Chip(
+                                          label: Text(type),
+                                          visualDensity: VisualDensity.compact,
+                                          materialTapTargetSize:
+                                              MaterialTapTargetSize.shrinkWrap,
                                         ),
-                                        subtitle: Text(type),
-                                      ),
-                                      Row(
-                                        mainAxisAlignment:
-                                            MainAxisAlignment.end,
-                                        children: [
-                                          TextButton.icon(
-                                            icon: const Icon(Icons.play_arrow),
-                                            label: const Text('播放'),
-                                            onPressed: () {
-                                              Navigator.pop(context);
-                                              // 使用內建播放器播放（支援 iOS 子母畫面 PiP）。
-                                              _playMedia(link!);
-                                            },
-                                          ),
-                                          const SizedBox(width: 8),
-                                          FilledButton.icon(
-                                            icon: const Icon(Icons.download),
-                                            label: const Text('下載'),
-                                            onPressed: () {
-                                              Navigator.pop(context);
-                                              _confirmDownload(link!);
-                                            },
-                                          ),
-                                          const SizedBox(width: 12),
-                                        ],
-                                      ),
-                                      const SizedBox(height: 8),
-                                    ],
-                                  ),
+                                        const SizedBox(width: 8),
+                                        IconButton(
+                                          tooltip: '複製連結',
+                                          icon: const Icon(Icons.copy),
+                                          onPressed: () async {
+                                            await Clipboard.setData(
+                                              ClipboardData(text: link!),
+                                            );
+                                            if (context.mounted) {
+                                              ScaffoldMessenger.of(
+                                                context,
+                                              ).showSnackBar(
+                                                const SnackBar(
+                                                  content: Text('已複製連結'),
+                                                ),
+                                              );
+                                            }
+                                          },
+                                        ),
+                                      ],
+                                    ),
+                                  ],
                                 ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () => Navigator.pop(context),
+                                    child: const Text('取消'),
+                                  ),
+                                  if (type != 'image')
+                                    TextButton.icon(
+                                      icon: const Icon(Icons.play_arrow),
+                                      label: const Text('播放'),
+                                      onPressed: () {
+                                        Navigator.pop(context);
+                                        _playMedia(link!);
+                                      },
+                                    ),
+                                  FilledButton.icon(
+                                    icon: const Icon(Icons.download),
+                                    label: const Text('下載'),
+                                    onPressed: () {
+                                      Navigator.pop(context);
+                                      _confirmDownload(link!);
+                                    },
+                                  ),
+                                ],
+                              );
+                            },
                           );
                         },
                       ),

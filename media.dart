@@ -362,7 +362,9 @@ class _MediaAllState extends State<_MediaAll> {
                 const SizedBox(width: 8),
                 TextButton(
                   onPressed: () async {
-                    await AppRepo.I.rescanDownloadsFolder();
+                    await AppRepo.I.rescanDownloadsFolder(
+                      regenerateThumbnails: true,
+                    );
                     if (mounted) setState(() {});
                   },
                   child: const Text('重新掃描'),

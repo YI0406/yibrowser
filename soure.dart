@@ -550,8 +550,40 @@ class AppRepo extends ChangeNotifier {
   }
 
   // 在 AppRepo class 裡新增
-  Future<void> rescanDownloadsFolder() async {
+  Future<void> rescanDownloadsFolder({
+    bool regenerateThumbnails = false,
+  }) async {
     await importExistingFiles();
+    if (!regenerateThumbnails) return;
+
+    final tasks = [...downloads.value];
+    bool clearedAnyThumb = false;
+    for (final task in tasks) {
+      if (task.type != 'video') continue;
+      if (task.state != 'done') continue;
+      if (!File(task.savePath).existsSync()) continue;
+
+      final thumbPath = task.thumbnailPath;
+      if (thumbPath != null && thumbPath.isNotEmpty) {
+        try {
+          final thumbFile = File(thumbPath);
+          if (await thumbFile.exists()) {
+            await thumbFile.delete();
+          }
+        } catch (_) {}
+        task.thumbnailPath = null;
+        clearedAnyThumb = true;
+      }
+      unawaited(_generatePreview(task));
+    }
+
+    if (clearedAnyThumb) {
+      try {
+        downloads.value = [...downloads.value];
+        notifyListeners();
+        unawaited(_saveState());
+      } catch (_) {}
+    }
   }
 
   /// Scan the downloads folder and import any media files that are not yet tracked.
