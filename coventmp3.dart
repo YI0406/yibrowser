@@ -1,11 +1,93 @@
 import 'dart:io';
 import 'dart:math' as math;
-
+import 'package:open_filex/open_filex.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 import 'package:video_player/video_player.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+enum _DragHandle { none, start, end }
+
+class _ExportFormatOption {
+  final String id;
+  final String label;
+  final String extension;
+  final String ffmpegArguments;
+  final bool isVideo;
+
+  const _ExportFormatOption({
+    required this.id,
+    required this.label,
+    required this.extension,
+    required this.ffmpegArguments,
+    this.isVideo = false,
+  });
+}
+
+const List<_ExportFormatOption> _audioFormatOptions = [
+  _ExportFormatOption(
+    id: 'mp3',
+    label: 'MP3 (音訊)',
+    extension: 'mp3',
+    ffmpegArguments: '-vn -c:a libmp3lame -qscale:a 2',
+  ),
+  _ExportFormatOption(
+    id: 'm4a',
+    label: 'M4A (AAC 音訊)',
+    extension: 'm4a',
+    ffmpegArguments: '-vn -c:a aac -b:a 192k',
+  ),
+  _ExportFormatOption(
+    id: 'aac',
+    label: 'AAC',
+    extension: 'aac',
+    ffmpegArguments: '-vn -c:a aac -b:a 192k',
+  ),
+  _ExportFormatOption(
+    id: 'wav',
+    label: 'WAV (PCM)',
+    extension: 'wav',
+    ffmpegArguments: '-vn -c:a pcm_s16le -ar 44100',
+  ),
+];
+
+const List<_ExportFormatOption> _videoFormatOptions = [
+  _ExportFormatOption(
+    id: 'mp4_h264',
+    label: 'MP4 (H.264 + AAC)',
+    extension: 'mp4',
+    ffmpegArguments:
+        '-c:v libx264 -preset medium -crf 23 -pix_fmt yuv420p -c:a aac -b:a 192k',
+    isVideo: true,
+  ),
+  _ExportFormatOption(
+    id: 'mov_h264',
+    label: 'MOV (H.264 + AAC)',
+    extension: 'mov',
+    ffmpegArguments:
+        '-c:v libx264 -preset medium -crf 23 -pix_fmt yuv420p -c:a aac -b:a 192k',
+    isVideo: true,
+  ),
+  _ExportFormatOption(
+    id: 'mkv_h264',
+    label: 'MKV (H.264 + AAC)',
+    extension: 'mkv',
+    ffmpegArguments:
+        '-c:v libx264 -preset medium -crf 23 -pix_fmt yuv420p -c:a aac -b:a 192k',
+    isVideo: true,
+  ),
+  _ExportFormatOption(
+    id: 'webm_vp9',
+    label: 'WebM (VP9 + Opus)',
+    extension: 'webm',
+    ffmpegArguments:
+        '-c:v libvpx-vp9 -b:v 1.5M -pix_fmt yuv420p -c:a libopus -b:a 160k',
+    isVideo: true,
+  ),
+];
 
 class MediaSegmentExportPage extends StatefulWidget {
   final String sourcePath;
@@ -27,9 +109,10 @@ class MediaSegmentExportPage extends StatefulWidget {
 
 class _MediaSegmentExportPageState extends State<MediaSegmentExportPage> {
   static const double _kMinSelectableSeconds = 0.1;
-
+  static const double _kPlaybackHitSlop = 12.0;
   late final TextEditingController _nameController;
-  late String _selectedFormat;
+  late final List<_ExportFormatOption> _formatOptions;
+  late _ExportFormatOption _selectedFormatOption;
   late String _baseName;
 
   VideoPlayerController? _controller;
@@ -44,6 +127,25 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage> {
   bool _selectionInitialized = false;
   bool _isPlaying = false;
 
+  bool _waveformGenerating = false;
+  String? _waveformError;
+  String? _waveformImagePath;
+  String? _waveformDirectoryPath;
+  bool _waveformScrubbing = false;
+  Duration _scrubPreviewPosition = Duration.zero;
+  bool _wasPlayingBeforeScrub = false;
+
+  // --- Selection handle dragging on waveform ---
+  static const double _kHandleHitWidth = 36.0;
+  static const double _kHandleMinGap = 0.05; // seconds
+  bool _handleDragging = false;
+  bool _downNearHandle = false;
+  _DragHandle _activeHandle = _DragHandle.none;
+  Duration _handleTooltipTime = Duration.zero;
+
+  // --- RangeSlider value indicator toggle ---
+  bool _rangeDragging = false;
+
   bool _processing = false;
   double? _progress;
   int? _activeSessionId;
@@ -51,11 +153,15 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage> {
   String? _lastOutputPath;
 
   String _lastSuggestedName = '';
-
+  static const String _kLastOutputPathKey = 'last_output_path';
   @override
   void initState() {
     super.initState();
-    _selectedFormat = 'mp3';
+    _formatOptions = _resolveFormatOptions();
+    _selectedFormatOption = _formatOptions.firstWhere(
+      (option) => option.id == 'mp3',
+      orElse: () => _formatOptions.first,
+    );
     _baseName = _sanitizeFileName(
       widget.displayName != null && widget.displayName!.trim().isNotEmpty
           ? widget.displayName!
@@ -68,6 +174,19 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage> {
     _applyDuration(widget.initialDuration);
     _updateSuggestedFileName(force: true);
     _initializeController();
+    _loadLastOutputPath();
+  }
+
+  Future<void> _loadLastOutputPath() async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      final saved = sp.getString(_kLastOutputPathKey);
+      if (saved != null && saved.isNotEmpty && File(saved).existsSync()) {
+        if (mounted) {
+          setState(() => _lastOutputPath = saved);
+        }
+      }
+    } catch (_) {}
   }
 
   @override
@@ -83,6 +202,7 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage> {
         } catch (_) {}
       }();
     }
+    _deleteWaveformDirectory();
     super.dispose();
   }
 
@@ -106,6 +226,18 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage> {
       final double end = _selection.end.clamp(start, seconds).toDouble();
       _selection = RangeValues(start, end);
     }
+    if (_mediaDuration <= Duration.zero) {
+      _scrubPreviewPosition = Duration.zero;
+    } else if (_scrubPreviewPosition > _mediaDuration) {
+      _scrubPreviewPosition = _mediaDuration;
+    }
+  }
+
+  List<_ExportFormatOption> _resolveFormatOptions() {
+    if (widget.mediaType == 'audio') {
+      return List<_ExportFormatOption>.from(_audioFormatOptions);
+    }
+    return [..._videoFormatOptions, ..._audioFormatOptions];
   }
 
   Future<void> _initializeController() async {
@@ -132,6 +264,9 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage> {
         _initializing = false;
         _previewError = null;
       });
+      if (widget.mediaType == 'audio') {
+        _generateWaveformPreview();
+      }
     } catch (e) {
       setState(() {
         _initializing = false;
@@ -159,6 +294,9 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage> {
       setState(() {
         _currentPosition = pos;
         _isPlaying = controller.value.isPlaying;
+        if (!_waveformScrubbing) {
+          _scrubPreviewPosition = pos;
+        }
       });
     }
   }
@@ -251,28 +389,27 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage> {
           ElevatedButton.icon(
             onPressed: _processing ? null : _startExport,
             icon: const Icon(Icons.save_alt),
-            label: Text(_processing ? '匯出中…' : '匯出選取的音訊'),
+            label: Text(
+              _processing
+                  ? '匯出中…'
+                  : '匯出選取的${_selectedFormatOption.isVideo ? '視訊' : '音訊'}',
+            ),
           ),
           const SizedBox(height: 16),
-          if (_lastOutputPath != null)
-            Card(
-              child: ListTile(
-                leading: const Icon(Icons.check_circle, color: Colors.green),
-                title: const Text('最近匯出'),
-                subtitle: Text(_lastOutputPath!),
-                trailing: IconButton(
-                  icon: const Icon(Icons.open_in_new),
-                  tooltip: '開啟資料夾',
-                  onPressed: () => _openOutputLocation(_lastOutputPath!),
-                ),
-              ),
-            ),
+          // Removed "最近匯出" card here.
         ],
       ),
     );
   }
 
   Widget _buildPreviewSection(ThemeData theme) {
+    if (widget.mediaType == 'audio') {
+      return _buildAudioPreview(theme);
+    }
+    return _buildVideoPreview(theme);
+  }
+
+  Widget _buildVideoPreview(ThemeData theme) {
     final controller = _controller;
     if (controller == null || !controller.value.isInitialized) {
       return Container(
@@ -296,6 +433,8 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage> {
     final durationLabel = _formatReadable(_mediaDuration);
     final position = _currentPosition;
     final double sliderMax = _durationSeconds > 0 ? _durationSeconds : 1.0;
+
+    // Slider 參數
     final sliderValue = position.inMilliseconds / 1000.0;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -317,13 +456,13 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage> {
                 min: 0.0,
                 max: sliderMax,
                 onChanged: (value) {
-                  controller.seekTo(
-                    Duration(milliseconds: (value * 1000).round()),
-                  );
+                  final target = Duration(milliseconds: (value * 1000).round());
+                  controller.seekTo(target);
                   setState(() {
-                    _currentPosition = Duration(
-                      milliseconds: (value * 1000).round(),
-                    );
+                    _currentPosition = target;
+                    if (!_waveformScrubbing) {
+                      _scrubPreviewPosition = target;
+                    }
                   });
                 },
               ),
@@ -356,6 +495,595 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage> {
     );
   }
 
+  Widget _buildAudioPreview(ThemeData theme) {
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) {
+      return Container(
+        height: 200,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          color: theme.colorScheme.surfaceVariant,
+        ),
+        alignment: Alignment.center,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: const [
+            Icon(Icons.audiotrack, size: 48),
+            SizedBox(height: 8),
+            Text('無法預覽，仍可進行匯出'),
+          ],
+        ),
+      );
+    }
+
+    final durationLabel = _formatReadable(_mediaDuration);
+    final position = _currentPosition;
+    final double sliderMax = _durationSeconds > 0 ? _durationSeconds : 1.0;
+
+    final sliderValue = position.inMilliseconds / 1000.0;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _buildWaveformDisplay(theme),
+        if (_waveformError != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(
+              _waveformError!,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.error,
+              ),
+            ),
+          ),
+        if (_waveformError != null)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: _waveformGenerating ? null : _generateWaveformPreview,
+              icon: const Icon(Icons.refresh),
+              label: const Text('重新產生波形'),
+            ),
+          ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Text(_formatReadable(position)),
+            Expanded(
+              child: Slider(
+                value: sliderValue.clamp(0.0, sliderMax).toDouble(),
+                min: 0.0,
+                max: sliderMax,
+                onChanged: (value) {
+                  final target = Duration(milliseconds: (value * 1000).round());
+                  controller.seekTo(target);
+                  setState(() {
+                    _currentPosition = target;
+                    if (!_waveformScrubbing) {
+                      _scrubPreviewPosition = target;
+                    }
+                  });
+                },
+              ),
+            ),
+            Text(durationLabel),
+          ],
+        ),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            IconButton(
+              icon: const Icon(Icons.replay_10),
+              tooltip: '倒退 10 秒',
+              onPressed: () => _seekRelative(const Duration(seconds: -10)),
+            ),
+            IconButton(
+              icon: Icon(_isPlaying ? Icons.pause : Icons.play_arrow),
+              iconSize: 40,
+              tooltip: _isPlaying ? '暫停' : '播放',
+              onPressed: _togglePlayback,
+            ),
+            IconButton(
+              icon: const Icon(Icons.forward_10),
+              tooltip: '快轉 10 秒',
+              onPressed: () => _seekRelative(const Duration(seconds: 10)),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Text('提示：長按波形並拖曳可預覽時間（顯示毫秒）', style: theme.textTheme.bodySmall),
+      ],
+    );
+  }
+
+  Widget _buildWaveformDisplay(ThemeData theme) {
+    const double height = 180;
+    if (_waveformGenerating) {
+      return Container(
+        height: height,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          color: theme.colorScheme.surfaceVariant,
+        ),
+        alignment: Alignment.center,
+        child: const CircularProgressIndicator(),
+      );
+    }
+
+    final imagePath = _waveformImagePath;
+    if (imagePath != null && File(imagePath).existsSync()) {
+      return SizedBox(
+        height: height,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final width =
+                constraints.maxWidth.isFinite
+                    ? constraints.maxWidth
+                    : MediaQuery.of(context).size.width;
+            const double inset = 16.0;
+            final double innerWidth = math.max(0.0, width - inset * 2);
+            final playbackFraction = _fractionForDuration(_currentPosition);
+            final previewFraction = _fractionForDuration(
+              _waveformScrubbing ? _scrubPreviewPosition : _currentPosition,
+            );
+            final playbackLeft =
+                (innerWidth * playbackFraction)
+                    .clamp(0.0, innerWidth)
+                    .toDouble();
+            final previewLeft =
+                (innerWidth * previewFraction)
+                    .clamp(0.0, innerWidth)
+                    .toDouble();
+            final tooltipLeft =
+                ((previewLeft - 40).clamp(
+                  0.0,
+                  math.max(0.0, innerWidth - 80),
+                )).toDouble();
+            final startLeft =
+                (((_selection.start /
+                            (_durationSeconds > 0 ? _durationSeconds : 1.0)) *
+                        innerWidth))
+                    .clamp(0.0, innerWidth)
+                    .toDouble();
+            final endLeft =
+                (((_selection.end /
+                            (_durationSeconds > 0 ? _durationSeconds : 1.0)) *
+                        innerWidth))
+                    .clamp(0.0, innerWidth)
+                    .toDouble();
+            final selectionLeft = math.min(startLeft, endLeft);
+            final selectionWidth = (endLeft - startLeft).abs();
+            final handleTooltipLeft =
+                (() {
+                  final base =
+                      _activeHandle == _DragHandle.start ? startLeft : endLeft;
+                  return ((base - 40).clamp(
+                    0.0,
+                    math.max(0.0, innerWidth - 80),
+                  )).toDouble();
+                })();
+            return GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTapDown: (details) {
+                const double inset = 16.0;
+                final dxAdj = details.localPosition.dx - inset;
+                if ((dxAdj - playbackLeft).abs() <= _kPlaybackHitSlop) {
+                  return; // 忽略點擊在播放線附近
+                }
+                _handleWaveformTap(dxAdj, innerWidth);
+              },
+              onHorizontalDragDown: (details) {
+                const double inset = 16.0;
+                final dxAdj = details.localPosition.dx - inset;
+                // 判定是否在起點/終點握把的可點擊區域
+                if ((dxAdj - startLeft).abs() <= _kHandleHitWidth) {
+                  _activeHandle = _DragHandle.start;
+                  _downNearHandle = true;
+                  _handleDragging = true;
+                  _handleTooltipTime = Duration(
+                    milliseconds: (_selection.start * 1000).round(),
+                  );
+                  setState(() {}); // 讓 tooltip 及狀態即時更新
+                } else if ((dxAdj - endLeft).abs() <= _kHandleHitWidth) {
+                  _activeHandle = _DragHandle.end;
+                  _downNearHandle = true;
+                  _handleDragging = true;
+                  _handleTooltipTime = Duration(
+                    milliseconds: (_selection.end * 1000).round(),
+                  );
+                  setState(() {});
+                } else {
+                  _downNearHandle = false;
+                }
+              },
+              onHorizontalDragUpdate: (details) {
+                if (!_handleDragging) return;
+                const double inset = 16.0;
+                final dxAdj = details.localPosition.dx - inset;
+                _updateSelectionFromHandleAtDx(
+                  _activeHandle,
+                  dxAdj,
+                  innerWidth,
+                );
+              },
+              onHorizontalDragEnd: (_) {
+                if (_handleDragging) {
+                  setState(() {
+                    _handleDragging = false;
+                    _activeHandle = _DragHandle.none;
+                    _downNearHandle = false;
+                  });
+                  _jumpPlayheadToSelectionStart(); // ★ 這行新加的
+                }
+              },
+              // 僅在沒有鎖定握把時，才允許長按預覽，不與握把拖動手勢搶奪
+              onLongPressStart: (details) {
+                if (_handleDragging || _downNearHandle) return;
+                const double inset = 16.0;
+                final dxAdj = details.localPosition.dx - inset;
+                if ((dxAdj - playbackLeft).abs() <= _kPlaybackHitSlop)
+                  return; // 忽略播放線附近
+                _handleWaveformLongPressStart(dxAdj, innerWidth);
+              },
+              onLongPressMoveUpdate: (details) {
+                if (_handleDragging || _downNearHandle) return;
+                const double inset = 16.0;
+                final dxAdj = details.localPosition.dx - inset;
+                if ((dxAdj - playbackLeft).abs() <= _kPlaybackHitSlop) return;
+                _handleWaveformLongPressUpdate(dxAdj, innerWidth);
+              },
+              onLongPressEnd: (_) {
+                if (_handleDragging || _downNearHandle) return;
+                _handleWaveformLongPressEnd();
+              },
+              // 佔住垂直拖動手勢以避免外層滾動
+              onVerticalDragDown: (_) {},
+              onVerticalDragUpdate: (_) {},
+              onVerticalDragEnd: (_) {},
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: inset),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: Image.file(File(imagePath), fit: BoxFit.cover),
+                    ),
+                    Positioned.fill(
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: theme.colorScheme.outline.withOpacity(0.4),
+                          ),
+                          gradient: LinearGradient(
+                            colors: [
+                              Colors.black.withOpacity(0.05),
+                              Colors.black.withOpacity(0.05),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    // Selection highlight
+                    Positioned(
+                      left: selectionLeft,
+                      width: selectionWidth,
+                      top: 0,
+                      bottom: 0,
+                      child: Container(
+                        color: theme.colorScheme.primary.withOpacity(0.18),
+                      ),
+                    ),
+                    // Start handle line + knob
+                    Positioned(
+                      left: startLeft - 1,
+                      top: 0,
+                      bottom: 0,
+                      child: Container(
+                        width: 2,
+                        color: theme.colorScheme.primary,
+                      ),
+                    ),
+                    Positioned(
+                      left: startLeft - 12,
+                      top: (height / 2) - 12,
+                      child: Container(
+                        width: 24,
+                        height: 24,
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.primary,
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.25),
+                              blurRadius: 6,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    // End handle line + knob
+                    Positioned(
+                      left: endLeft - 1,
+                      top: 0,
+                      bottom: 0,
+                      child: Container(
+                        width: 2,
+                        color: theme.colorScheme.primary,
+                      ),
+                    ),
+                    Positioned(
+                      left: endLeft - 12,
+                      top: (height / 2) - 12,
+                      child: Container(
+                        width: 24,
+                        height: 24,
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.primary,
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.25),
+                              blurRadius: 6,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    // Playback line（僅在播放中顯示，不可點）
+                    if (_isPlaying)
+                      Positioned(
+                        left: playbackLeft,
+                        top: 0,
+                        bottom: 0,
+                        child: IgnorePointer(
+                          ignoring: true,
+                          child: Container(
+                            width: 2,
+                            color: theme.colorScheme.primary,
+                          ),
+                        ),
+                      ),
+                    if (_waveformScrubbing)
+                      Positioned(
+                        left: tooltipLeft,
+                        top: 8,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withOpacity(0.6),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            _formatPrecise(_scrubPreviewPosition),
+                            style: const TextStyle(color: Colors.white),
+                          ),
+                        ),
+                      ),
+                    if (_handleDragging)
+                      Positioned(
+                        left: handleTooltipLeft,
+                        top: 8,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withOpacity(0.6),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            _formatPrecise(_handleTooltipTime),
+                            style: const TextStyle(color: Colors.white),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
+      );
+    }
+
+    return Container(
+      height: height,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        color: theme.colorScheme.surfaceVariant,
+      ),
+      alignment: Alignment.center,
+      child: const Text('波形圖尚未就緒'),
+    );
+  }
+
+  double _fractionForDuration(Duration value) {
+    final totalMs = _durationSeconds * 1000.0;
+    if (totalMs <= 0) return 0.0;
+    return ((value.inMilliseconds / totalMs).clamp(0.0, 1.0)).toDouble();
+  }
+
+  double _normalizedWaveformFraction(double dx, double width) {
+    if (width <= 0) return 0.0;
+    final clampedX = dx.clamp(0.0, width);
+    return ((clampedX / width).clamp(0.0, 1.0)).toDouble();
+  }
+
+  void _updateSelectionFromHandleAtDx(
+    _DragHandle handle,
+    double dx,
+    double width,
+  ) {
+    if (handle == _DragHandle.none || _durationSeconds <= 0) return;
+    final fraction = _normalizedWaveformFraction(dx, width);
+    final seconds =
+        (_durationSeconds * fraction).clamp(0.0, _durationSeconds).toDouble();
+    double start = _selection.start;
+    double end = _selection.end;
+    final minGap = math.max(_kHandleMinGap, _kMinSelectableSeconds);
+    if (handle == _DragHandle.start) {
+      start = math.min(seconds, end - minGap);
+      start = start.clamp(0.0, _durationSeconds - minGap);
+      _handleTooltipTime = Duration(milliseconds: (start * 1000).round());
+    } else {
+      end = math.max(seconds, start + minGap);
+      end = end.clamp(minGap, _durationSeconds);
+      _handleTooltipTime = Duration(milliseconds: (end * 1000).round());
+    }
+    setState(() {
+      _selection = RangeValues(start, end);
+    });
+  }
+
+  void _jumpPlayheadToSelectionStart() {
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) return;
+    final start = Duration(milliseconds: (_selection.start * 1000).round());
+    controller.seekTo(start);
+    if (mounted) {
+      setState(() {
+        _currentPosition = start;
+        if (!_waveformScrubbing) {
+          _scrubPreviewPosition = start;
+        }
+      });
+    }
+  }
+
+  void _handleWaveformTap(double dx, double width) {
+    _seekToWaveformFraction(_normalizedWaveformFraction(dx, width));
+  }
+
+  void _handleWaveformLongPressStart(double dx, double width) {
+    if (_durationSeconds <= 0) return;
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) return;
+    _wasPlayingBeforeScrub = controller.value.isPlaying;
+    controller.pause();
+    setState(() {
+      _isPlaying = false;
+      _waveformScrubbing = true;
+    });
+    _seekToWaveformFraction(_normalizedWaveformFraction(dx, width));
+  }
+
+  void _handleWaveformLongPressUpdate(double dx, double width) {
+    if (!_waveformScrubbing) return;
+    _seekToWaveformFraction(_normalizedWaveformFraction(dx, width));
+  }
+
+  void _handleWaveformLongPressEnd() {
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) return;
+    if (_wasPlayingBeforeScrub) {
+      controller.play();
+    }
+    setState(() {
+      _isPlaying = _wasPlayingBeforeScrub;
+      _waveformScrubbing = false;
+    });
+    _wasPlayingBeforeScrub = false;
+  }
+
+  void _seekToWaveformFraction(double fraction) {
+    if (_durationSeconds <= 0) return;
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) return;
+    final totalMs = (_durationSeconds * 1000).round();
+    final targetMs = (totalMs * fraction.clamp(0.0, 1.0)).round();
+    final target = Duration(milliseconds: targetMs);
+    controller.seekTo(target);
+    setState(() {
+      _currentPosition = target;
+      _scrubPreviewPosition = target;
+    });
+  }
+
+  Future<void> _generateWaveformPreview() async {
+    if (_waveformGenerating) return;
+    if (widget.sourcePath.isEmpty) return;
+
+    _deleteWaveformDirectory();
+    setState(() {
+      _waveformGenerating = true;
+      _waveformError = null;
+      _waveformImagePath = null;
+    });
+
+    Directory? tempDir;
+    try {
+      tempDir = await Directory.systemTemp.createTemp('media_waveform_');
+      final outputPath = p.join(tempDir.path, 'waveform.png');
+      const filter = 'aformat=channel_layouts=mono,showwavespic=s=1600x400';
+      final command =
+          '-y -i ${_quotePath(widget.sourcePath)} -filter_complex "$filter" -frames:v 1 ${_quotePath(outputPath)}';
+      final session = await FFmpegKit.execute(command);
+      final returnCode = await session.getReturnCode();
+      final success = returnCode != null && returnCode.isValueSuccess();
+      if (!mounted) {
+        try {
+          await tempDir.delete(recursive: true);
+        } catch (_) {}
+        return;
+      }
+      if (success) {
+        setState(() {
+          _waveformImagePath = outputPath;
+          _waveformDirectoryPath = tempDir!.path;
+          _waveformError = null;
+        });
+      } else {
+        try {
+          await tempDir.delete(recursive: true);
+        } catch (_) {}
+        setState(() {
+          _waveformDirectoryPath = null;
+          _waveformError = '波形圖產生失敗，請重試。';
+        });
+      }
+    } catch (e) {
+      try {
+        if (tempDir != null) {
+          await tempDir.delete(recursive: true);
+        }
+      } catch (_) {}
+      if (mounted) {
+        setState(() {
+          _waveformDirectoryPath = null;
+          _waveformError = '波形圖產生失敗: $e';
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _waveformGenerating = false;
+        });
+      }
+    }
+  }
+
+  void _deleteWaveformDirectory() {
+    final dirPath = _waveformDirectoryPath;
+    if (dirPath != null) {
+      try {
+        final dir = Directory(dirPath);
+        if (dir.existsSync()) {
+          dir.deleteSync(recursive: true);
+        }
+      } catch (_) {}
+    }
+    _waveformDirectoryPath = null;
+    _waveformImagePath = null;
+  }
+
   Widget _buildSelectionSection(ThemeData theme) {
     if (_durationSeconds <= 0) {
       return Column(
@@ -367,8 +1095,8 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage> {
     final start = selection.start;
     final end = selection.end;
     final labels = RangeLabels(
-      _formatReadable(Duration(milliseconds: (start * 1000).round())),
-      _formatReadable(Duration(milliseconds: (end * 1000).round())),
+      _formatPrecise(Duration(milliseconds: (start * 1000).round())),
+      _formatPrecise(Duration(milliseconds: (end * 1000).round())),
     );
     final clipSeconds = math.max(0.0, end - start);
     final clipDuration = Duration(milliseconds: (clipSeconds * 1000).round());
@@ -377,28 +1105,41 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage> {
       children: [
         Text('選取範圍', style: theme.textTheme.titleMedium),
         const SizedBox(height: 8),
-        RangeSlider(
-          values: selection,
-          min: 0.0,
-          max: _durationSeconds,
-          labels: labels,
-          onChanged: (values) {
-            setState(() {
-              _selection = RangeValues(
-                values.start.clamp(0.0, _durationSeconds).toDouble(),
-                values.end.clamp(0.0, _durationSeconds).toDouble(),
-              );
-            });
-          },
+        SliderTheme(
+          data: SliderTheme.of(context).copyWith(
+            showValueIndicator:
+                _rangeDragging
+                    ? ShowValueIndicator.always
+                    : ShowValueIndicator.never,
+          ),
+          child: RangeSlider(
+            values: selection,
+            min: 0.0,
+            max: _durationSeconds,
+            labels: labels,
+            onChangeStart: (_) => setState(() => _rangeDragging = true),
+            onChangeEnd: (_) {
+              setState(() => _rangeDragging = false);
+              _jumpPlayheadToSelectionStart(); // ★ 這行新加的
+            },
+            onChanged: (values) {
+              setState(() {
+                _selection = RangeValues(
+                  values.start.clamp(0.0, _durationSeconds).toDouble(),
+                  values.end.clamp(0.0, _durationSeconds).toDouble(),
+                );
+              });
+            },
+          ),
         ),
         Text(
-          '起點：${_formatReadable(Duration(milliseconds: (start * 1000).round()))}',
+          '起點：${_formatPrecise(Duration(milliseconds: (start * 1000).round()))}',
         ),
         Text(
-          '終點：${_formatReadable(Duration(milliseconds: (end * 1000).round()))}',
+          '終點：${_formatPrecise(Duration(milliseconds: (end * 1000).round()))}',
         ),
         Text(
-          '長度：${_formatReadable(clipDuration)} (${clipSeconds.toStringAsFixed(2)} 秒)',
+          '長度：${_formatPrecise(clipDuration)} (${clipSeconds.toStringAsFixed(3)} 秒)',
         ),
         const SizedBox(height: 12),
         Wrap(
@@ -427,26 +1168,25 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage> {
   }
 
   Widget _buildFormatSection(ThemeData theme) {
-    final formats = <String>['mp3', 'm4a', 'aac', 'wav'];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text('輸出設定', style: theme.textTheme.titleMedium),
         const SizedBox(height: 12),
-        DropdownButtonFormField<String>(
-          value: _selectedFormat,
+        DropdownButtonFormField<_ExportFormatOption>(
+          value: _selectedFormatOption,
           items:
-              formats
+              _formatOptions
                   .map(
-                    (f) => DropdownMenuItem(
-                      value: f,
-                      child: Text(f.toUpperCase()),
+                    (option) => DropdownMenuItem(
+                      value: option,
+                      child: Text(option.label),
                     ),
                   )
                   .toList(),
           onChanged: (value) {
             if (value == null) return;
-            setState(() => _selectedFormat = value);
+            setState(() => _selectedFormatOption = value);
             _updateSuggestedFileName();
           },
           decoration: const InputDecoration(
@@ -457,10 +1197,11 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage> {
         const SizedBox(height: 12),
         TextFormField(
           controller: _nameController,
-          decoration: const InputDecoration(
+          decoration: InputDecoration(
             labelText: '輸出檔名',
-            border: OutlineInputBorder(),
-            helperText: '檔案將儲存到與原始檔案相同的資料夾',
+            border: const OutlineInputBorder(),
+            helperText:
+                '檔案將儲存到與原始檔案相同的資料夾（副檔名會使用 .${_selectedFormatOption.extension}）',
           ),
         ),
       ],
@@ -501,7 +1242,11 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage> {
     await controller.seekTo(Duration(milliseconds: target));
     if (mounted) {
       setState(() {
-        _currentPosition = Duration(milliseconds: target);
+        final targetDuration = Duration(milliseconds: target);
+        _currentPosition = targetDuration;
+        if (!_waveformScrubbing) {
+          _scrubPreviewPosition = targetDuration;
+        }
       });
     }
   }
@@ -513,7 +1258,13 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage> {
     await controller.seekTo(start);
     await controller.play();
     if (mounted) {
-      setState(() => _isPlaying = true);
+      setState(() {
+        _isPlaying = true;
+        _currentPosition = start;
+        if (!_waveformScrubbing) {
+          _scrubPreviewPosition = start;
+        }
+      });
     }
   }
 
@@ -552,19 +1303,21 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage> {
   }
 
   void _updateSuggestedFileName({bool force = false}) {
-    final suggestion = '${_baseName}_clip.${_selectedFormat}';
+    final ext = _selectedFormatOption.extension;
+    final suggestion = '${_baseName}_clip.$ext';
     final current = _nameController.text.trim();
     final shouldReplace =
         force || current.isEmpty || current == _lastSuggestedName;
+
     if (shouldReplace) {
       _lastSuggestedName = suggestion;
       _nameController.value = TextEditingValue(
         text: suggestion,
         selection: TextSelection.collapsed(offset: suggestion.length),
       );
-    } else if (!current.toLowerCase().endsWith('.${_selectedFormat}')) {
+    } else if (!current.toLowerCase().endsWith('.${ext.toLowerCase()}')) {
       final withoutExt = _removeExtension(current);
-      final updated = '$withoutExt.${_selectedFormat}';
+      final updated = '$withoutExt.$ext';
       _nameController.value = TextEditingValue(
         text: updated,
         selection: TextSelection.collapsed(offset: updated.length),
@@ -581,31 +1334,39 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage> {
   Future<void> _startExport() async {
     if (_processing) return;
     if (_durationSeconds <= 0) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('無法取得媒體長度')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          duration: Duration(seconds: 1),
+          content: Text('無法取得媒體長度'),
+        ),
+      );
       return;
     }
     final start = Duration(milliseconds: (_selection.start * 1000).round());
     final end = Duration(milliseconds: (_selection.end * 1000).round());
     final clipDuration = end - start;
     if (clipDuration <= Duration.zero) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('請選擇有效的時間範圍')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          duration: Duration(seconds: 1),
+          content: Text('請選擇有效的時間範圍'),
+        ),
+      );
       return;
     }
+    final formatOption = _selectedFormatOption;
+    final extension = formatOption.extension.toLowerCase();
     var outputName = _nameController.text.trim();
     if (outputName.isEmpty) {
       _updateSuggestedFileName(force: true);
       outputName = _nameController.text.trim();
     }
-    if (!outputName.toLowerCase().endsWith('.${_selectedFormat}')) {
-      outputName = '${_removeExtension(outputName)}.${_selectedFormat}';
+    if (!outputName.toLowerCase().endsWith('.$extension')) {
+      outputName = '${_removeExtension(outputName)}.${formatOption.extension}';
     }
     outputName = _sanitizeFileName(outputName);
     if (outputName.isEmpty) {
-      outputName = '${_baseName}_clip.${_selectedFormat}';
+      outputName = '${_baseName}_clip.${formatOption.extension}';
     }
     if (_nameController.text.trim() != outputName) {
       _lastSuggestedName = outputName;
@@ -624,7 +1385,7 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage> {
     if (clipDuration > Duration.zero) {
       buffer.write('-t ${_ffmpegTimestamp(clipDuration)} ');
     }
-    buffer.write('-vn ${_codecArguments(_selectedFormat)} ');
+    buffer.write('${formatOption.ffmpegArguments} ');
     buffer.write(_quotePath(outputPath));
 
     setState(() {
@@ -652,14 +1413,35 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage> {
               }
             });
           }
+          // Persist last output path after setState and before snack/share logic
+          if (success) {
+            try {
+              final sp = await SharedPreferences.getInstance();
+              await sp.setString(_kLastOutputPathKey, outputPath);
+            } catch (_) {}
+          }
           if (mounted) {
+            // Immediately open the share sheet after export success
+            if (success) {
+              try {
+                await Share.shareXFiles([XFile(outputPath)]);
+              } catch (_) {}
+            }
             final messenger = ScaffoldMessenger.of(context);
             if (success) {
               messenger.showSnackBar(
-                SnackBar(content: Text('匯出完成：${p.basename(outputPath)}')),
+                SnackBar(
+                  duration: Duration(seconds: 1),
+                  content: Text('匯出完成：${p.basename(outputPath)}'),
+                ),
               );
             } else if (cancelled) {
-              messenger.showSnackBar(const SnackBar(content: Text('已取消匯出')));
+              messenger.showSnackBar(
+                const SnackBar(
+                  duration: Duration(seconds: 1),
+                  content: Text('已取消匯出'),
+                ),
+              );
               try {
                 final file = File(outputPath);
                 if (await file.exists()) {
@@ -668,7 +1450,10 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage> {
               } catch (_) {}
             } else {
               messenger.showSnackBar(
-                const SnackBar(content: Text('匯出失敗，請稍後再試')),
+                const SnackBar(
+                  duration: Duration(seconds: 1),
+                  content: Text('匯出失敗，請稍後再試'),
+                ),
               );
               try {
                 final file = File(outputPath);
@@ -706,9 +1491,9 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage> {
           _activeSessionId = null;
           _cancelRequested = false;
         });
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('啟動轉檔失敗: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(duration: Duration(seconds: 1), content: Text('啟動轉檔失敗: $e')),
+        );
       }
     }
   }
@@ -723,31 +1508,40 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage> {
       await FFmpegKit.cancel(sessionId);
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('取消失敗，請稍後再試')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            duration: Duration(seconds: 1),
+            content: Text('取消失敗，請稍後再試'),
+          ),
+        );
       }
     }
   }
 
   void _openOutputLocation(String path) {
     // Placeholder: on mobile we cannot directly open file explorer.
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text('已匯出到：$path')));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(duration: Duration(seconds: 1), content: Text('已匯出到：$path')),
+    );
   }
 
-  String _codecArguments(String format) {
-    switch (format) {
-      case 'mp3':
-        return '-c:a libmp3lame -qscale:a 2';
-      case 'm4a':
-      case 'aac':
-        return '-c:a aac -b:a 192k';
-      case 'wav':
-        return '-c:a pcm_s16le -ar 44100';
-      default:
-        return '-c:a copy';
+  Future<void> _openFile(String path) async {
+    try {
+      final result = await OpenFilex.open(path);
+      if (mounted && result.type != ResultType.done) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            duration: Duration(seconds: 1),
+            content: Text('無法開啟檔案（${result.message}）'),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(duration: Duration(seconds: 1), content: Text('開啟檔案失敗：$e')),
+        );
+      }
     }
   }
 
@@ -762,6 +1556,18 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage> {
     final seconds = d.inSeconds % 60;
     final millis = d.inMilliseconds % 1000;
     return '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}.${millis.toString().padLeft(3, '0')}';
+  }
+
+  String _formatPrecise(Duration d) {
+    final hours = d.inHours;
+    final minutes = d.inMinutes % 60;
+    final seconds = d.inSeconds % 60;
+    final millis = d.inMilliseconds % 1000;
+    final msLabel = millis.toString().padLeft(3, '0');
+    if (hours > 0) {
+      return '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}:$msLabel';
+    }
+    return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}:$msLabel';
   }
 
   String _formatReadable(Duration d) {
