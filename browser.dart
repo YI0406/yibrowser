@@ -78,7 +78,13 @@ enum _ToolbarMenuAction {
   goHome,
 }
 
-enum _LinkContextMenuAction { copyLink, openInNewTab, addFavorite, addHome }
+enum _LinkContextMenuAction {
+  copyLink,
+  downloadLink,
+  openInNewTab,
+  addFavorite,
+  addHome,
+}
 
 class _BrowserPageState extends State<BrowserPage> {
   // Global key used to control the Scaffold (e.g. open the end drawer) from
@@ -105,6 +111,9 @@ class _BrowserPageState extends State<BrowserPage> {
   // Focus node for the URL input. Used to determine whether to show the
   // clear button only when the field has focus and contains text.
   final FocusNode _urlFocus = FocusNode();
+  // --- Paste button state ---
+  bool _showPaste = false;
+  String? _clipboardCache;
 
   // ---- UA Preference ----
   String? _uaMode; // 'iphone' | 'ipad' | 'android'
@@ -375,9 +384,12 @@ class _BrowserPageState extends State<BrowserPage> {
       await ctrl.play();
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('無法開啟迷你播放器')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            duration: Duration(seconds: 1),
+            content: Text('無法開啟迷你播放器'),
+          ),
+        );
       }
       return;
     }
@@ -630,7 +642,10 @@ class _BrowserPageState extends State<BrowserPage> {
                         await AppRepo.I.enqueueDownload(o.url);
                         if (mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('已加入下載')),
+                            const SnackBar(
+                              duration: Duration(seconds: 1),
+                              content: Text('已加入下載'),
+                            ),
                           );
                         }
                       },
@@ -831,9 +846,31 @@ class _BrowserPageState extends State<BrowserPage> {
 
   void _showSnackBar(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(duration: const Duration(seconds: 1), content: Text(message)),
+    );
+  }
+
+  Future<void> _checkClipboardForPasteButton() async {
+    try {
+      final data = await Clipboard.getData(Clipboard.kTextPlain);
+      final text = data?.text?.trim();
+      final hasText = text != null && text.isNotEmpty;
+      // 若剪貼簿內容與欄位相同，也不顯示貼上
+      final current =
+          (_tabs.isNotEmpty ? _tabs[_currentTabIndex].urlCtrl.text.trim() : '');
+      final shouldShow = _urlFocus.hasFocus && hasText && text != current;
+      if (mounted && (_showPaste != shouldShow || _clipboardCache != text)) {
+        setState(() {
+          _showPaste = shouldShow;
+          _clipboardCache = text;
+        });
+      }
+    } catch (_) {
+      if (mounted && _showPaste) {
+        setState(() => _showPaste = false);
+      }
+    }
   }
 
   Future<void> _injectIosLinkContextMenuBridge(
@@ -857,6 +894,9 @@ class _BrowserPageState extends State<BrowserPage> {
       case _LinkContextMenuAction.copyLink:
         await Clipboard.setData(ClipboardData(text: url));
         _showSnackBar('已複製連結');
+        break;
+      case _LinkContextMenuAction.downloadLink:
+        await _confirmDownload(url);
         break;
       case _LinkContextMenuAction.openInNewTab:
         await _openLinkInNewTab(url);
@@ -939,6 +979,12 @@ class _BrowserPageState extends State<BrowserPage> {
                           Icons.copy,
                           '複製連結',
                           _LinkContextMenuAction.copyLink,
+                        ),
+                        const Divider(height: 1),
+                        buildItem(
+                          Icons.download,
+                          '下載連結網址',
+                          _LinkContextMenuAction.downloadLink,
                         ),
                         const Divider(height: 1),
                         buildItem(
@@ -1478,6 +1524,14 @@ class _BrowserPageState extends State<BrowserPage> {
     super.initState();
     uaNotifier.addListener(_onUaChanged);
     repo.ytOptions.addListener(_onYtOptionsChanged);
+    // Listen to focus changes to handle paste button
+    _urlFocus.addListener(() {
+      if (_urlFocus.hasFocus) {
+        _checkClipboardForPasteButton();
+      } else {
+        if (mounted && _showPaste) setState(() => _showPaste = false);
+      }
+    });
     // Restore any previously open tabs from the repository. If none
     // exist, start with a single blank tab. Each tab’s URL controller
     // will update the UI when its text changes.
@@ -1552,7 +1606,10 @@ class _BrowserPageState extends State<BrowserPage> {
     await sp.setBool('block_external_app', next);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(next ? '已開啟「阻擋外部 App」' : '已關閉「阻擋外部 App」')),
+      SnackBar(
+        duration: const Duration(seconds: 1),
+        content: Text(next ? '已開啟「阻擋外部 App」' : '已關閉「阻擋外部 App」'),
+      ),
     );
     setState(() {});
   }
@@ -1811,31 +1868,59 @@ class _BrowserPageState extends State<BrowserPage> {
                           extentOffset: ctrl.text.length,
                         );
                       }
+                      _checkClipboardForPasteButton();
+                    },
+                    onChanged: (_) {
+                      if (_urlFocus.hasFocus) _checkClipboardForPasteButton();
                     },
                     textInputAction: TextInputAction.go,
                     decoration: InputDecoration(
                       border: InputBorder.none,
                       hintText: '輸入網址或關鍵字以搜尋',
-                      suffixIcon:
-                          (_tabs.isNotEmpty &&
-                                  _tabs[_currentTabIndex]
-                                      .urlCtrl
-                                      .text
-                                      .isNotEmpty &&
-                                  _urlFocus.hasFocus)
-                              ? IconButton(
-                                tooltip: '清除網址',
-                                icon: const Icon(Icons.clear),
-                                onPressed: () {
+                      suffixIcon: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (_showPaste)
+                            IconButton(
+                              tooltip: '貼上',
+                              icon: const Icon(Icons.content_paste),
+                              onPressed: () async {
+                                try {
+                                  final data = await Clipboard.getData(
+                                    Clipboard.kTextPlain,
+                                  );
+                                  final clip = data?.text ?? '';
                                   if (_tabs.isNotEmpty) {
-                                    _tabs[_currentTabIndex].urlCtrl.clear();
+                                    final c = _tabs[_currentTabIndex].urlCtrl;
+                                    c.text = clip;
+                                    c.selection = TextSelection.collapsed(
+                                      offset: c.text.length,
+                                    );
                                   }
-                                  // Remove focus so the keyboard hides.
-                                  _urlFocus.unfocus();
-                                  setState(() {});
-                                },
-                              )
-                              : null,
+                                  setState(() => _showPaste = false);
+                                } catch (_) {}
+                              },
+                            ),
+                          if (_tabs.isNotEmpty &&
+                              _tabs[_currentTabIndex].urlCtrl.text.isNotEmpty &&
+                              _urlFocus.hasFocus)
+                            IconButton(
+                              tooltip: '清除網址',
+                              icon: const Icon(Icons.clear),
+                              onPressed: () {
+                                if (_tabs.isNotEmpty) {
+                                  _tabs[_currentTabIndex].urlCtrl.clear();
+                                }
+                                _urlFocus.unfocus();
+                                setState(() {});
+                              },
+                            ),
+                        ],
+                      ),
+                      suffixIconConstraints: const BoxConstraints(
+                        minWidth: 0,
+                        minHeight: 0,
+                      ),
                     ),
                     onSubmitted: (v) => _go(v),
                   ),
@@ -2000,6 +2085,7 @@ class _BrowserPageState extends State<BrowserPage> {
                             if (mounted) {
                               ScaffoldMessenger.of(context).showSnackBar(
                                 const SnackBar(
+                                  duration: Duration(seconds: 1),
                                   content: Text('已阻擋網頁嘗試開啟外部 App'),
                                 ),
                               );
@@ -2093,6 +2179,7 @@ class _BrowserPageState extends State<BrowserPage> {
                                 !_kWebSchemes.contains(scheme)) {
                               ScaffoldMessenger.of(context).showSnackBar(
                                 const SnackBar(
+                                  duration: Duration(seconds: 1),
                                   content: Text('已阻擋網頁嘗試開啟外部 App'),
                                 ),
                               );
@@ -2103,7 +2190,10 @@ class _BrowserPageState extends State<BrowserPage> {
                             if (repo.blockPopup.value) {
                               ctl.loadUrl(urlRequest: URLRequest(url: uri));
                               ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text('彈出視窗已被阻擋')),
+                                const SnackBar(
+                                  duration: Duration(seconds: 1),
+                                  content: Text('彈出視窗已被阻擋'),
+                                ),
                               );
                               return true;
                             }
@@ -2161,6 +2251,7 @@ class _BrowserPageState extends State<BrowserPage> {
                             if (mounted) {
                               ScaffoldMessenger.of(context).showSnackBar(
                                 const SnackBar(
+                                  duration: Duration(seconds: 1),
                                   content: Text('已阻擋網頁嘗試開啟外部 App'),
                                 ),
                               );
@@ -2349,6 +2440,9 @@ class _BrowserPageState extends State<BrowserPage> {
                                                 context,
                                               ).showSnackBar(
                                                 const SnackBar(
+                                                  duration: Duration(
+                                                    seconds: 1,
+                                                  ),
                                                   content: Text('已複製連結'),
                                                 ),
                                               );
@@ -2599,9 +2693,12 @@ class _BrowserPageState extends State<BrowserPage> {
                 if (action == 'clear') {
                   _clearAllTabs();
                   if (mounted) {
-                    ScaffoldMessenger.of(
-                      context,
-                    ).showSnackBar(const SnackBar(content: Text('已清除全部分頁')));
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        duration: Duration(seconds: 1),
+                        content: Text('已清除全部分頁'),
+                      ),
+                    );
                   }
                 }
               },
@@ -2922,9 +3019,9 @@ class _BrowserPageState extends State<BrowserPage> {
     if (url == null) return;
     repo.toggleFavoriteUrl(url);
     if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('已更新收藏狀態')));
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(duration: Duration(seconds: 1), content: Text('已更新收藏狀態')),
+    );
   }
 
   Future<void> _toggleSniffer() async {
@@ -2940,9 +3037,12 @@ class _BrowserPageState extends State<BrowserPage> {
       }
     }
     if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(next ? '已開啟嗅探' : '已關閉嗅探')));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 1),
+        content: Text(next ? '已開啟嗅探' : '已關閉嗅探'),
+      ),
+    );
   }
 
   Future<void> _openFavoritesPage() async {
@@ -2987,9 +3087,12 @@ class _BrowserPageState extends State<BrowserPage> {
     final next = !repo.blockPopup.value;
     repo.setBlockPopup(next);
     if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(next ? '已開啟阻擋彈出視窗' : '已關閉阻擋彈出視窗')));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 1),
+        content: Text(next ? '已開啟阻擋彈出視窗' : '已關閉阻擋彈出視窗'),
+      ),
+    );
   }
 
   /// Prompts the user to confirm downloading the given URL. If confirmed, enqueues the download.
@@ -3015,9 +3118,12 @@ class _BrowserPageState extends State<BrowserPage> {
     if (ok == true) {
       await AppRepo.I.enqueueDownload(url);
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('已加入佇列，完成後會存入相簿')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          duration: Duration(seconds: 1),
+          content: Text('已加入佇列，完成後會存入相簿'),
+        ),
+      );
     }
   }
 
@@ -3145,7 +3251,10 @@ class _BrowserPageState extends State<BrowserPage> {
                         Navigator.pop(context);
                         if (mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('已清除所有資源')),
+                            const SnackBar(
+                              duration: Duration(seconds: 1),
+                              content: Text('已清除所有資源'),
+                            ),
                           );
                         }
                       },
@@ -3371,7 +3480,10 @@ class _BrowserPageState extends State<BrowserPage> {
                                   );
                                   if (mounted) {
                                     ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(content: Text('已複製連結')),
+                                      const SnackBar(
+                                        duration: Duration(seconds: 1),
+                                        content: Text('已複製連結'),
+                                      ),
                                     );
                                   }
                                 },
@@ -3488,6 +3600,7 @@ class _BrowserPageState extends State<BrowserPage> {
                             if (mounted) {
                               ScaffoldMessenger.of(context).showSnackBar(
                                 const SnackBar(
+                                  duration: Duration(seconds: 1),
                                   content: Text('已清除任務，已完成的媒體已保留'),
                                 ),
                               );
@@ -3902,9 +4015,12 @@ class _BrowserPageState extends State<BrowserPage> {
                 ),
               );
             } else if (mounted) {
-              ScaffoldMessenger.of(
-                context,
-              ).showSnackBar(const SnackBar(content: Text('檔案已不存在')));
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  duration: Duration(seconds: 1),
+                  content: Text('檔案已不存在'),
+                ),
+              );
             }
             return;
           }
@@ -3913,15 +4029,21 @@ class _BrowserPageState extends State<BrowserPage> {
               await Share.shareXFiles([XFile(filePath)]);
             } catch (e) {
               if (mounted) {
-                ScaffoldMessenger.of(
-                  context,
-                ).showSnackBar(SnackBar(content: Text('匯出失敗: $e')));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    duration: const Duration(seconds: 1),
+                    content: Text('匯出失敗: $e'),
+                  ),
+                );
               }
             }
           } else if (mounted) {
-            ScaffoldMessenger.of(
-              context,
-            ).showSnackBar(const SnackBar(content: Text('檔案已不存在')));
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                duration: Duration(seconds: 1),
+                content: Text('檔案已不存在'),
+              ),
+            );
           }
         },
       );

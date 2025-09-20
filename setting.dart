@@ -41,6 +41,9 @@ class _SettingPageState extends State<SettingPage> {
     _refreshCacheSize();
     _loadUaMode();
     _loadSearchEngine();
+    // Ensure default OFF only once, and remind about photo permission on open.
+    _ensureAutoSaveDefaultOff();
+    _checkPhotoPermissionOnOpen();
   }
 
   Future<void> _loadSearchEngine() async {
@@ -59,9 +62,12 @@ class _SettingPageState extends State<SettingPage> {
     await sp.setString('search_engine', v);
     if (!mounted) return;
     setState(() => _searchEngine = v);
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text('已設定搜尋引擎：${_searchEngineLabel[v]}')));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 1),
+        content: Text('已設定搜尋引擎：${_searchEngineLabel[v]}'),
+      ),
+    );
   }
 
   Future<void> _loadUaMode() async {
@@ -92,9 +98,12 @@ class _SettingPageState extends State<SettingPage> {
     if (!mounted) return;
     setState(() => _uaMode = v);
     uaNotifier.value = v; // 立刻通知瀏覽器改 UA
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text('已設定 UA：${_uaLabel[v]}（重啟後保留）')));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 1),
+        content: Text('已設定 UA：${_uaLabel[v]}（重啟後保留）'),
+      ),
+    );
   }
 
   /// Convert a byte count into a human‑readable string.
@@ -116,6 +125,58 @@ class _SettingPageState extends State<SettingPage> {
     setState(() {
       _cacheSize = _formatSize(bytes);
     });
+  }
+
+  /// Ensure "Auto save to gallery" defaults to OFF on first launch,
+  /// and never overrides user's later preference.
+  Future<void> _ensureAutoSaveDefaultOff() async {
+    final sp = await SharedPreferences.getInstance();
+    // Use an initialization marker so we don't clobber user's choice later.
+    const initKey = 'auto_save_initialized';
+    final inited = sp.getBool(initKey) ?? false;
+    if (inited) return;
+
+    // First-time initialization -> set default OFF via AppRepo
+    try {
+      final repo = AppRepo.I;
+      // Only set if current value is true or unknown; we want OFF by default.
+      if (repo.autoSave.value != false) {
+        repo.setAutoSave(false);
+      }
+      await sp.setBool(initKey, true);
+    } catch (_) {
+      // Even if AppRepo fails for any reason, mark as initialized to avoid loops.
+      await sp.setBool(initKey, true);
+    }
+  }
+
+  /// On page open, check photo permission; if missing, gently remind user.
+  Future<void> _checkPhotoPermissionOnOpen() async {
+    try {
+      final perm = await PhotoManager.requestPermissionExtend();
+      if (!perm.isAuth && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            duration: const Duration(seconds: 1),
+            content: const Text('尚未取得相簿存取權限，啟用「自動儲存到相簿」前請先到系統設定開啟。'),
+            action: SnackBarAction(
+              label: '前往設定',
+              onPressed: () {
+                PhotoManager.openSetting();
+              },
+            ),
+          ),
+        );
+      }
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          duration: Duration(seconds: 1),
+          content: Text('無法檢查相簿權限，請至系統設定確認。'),
+        ),
+      );
+    }
   }
 
   @override
@@ -197,6 +258,7 @@ class _SettingPageState extends State<SettingPage> {
                           if (!mounted) return;
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
+                              duration: const Duration(seconds: 1),
                               content: const Text('自動儲存需要相簿權限，請前往設定開啟。'),
                               action: SnackBarAction(
                                 label: '前往設定',
@@ -212,7 +274,10 @@ class _SettingPageState extends State<SettingPage> {
                         repo.setAutoSave(false);
                         if (!mounted) return;
                         ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('無法確認相簿權限，請手動檢查設定。')),
+                          const SnackBar(
+                            duration: Duration(seconds: 1),
+                            content: Text('無法確認相簿權限，請手動檢查設定。'),
+                          ),
                         );
                         return;
                       }
@@ -221,7 +286,10 @@ class _SettingPageState extends State<SettingPage> {
                     repo.setAutoSave(v);
                     if (!mounted) return;
                     ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text(v ? '下載完成後將自動存入相簿' : '已關閉自動存相簿')),
+                      SnackBar(
+                        duration: const Duration(seconds: 1),
+                        content: Text(v ? '下載完成後將自動存入相簿' : '已關閉自動存相簿'),
+                      ),
                     );
                   }();
                 },
@@ -236,9 +304,12 @@ class _SettingPageState extends State<SettingPage> {
               await repo.clearCache();
               await _refreshCacheSize();
               if (!mounted) return;
-              ScaffoldMessenger.of(
-                context,
-              ).showSnackBar(const SnackBar(content: Text('已清理快取')));
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  duration: Duration(seconds: 1),
+                  content: Text('已清理快取'),
+                ),
+              );
             },
           ),
           const Divider(height: 1),

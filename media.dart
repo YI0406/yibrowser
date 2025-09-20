@@ -10,6 +10,7 @@ import 'package:path/path.dart' as path;
 import 'package:share_plus/share_plus.dart';
 import 'video_player_page.dart';
 import 'image_preview_page.dart';
+import 'coventmp3.dart';
 
 String formatDuration(Duration d) {
   final h = d.inHours;
@@ -261,9 +262,9 @@ class _MediaAllState extends State<_MediaAll> {
 
   Future<void> _openTask(BuildContext context, DownloadTask t) async {
     if (!File(t.savePath).existsSync()) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('檔案已不存在')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(duration: Duration(seconds: 1), content: Text('檔案已不存在')),
+      );
       return;
     }
     final resolvedType = AppRepo.I.resolvedTaskType(t);
@@ -280,9 +281,12 @@ class _MediaAllState extends State<_MediaAll> {
     } else if (resolvedType == 'image') {
       if (!_fileHasContent(t.savePath)) {
         if (!mounted) return;
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('檔案尚未完成或已損毀')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            duration: Duration(seconds: 1),
+            content: Text('檔案尚未完成或已損毀'),
+          ),
+        );
         return;
       }
       Navigator.of(context).push(
@@ -333,9 +337,12 @@ class _MediaAllState extends State<_MediaAll> {
                         _selectMode = false;
                       });
                     } catch (e) {
-                      ScaffoldMessenger.of(
-                        context,
-                      ).showSnackBar(SnackBar(content: Text('匯出失敗: $e')));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          duration: const Duration(seconds: 1),
+                          content: Text('匯出失敗: $e'),
+                        ),
+                      );
                     }
                   },
                   child: const Text('匯出...'),
@@ -577,6 +584,15 @@ class _MediaAllState extends State<_MediaAll> {
                                         () => Navigator.pop(context, 'rename'),
                                   ),
                                   ListTile(
+                                    leading: const Icon(Icons.content_cut),
+                                    title: const Text('編輯導出...'),
+                                    onTap:
+                                        () => Navigator.pop(
+                                          context,
+                                          'edit-export',
+                                        ),
+                                  ),
+                                  ListTile(
                                     leading: const Icon(Icons.share),
                                     title: const Text('匯出...'),
                                     onTap:
@@ -594,6 +610,27 @@ class _MediaAllState extends State<_MediaAll> {
                       );
                       if (action == 'rename') {
                         _renameTask(context, task);
+                      } else if (action == 'edit-export') {
+                        if (!_fileHasContent(task.savePath)) {
+                          if (!mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('檔案尚未完成或已損毀')),
+                          );
+                          return;
+                        }
+                        if (!mounted) return;
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder:
+                                (_) => MediaSegmentExportPage(
+                                  sourcePath: task.savePath,
+                                  displayName:
+                                      task.name ?? path.basename(task.savePath),
+                                  mediaType: resolvedType,
+                                  initialDuration: task.duration,
+                                ),
+                          ),
+                        );
                       } else if (action == 'share') {
                         if (File(task.savePath).existsSync()) {
                           await Share.shareXFiles([XFile(task.savePath)]);
@@ -635,9 +672,9 @@ class _MyFavorites extends StatelessWidget {
 
   Future<void> _handleShare(BuildContext context, DownloadTask task) async {
     if (!File(task.savePath).existsSync()) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('檔案已不存在')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(duration: Duration(seconds: 1), content: Text('檔案已不存在')),
+      );
       return;
     }
     await Share.shareXFiles([XFile(task.savePath)]);
@@ -645,9 +682,9 @@ class _MyFavorites extends StatelessWidget {
 
   Future<void> _handleOpen(BuildContext context, DownloadTask task) async {
     if (!File(task.savePath).existsSync()) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('檔案已不存在')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(duration: Duration(seconds: 1), content: Text('檔案已不存在')),
+      );
       return;
     }
     final resolvedType = AppRepo.I.resolvedTaskType(task);
@@ -663,9 +700,12 @@ class _MyFavorites extends StatelessWidget {
       );
     } else if (resolvedType == 'image') {
       if (!_fileHasContent(task.savePath)) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('檔案尚未完成或已損毀')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            duration: Duration(seconds: 1),
+            content: Text('檔案尚未完成或已損毀'),
+          ),
+        );
         return;
       }
       Navigator.of(context).push(
@@ -776,6 +816,12 @@ class _MyFavorites extends StatelessWidget {
                               onTap: () => Navigator.pop(context, 'rename'),
                             ),
                             ListTile(
+                              leading: const Icon(Icons.content_cut),
+                              title: const Text('編輯導出...'),
+                              onTap:
+                                  () => Navigator.pop(context, 'edit-export'),
+                            ),
+                            ListTile(
                               leading: const Icon(Icons.share),
                               title: const Text('匯出...'),
                               onTap: () => Navigator.pop(context, 'share'),
@@ -822,6 +868,25 @@ class _MyFavorites extends StatelessWidget {
                             ),
                           ],
                         ),
+                  );
+                } else if (action == 'edit-export') {
+                  if (!_fileHasContent(task.savePath)) {
+                    ScaffoldMessenger.of(
+                      context,
+                    ).showSnackBar(const SnackBar(content: Text('檔案尚未完成或已損毀')));
+                    return;
+                  }
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder:
+                          (_) => MediaSegmentExportPage(
+                            sourcePath: task.savePath,
+                            displayName:
+                                task.name ?? path.basename(task.savePath),
+                            mediaType: resolvedType,
+                            initialDuration: task.duration,
+                          ),
+                    ),
                   );
                 } else if (action == 'share') {
                   await _handleShare(context, task);
