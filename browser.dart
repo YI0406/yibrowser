@@ -60,8 +60,39 @@ class _TabData {
 class _BlockedExternalNavigation {
   final String rawUrl;
   final String? scheme;
+  final WebUri? resolvedUri;
+  final bool isAppLink;
+  final bool canBypassInWebView;
 
-  const _BlockedExternalNavigation({required this.rawUrl, this.scheme});
+  const _BlockedExternalNavigation({
+    required this.rawUrl,
+    this.scheme,
+    this.resolvedUri,
+    this.isAppLink = false,
+    this.canBypassInWebView = false,
+  });
+}
+
+class _ExternalNavigationIntent {
+  final bool shouldBlock;
+  final bool isAppLink;
+
+  const _ExternalNavigationIntent({
+    required this.shouldBlock,
+    this.isAppLink = false,
+  });
+
+  static const none = _ExternalNavigationIntent(
+    shouldBlock: false,
+    isAppLink: false,
+  );
+
+  _ExternalNavigationIntent merge(_ExternalNavigationIntent other) {
+    return _ExternalNavigationIntent(
+      shouldBlock: shouldBlock || other.shouldBlock,
+      isAppLink: isAppLink || other.isAppLink,
+    );
+  }
 }
 
 /// BrowserPage encapsulates a WebView with URL entry, navigation, and a bar
@@ -133,6 +164,7 @@ class _BrowserPageState extends State<BrowserPage> {
   bool _blockExternalApp = false; // 阻擋由網頁開啟第三方 App
   String? _lastBlockedExternalUrl;
   DateTime? _lastBlockedExternalAt;
+  final Set<String> _appLinkBypassUrls = <String>{};
   static const Set<String> _kWebSchemes = {
     'http',
     'https',
@@ -1713,6 +1745,12 @@ class _BrowserPageState extends State<BrowserPage> {
 
     final messenger = ScaffoldMessenger.of(context);
     final label = _describeExternalAppTarget(blocked);
+    final bool fallbackToWeb = blocked.canBypassInWebView;
+    final messageText =
+        fallbackToWeb
+            ? '已阻止網頁打開第三方 App($label)，改以網頁顯示內容'
+            : '已阻止網頁打開第三方 App($label)';
+    final bool canLaunch = blocked.rawUrl.isNotEmpty;
     messenger.hideCurrentSnackBar();
     messenger.showSnackBar(
       SnackBar(
@@ -1726,16 +1764,19 @@ class _BrowserPageState extends State<BrowserPage> {
               color: Theme.of(context).colorScheme.onInverseSurface,
             ),
             const SizedBox(width: 8),
-            Expanded(child: Text('已阻止網頁打開第三方 App($label)')),
+            Expanded(child: Text(messageText)),
           ],
         ),
-        action: SnackBarAction(
-          label: '打開',
-          onPressed: () {
-            messenger.hideCurrentSnackBar();
-            unawaited(_launchExternalApp(blocked.rawUrl));
-          },
-        ),
+        action:
+            canLaunch
+                ? SnackBarAction(
+                  label: '打開',
+                  onPressed: () {
+                    messenger.hideCurrentSnackBar();
+                    unawaited(_launchExternalApp(blocked.rawUrl));
+                  },
+                )
+                : null,
       ),
     );
   }
@@ -1788,6 +1829,9 @@ class _BrowserPageState extends State<BrowserPage> {
       }
     }
     _showExternalAppBlockedSnackBar(blocked);
+    if (controller != null) {
+      _attemptAppLinkBypass(controller, blocked);
+    }
   }
 
   bool _flagTruthy(dynamic value) {
@@ -1803,119 +1847,162 @@ class _BrowserPageState extends State<BrowserPage> {
     return false;
   }
 
-  bool _mapContainsExternalAppHint(Map<dynamic, dynamic>? map) {
+  _ExternalNavigationIntent _mapContainsExternalAppHint(
+    Map<dynamic, dynamic>? map,
+  ) {
     if (map == null) {
-      return false;
+      return _ExternalNavigationIntent.none;
     }
+    bool shouldBlock = false;
+    bool isAppLink = false;
     for (final key in _kExternalAppFlagKeys) {
+      if (!map.containsKey(key)) {
+        continue;
+      }
       final dynamic flag = map[key];
       if (_flagTruthy(flag)) {
-        return true;
+        shouldBlock = true;
+        final keyStr = key.toString().toLowerCase();
+        if (keyStr.contains('applink')) {
+          isAppLink = true;
+        }
       }
     }
-    return false;
+    if (!shouldBlock) {
+      return _ExternalNavigationIntent.none;
+    }
+    return _ExternalNavigationIntent(shouldBlock: true, isAppLink: isAppLink);
   }
 
-  bool _navigationActionRequestsExternalApp(NavigationAction action) {
+  _ExternalNavigationIntent _navigationActionRequestsExternalApp(
+    NavigationAction action,
+  ) {
     bool shouldBlock = false;
+    bool isAppLink = false;
+
+    void inspectFlag(dynamic value, String debugName) {
+      if (_flagTruthy(value)) {
+        shouldBlock = true;
+        final lower = debugName.toLowerCase();
+        if (lower.contains('applink')) {
+          isAppLink = true;
+        }
+      }
+    }
+
     try {
       final dynamic dynAction = action;
-      final dynamic shouldPerformAppLink = dynAction.shouldPerformAppLink;
-      if (_flagTruthy(shouldPerformAppLink)) {
-        shouldBlock = true;
-      }
-      final dynamic iosShouldPerformAppLink = dynAction.iosShouldPerformAppLink;
-      if (_flagTruthy(iosShouldPerformAppLink)) {
-        shouldBlock = true;
-      }
-      final dynamic androidShouldOpenExternalApp =
-          dynAction.androidShouldOpenExternalApp;
-      if (_flagTruthy(androidShouldOpenExternalApp)) {
-        shouldBlock = true;
-      }
-      final dynamic androidShouldLeaveApplication =
-          dynAction.androidShouldLeaveApplication;
-      if (_flagTruthy(androidShouldLeaveApplication)) {
-        shouldBlock = true;
-      }
-      final dynamic iosShouldOpenExternalApp =
-          dynAction.iosShouldOpenExternalApp;
-      if (_flagTruthy(iosShouldOpenExternalApp)) {
-        shouldBlock = true;
-      }
-      final dynamic iosShouldOpenApp = dynAction.iosShouldOpenApp;
-      if (_flagTruthy(iosShouldOpenApp)) {
-        shouldBlock = true;
-      }
-      final dynamic shouldOpenAppLink = dynAction.shouldOpenAppLink;
-      if (_flagTruthy(shouldOpenAppLink)) {
-        shouldBlock = true;
-      }
-      final dynamic shouldOpenExternalApp = dynAction.shouldOpenExternalApp;
-      if (_flagTruthy(shouldOpenExternalApp)) {
-        shouldBlock = true;
-      }
+      inspectFlag(dynAction.shouldPerformAppLink, 'shouldPerformAppLink');
+      inspectFlag(dynAction.iosShouldPerformAppLink, 'iosShouldPerformAppLink');
+      inspectFlag(
+        dynAction.androidShouldOpenExternalApp,
+        'androidShouldOpenExternalApp',
+      );
+      inspectFlag(
+        dynAction.androidShouldLeaveApplication,
+        'androidShouldLeaveApplication',
+      );
+      inspectFlag(
+        dynAction.iosShouldOpenExternalApp,
+        'iosShouldOpenExternalApp',
+      );
+      inspectFlag(dynAction.iosShouldOpenApp, 'iosShouldOpenApp');
+      inspectFlag(dynAction.shouldOpenAppLink, 'shouldOpenAppLink');
+      inspectFlag(dynAction.shouldOpenExternalApp, 'shouldOpenExternalApp');
     } catch (_) {}
 
-    if (!shouldBlock) {
-      try {
-        final dynamic rawMap = action.toMap();
-        if (rawMap is Map) {
-          if (_mapContainsExternalAppHint(rawMap)) {
-            shouldBlock = true;
+    try {
+      final dynamic rawMap = action.toMap();
+      if (rawMap is Map) {
+        final intent = _mapContainsExternalAppHint(rawMap);
+        if (intent.shouldBlock) {
+          shouldBlock = true;
+          if (intent.isAppLink) {
+            isAppLink = true;
           }
-          if (!shouldBlock) {
-            final dynamic requestMap = rawMap['request'];
-            if (requestMap is Map && _mapContainsExternalAppHint(requestMap)) {
+        }
+        if (!intent.shouldBlock) {
+          final dynamic requestMap = rawMap['request'];
+          if (requestMap is Map) {
+            final nested = _mapContainsExternalAppHint(requestMap);
+            if (nested.shouldBlock) {
               shouldBlock = true;
+              if (nested.isAppLink) {
+                isAppLink = true;
+              }
             }
-            if (!shouldBlock) {
-              final dynamic optionsMap = rawMap['options'];
-              if (optionsMap is Map &&
-                  _mapContainsExternalAppHint(optionsMap)) {
-                shouldBlock = true;
+          }
+          final dynamic optionsMap = rawMap['options'];
+          if (optionsMap is Map) {
+            final nested = _mapContainsExternalAppHint(optionsMap);
+            if (nested.shouldBlock) {
+              shouldBlock = true;
+              if (nested.isAppLink) {
+                isAppLink = true;
               }
             }
           }
         }
-      } catch (_) {}
+      }
+    } catch (_) {}
+
+    if (!shouldBlock) {
+      return _ExternalNavigationIntent.none;
     }
-    return shouldBlock;
+    return _ExternalNavigationIntent(shouldBlock: true, isAppLink: isAppLink);
   }
 
-  bool _createWindowRequestRequestsExternalApp(
-    // `CreateWindowRequest` was renamed in flutter_inappwebview v6, so accept
-    // a dynamic value to stay compatible with multiple versions of the plugin.
+  _ExternalNavigationIntent _createWindowRequestRequestsExternalApp(
     dynamic createWindowRequest,
   ) {
     if (createWindowRequest == null) {
-      return false;
+      return _ExternalNavigationIntent.none;
     }
+    bool shouldBlock = false;
+    bool isAppLink = false;
     try {
       final dynamic rawMap = createWindowRequest.toMap();
       if (rawMap is Map) {
-        if (_mapContainsExternalAppHint(rawMap)) {
-          return true;
+        final intent = _mapContainsExternalAppHint(rawMap);
+        if (intent.shouldBlock) {
+          shouldBlock = true;
+          if (intent.isAppLink) {
+            isAppLink = true;
+          }
         }
         final dynamic requestMap = rawMap['request'];
-        if (requestMap is Map && _mapContainsExternalAppHint(requestMap)) {
-          return true;
+        if (requestMap is Map) {
+          final nested = _mapContainsExternalAppHint(requestMap);
+          if (nested.shouldBlock) {
+            shouldBlock = true;
+            if (nested.isAppLink) {
+              isAppLink = true;
+            }
+          }
         }
         final dynamic optionsMap =
             rawMap['options'] ?? rawMap['windowFeatures'];
-        if (optionsMap is Map && _mapContainsExternalAppHint(optionsMap)) {
-          return true;
+        if (optionsMap is Map) {
+          final nested = _mapContainsExternalAppHint(optionsMap);
+          if (nested.shouldBlock) {
+            shouldBlock = true;
+            if (nested.isAppLink) {
+              isAppLink = true;
+            }
+          }
         }
       }
     } catch (_) {}
-    return false;
+    if (!shouldBlock) {
+      return _ExternalNavigationIntent.none;
+    }
+    return _ExternalNavigationIntent(shouldBlock: true, isAppLink: isAppLink);
   }
 
   _BlockedExternalNavigation? _shouldPreventExternalNavigation(
     WebUri? uri, {
     NavigationAction? action,
     URLRequest? request,
-    // Accept dynamic for compatibility with renamed CreateWindowRequest class.
     dynamic createWindowRequest,
   }) {
     if (!_blockExternalApp) return null;
@@ -1924,6 +2011,7 @@ class _BrowserPageState extends State<BrowserPage> {
     String? rawUrl = uri?.toString();
     WebUri? resolvedUri = uri;
     bool shouldBlock = false;
+    bool dueToAppLink = false;
 
     void ingestUrlRequest(URLRequest? req) {
       if (req == null) {
@@ -2049,14 +2137,24 @@ class _BrowserPageState extends State<BrowserPage> {
       }
     }
 
-    if (!shouldBlock && action != null) {
-      if (_navigationActionRequestsExternalApp(action)) {
+    if (action != null) {
+      final intent = _navigationActionRequestsExternalApp(action);
+      if (intent.shouldBlock) {
         shouldBlock = true;
+        if (intent.isAppLink) {
+          dueToAppLink = true;
+        }
       }
     }
-    if (!shouldBlock && createWindowRequest != null) {
-      if (_createWindowRequestRequestsExternalApp(createWindowRequest)) {
+    if (createWindowRequest != null) {
+      final intent = _createWindowRequestRequestsExternalApp(
+        createWindowRequest,
+      );
+      if (intent.shouldBlock) {
         shouldBlock = true;
+        if (intent.isAppLink) {
+          dueToAppLink = true;
+        }
       }
     }
 
@@ -2073,10 +2171,139 @@ class _BrowserPageState extends State<BrowserPage> {
             ? scheme
             : Uri.tryParse(effectiveRaw!)?.scheme;
 
+    if (_consumePendingAppLinkBypass(
+      effectiveRaw: effectiveRaw,
+      rawUrl: rawUrl,
+      resolvedUri: resolvedUri,
+    )) {
+      return null;
+    }
+
+    final normalizedEffectiveScheme = effectiveScheme?.toLowerCase();
+    final canBypassInWebView =
+        dueToAppLink && _isHttpScheme(normalizedEffectiveScheme);
+
     return _BlockedExternalNavigation(
       rawUrl: effectiveRaw ?? '',
       scheme: effectiveScheme,
+      resolvedUri: resolvedUri,
+      isAppLink: dueToAppLink,
+      canBypassInWebView: canBypassInWebView,
     );
+  }
+
+  bool _isHttpScheme(String? scheme) {
+    if (scheme == null || scheme.isEmpty) {
+      return false;
+    }
+    final normalized = scheme.toLowerCase();
+    return normalized == 'http' || normalized == 'https';
+  }
+
+  String _normalizeUrlForBypass(String? url) {
+    if (url == null) {
+      return '';
+    }
+    final trimmed = url.trim();
+    if (trimmed.isEmpty) {
+      return '';
+    }
+    final parsed = Uri.tryParse(trimmed);
+    if (parsed == null) {
+      return trimmed;
+    }
+    if (parsed.scheme.isEmpty && parsed.host.isEmpty) {
+      return trimmed;
+    }
+    final normalized = parsed.replace(
+      scheme:
+          parsed.scheme.isNotEmpty
+              ? parsed.scheme.toLowerCase()
+              : parsed.scheme,
+      host: parsed.host.isNotEmpty ? parsed.host.toLowerCase() : parsed.host,
+    );
+    return normalized.toString();
+  }
+
+  bool _consumePendingAppLinkBypass({
+    String? effectiveRaw,
+    String? rawUrl,
+    WebUri? resolvedUri,
+  }) {
+    final candidates = <String>{};
+    void addCandidate(String? value) {
+      final normalized = _normalizeUrlForBypass(value);
+      if (normalized.isNotEmpty) {
+        candidates.add(normalized);
+      }
+    }
+
+    addCandidate(effectiveRaw);
+    addCandidate(rawUrl);
+    addCandidate(resolvedUri?.toString());
+
+    if (candidates.isEmpty) {
+      return false;
+    }
+
+    bool matched = false;
+    for (final candidate in candidates) {
+      if (_appLinkBypassUrls.remove(candidate)) {
+        matched = true;
+      }
+    }
+    if (matched) {
+      for (final candidate in candidates) {
+        _appLinkBypassUrls.remove(candidate);
+      }
+    }
+    return matched;
+  }
+
+  WebUri? _tryParseWebUri(String value) {
+    try {
+      return WebUri(value);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  void _attemptAppLinkBypass(
+    InAppWebViewController controller,
+    _BlockedExternalNavigation blocked,
+  ) {
+    if (!blocked.canBypassInWebView) {
+      return;
+    }
+    WebUri? target = blocked.resolvedUri;
+    target ??= _tryParseWebUri(blocked.rawUrl);
+    if (target == null) {
+      return;
+    }
+    final normalizedTarget = _normalizeUrlForBypass(target.toString());
+    if (normalizedTarget.isEmpty) {
+      return;
+    }
+    if (_appLinkBypassUrls.contains(normalizedTarget)) {
+      return;
+    }
+    final candidateKeys = <String>{normalizedTarget};
+    final rawNormalized = _normalizeUrlForBypass(blocked.rawUrl);
+    if (rawNormalized.isNotEmpty) {
+      candidateKeys.add(rawNormalized);
+    }
+    for (final key in candidateKeys) {
+      _appLinkBypassUrls.add(key);
+    }
+    Future.microtask(() async {
+      try {
+        await controller.loadUrl(urlRequest: URLRequest(url: target));
+      } catch (_) {
+        for (final key in candidateKeys) {
+          _appLinkBypassUrls.remove(key);
+        }
+      }
+    });
   }
 
   @override
