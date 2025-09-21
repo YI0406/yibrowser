@@ -179,7 +179,10 @@ class _RootNavState extends State<RootNav> {
       _handleQuickAction(type);
     }
 
-    Future<void> setupShortcuts() async {
+    Future<void> setupAndroidShortcuts() async {
+      if (!Platform.isAndroid) {
+        return;
+      }
       try {
         // Register dynamic shortcuts on BOTH Android and iOS.
         // iOS: this coexists with static UIApplicationShortcutItems in Info.plist.
@@ -220,7 +223,6 @@ class _RootNavState extends State<RootNav> {
         }
       }
 
-      unawaited(setupShortcuts());
       unawaited(requestInitialShortcut());
       return;
     }
@@ -232,7 +234,7 @@ class _RootNavState extends State<RootNav> {
       hasProcessedInitialCallback = true;
       dispatchQuickAction(type, fromLaunchCheck: fromLaunchCallback);
     });
-    unawaited(setupShortcuts());
+    unawaited(setupAndroidShortcuts());
   }
 
   void _handleQuickAction(String type) {
