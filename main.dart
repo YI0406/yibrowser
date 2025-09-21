@@ -173,12 +173,12 @@ class _RootNavState extends State<RootNav> {
 
     Future<void> setupShortcuts() async {
       try {
-        if (Platform.isAndroid) {
-          await _quickActions.setShortcutItems(const <ShortcutItem>[
-            ShortcutItem(type: _quickActionNewTab, localizedTitle: '新分頁'),
-            ShortcutItem(type: _quickActionMedia, localizedTitle: '媒體'),
-          ]);
-        }
+        // Register dynamic shortcuts on BOTH Android and iOS.
+        // iOS: this coexists with static UIApplicationShortcutItems in Info.plist.
+        await _quickActions.setShortcutItems(const <ShortcutItem>[
+          ShortcutItem(type: _quickActionNewTab, localizedTitle: '新分頁'),
+          ShortcutItem(type: _quickActionMedia, localizedTitle: '媒體'),
+        ]);
       } catch (_) {
         // Quick actions are optional enhancements; ignore platform errors.
       }
