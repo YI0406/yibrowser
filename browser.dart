@@ -15,6 +15,8 @@ import 'package:video_player/video_player.dart';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as path;
+import 'dart:async';
+import 'package:url_launcher/url_launcher.dart';
 // Import the media page to allow launching the built‑in video player when
 // playing remote videos from the browser. This also brings in the
 // VideoPlayerPage class used in the play callbacks.
@@ -52,6 +54,13 @@ class _TabData {
                 : initialUrl,
       ),
       progress = ValueNotifier<double>(0.0);
+}
+
+class _BlockedExternalNavigation {
+  final String rawUrl;
+  final String? scheme;
+
+  const _BlockedExternalNavigation({required this.rawUrl, this.scheme});
 }
 
 /// BrowserPage encapsulates a WebView with URL entry, navigation, and a bar
@@ -121,6 +130,8 @@ class _BrowserPageState extends State<BrowserPage> {
   bool _uaInitialized = false;
 
   bool _blockExternalApp = false; // 阻擋由網頁開啟第三方 App
+  String? _lastBlockedExternalUrl;
+  DateTime? _lastBlockedExternalAt;
   static const Set<String> _kWebSchemes = {
     'http',
     'https',
@@ -1646,6 +1657,117 @@ class _BrowserPageState extends State<BrowserPage> {
     setState(() {});
   }
 
+  _TabData? _tabForController(InAppWebViewController controller) {
+    for (final tab in _tabs) {
+      if (tab.controller == controller) {
+        return tab;
+      }
+    }
+    return null;
+  }
+
+  String _describeExternalAppTarget(_BlockedExternalNavigation blocked) {
+    if (blocked.scheme != null && blocked.scheme!.isNotEmpty) {
+      return blocked.scheme!;
+    }
+    final parsed = Uri.tryParse(blocked.rawUrl);
+    final fallbackScheme = parsed?.scheme;
+    if (fallbackScheme != null && fallbackScheme.isNotEmpty) {
+      return fallbackScheme;
+    }
+    return blocked.rawUrl.isEmpty ? '未知' : blocked.rawUrl;
+  }
+
+  void _showExternalAppBlockedSnackBar(_BlockedExternalNavigation blocked) {
+    if (!mounted) return;
+    final now = DateTime.now();
+    if (_lastBlockedExternalUrl == blocked.rawUrl &&
+        _lastBlockedExternalAt != null &&
+        now.difference(_lastBlockedExternalAt!).inMilliseconds < 500) {
+      return;
+    }
+    _lastBlockedExternalUrl = blocked.rawUrl;
+    _lastBlockedExternalAt = now;
+
+    final messenger = ScaffoldMessenger.of(context);
+    final label = _describeExternalAppTarget(blocked);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 4),
+        content: Row(
+          children: [
+            Icon(
+              Icons.close,
+              size: 18,
+              color: Theme.of(context).colorScheme.onInverseSurface,
+            ),
+            const SizedBox(width: 8),
+            Expanded(child: Text('已阻止網頁打開第三方 App($label)')),
+          ],
+        ),
+        action: SnackBarAction(
+          label: '打開',
+          onPressed: () {
+            messenger.hideCurrentSnackBar();
+            unawaited(_launchExternalApp(blocked.rawUrl));
+          },
+        ),
+      ),
+    );
+  }
+
+  Future<void> _launchExternalApp(String rawUrl) async {
+    final uri = Uri.tryParse(rawUrl);
+    if (uri == null) {
+      _showExternalAppLaunchError();
+      return;
+    }
+    try {
+      final launched = await launchUrl(
+        uri,
+        mode: LaunchMode.externalApplication,
+      );
+      if (!launched) {
+        _showExternalAppLaunchError();
+      }
+    } catch (_) {
+      _showExternalAppLaunchError();
+    }
+  }
+
+  void _showExternalAppLaunchError() {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        duration: Duration(seconds: 1),
+        content: Text('無法開啟外部 App'),
+      ),
+    );
+  }
+
+  void _handleBlockedExternalNavigation(
+    _BlockedExternalNavigation blocked, {
+    InAppWebViewController? controller,
+  }) {
+    if (controller != null) {
+      try {
+        unawaited(controller.stopLoading());
+      } catch (_) {}
+      final tab = _tabForController(controller);
+      if (tab != null) {
+        final current = tab.currentUrl;
+        if (current != null && current.isNotEmpty) {
+          tab.urlCtrl.text = current;
+        } else if (tab.urlCtrl.text.isNotEmpty) {
+          tab.urlCtrl.clear();
+        }
+      }
+    }
+    _showExternalAppBlockedSnackBar(blocked);
+  }
+
   bool _flagTruthy(dynamic value) {
     if (value is bool) return value;
     if (value is num) return value != 0;
@@ -1757,14 +1879,16 @@ class _BrowserPageState extends State<BrowserPage> {
     return shouldBlock;
   }
 
-  bool _shouldPreventExternalNavigation(
+  _BlockedExternalNavigation? _shouldPreventExternalNavigation(
     WebUri? uri, {
     NavigationAction? action,
   }) {
-    if (!_blockExternalApp) return false;
+    if (!_blockExternalApp) return null;
 
     String? scheme = uri?.scheme;
     String? rawUrl = uri?.toString();
+    WebUri? resolvedUri = uri;
+    bool shouldBlock = false;
 
     if (action != null) {
       try {
@@ -1774,7 +1898,7 @@ class _BrowserPageState extends State<BrowserPage> {
         }
         if ((scheme == null || scheme.isEmpty) && req.url != null) {
           scheme = req.url!.scheme;
-          uri ??= req.url;
+          resolvedUri ??= req.url;
         }
         // Fallback: some versions only expose raw URL via toMap()
         if (rawUrl == null || rawUrl.isEmpty) {
@@ -1788,12 +1912,29 @@ class _BrowserPageState extends State<BrowserPage> {
         }
       } catch (_) {}
     }
-
+    if ((rawUrl == null || rawUrl.isEmpty) && action != null) {
+      try {
+        final dynamic rawMap = action.toMap();
+        if (rawMap is Map) {
+          final dynamic requestMap = rawMap['request'];
+          if (requestMap is Map) {
+            final dynamic mappedUrl = requestMap['url'];
+            if (mappedUrl is String && mappedUrl.isNotEmpty) {
+              rawUrl = mappedUrl;
+            }
+            final dynamic mappedScheme = requestMap['scheme'];
+            if (mappedScheme is String && mappedScheme.isNotEmpty) {
+              scheme ??= mappedScheme;
+            }
+          }
+        }
+      } catch (_) {}
+    }
     if ((scheme == null || scheme.isEmpty) && rawUrl != null) {
       try {
         final parsed = WebUri(rawUrl);
         scheme = parsed.scheme;
-        uri ??= parsed;
+        resolvedUri ??= parsed;
       } catch (_) {
         try {
           scheme = Uri.tryParse(rawUrl)?.scheme;
@@ -1806,10 +1947,10 @@ class _BrowserPageState extends State<BrowserPage> {
 
     if (normalizedScheme.isNotEmpty &&
         !_kWebSchemes.contains(normalizedScheme)) {
-      return true;
+      shouldBlock = true;
     }
 
-    if (normalizedScheme.isEmpty && normalizedRaw.isNotEmpty) {
+    if (!shouldBlock && normalizedScheme.isEmpty && normalizedRaw.isNotEmpty) {
       const suspiciousPrefixes = [
         'intent:',
         'intent://',
@@ -1834,16 +1975,35 @@ class _BrowserPageState extends State<BrowserPage> {
       ];
       for (final prefix in suspiciousPrefixes) {
         if (normalizedRaw.startsWith(prefix)) {
-          return true;
+          shouldBlock = true;
+          break;
         }
       }
     }
 
-    if (action != null && _navigationActionRequestsExternalApp(action)) {
-      return true;
+    if (!shouldBlock && action != null) {
+      if (_navigationActionRequestsExternalApp(action)) {
+        shouldBlock = true;
+      }
     }
 
-    return false;
+    if (!shouldBlock) {
+      return null;
+    }
+
+    final effectiveRaw =
+        (rawUrl != null && rawUrl.isNotEmpty)
+            ? rawUrl
+            : (resolvedUri?.toString() ?? '');
+    final effectiveScheme =
+        (scheme != null && scheme!.isNotEmpty)
+            ? scheme
+            : Uri.tryParse(effectiveRaw)?.scheme;
+
+    return _BlockedExternalNavigation(
+      rawUrl: effectiveRaw,
+      scheme: effectiveScheme,
+    );
   }
 
   @override
@@ -2110,18 +2270,12 @@ class _BrowserPageState extends State<BrowserPage> {
                         },
                         onLoadStart: (c, u) async {
                           // 雙保險：硬攔非 Web scheme（極少數情況仍可能觸發）
-                          if (_shouldPreventExternalNavigation(u)) {
-                            try {
-                              await c.stopLoading();
-                            } catch (_) {}
-                            if (mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  duration: Duration(seconds: 1),
-                                  content: Text('已阻擋網頁嘗試開啟外部 App'),
-                                ),
-                              );
-                            }
+                          final blocked = _shouldPreventExternalNavigation(u);
+                          if (blocked != null) {
+                            _handleBlockedExternalNavigation(
+                              blocked,
+                              controller: c,
+                            );
                             return;
                           }
                           _iosLinkMenuBridgeReady = false;
@@ -2204,31 +2358,24 @@ class _BrowserPageState extends State<BrowserPage> {
                         onCreateWindow: (ctl, createWindowRequest) async {
                           final req = createWindowRequest.request;
                           final uri = req?.url;
-                          if (uri != null) {
-                            final scheme = (uri.scheme ?? '').toLowerCase();
-                            // 先處理外部 App 阻擋：目標是攔截像 x.com 這類用 window.open(...) 觸發的 twitter:// 等
-                            if (_blockExternalApp &&
-                                !_kWebSchemes.contains(scheme)) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  duration: Duration(seconds: 1),
-                                  content: Text('已阻擋網頁嘗試開啟外部 App'),
-                                ),
-                              );
-                              // 消化這次開窗要求（不交給系統），避免跳去外部 App
-                              return true;
-                            }
-                            // 其餘一般彈窗（http/https）交給「阻擋彈出視窗」設定處理
-                            if (repo.blockPopup.value) {
-                              ctl.loadUrl(urlRequest: URLRequest(url: uri));
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  duration: Duration(seconds: 1),
-                                  content: Text('彈出視窗已被阻擋'),
-                                ),
-                              );
-                              return true;
-                            }
+                          final blocked = _shouldPreventExternalNavigation(uri);
+                          if (blocked != null) {
+                            _handleBlockedExternalNavigation(
+                              blocked,
+                              controller: ctl,
+                            );
+                            // 消化這次開窗要求（不交給系統），避免跳去外部 App
+                            return true;
+                          }
+                          if (uri != null && repo.blockPopup.value) {
+                            ctl.loadUrl(urlRequest: URLRequest(url: uri));
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                duration: Duration(seconds: 1),
+                                content: Text('彈出視窗已被阻擋'),
+                              ),
+                            );
+                            return true;
                           }
                           return false;
                         },
@@ -2273,21 +2420,15 @@ class _BrowserPageState extends State<BrowserPage> {
                           controller,
                           navigationAction,
                         ) async {
-                          if (_shouldPreventExternalNavigation(
+                          final blocked = _shouldPreventExternalNavigation(
                             navigationAction.request.url,
                             action: navigationAction,
-                          )) {
-                            try {
-                              await controller.stopLoading();
-                            } catch (_) {}
-                            if (mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  duration: Duration(seconds: 1),
-                                  content: Text('已阻擋網頁嘗試開啟外部 App'),
-                                ),
-                              );
-                            }
+                          );
+                          if (blocked != null) {
+                            _handleBlockedExternalNavigation(
+                              blocked,
+                              controller: controller,
+                            );
                             return NavigationActionPolicy.CANCEL;
                           }
                           return NavigationActionPolicy.ALLOW;
