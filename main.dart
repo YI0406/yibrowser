@@ -152,32 +152,42 @@ class _RootNavState extends State<RootNav> {
     if (!(Platform.isIOS || Platform.isAndroid)) {
       return;
     }
-
-    _quickActions.initialize((type) {
+    void dispatchQuickAction(String? type, {bool fromLaunchCheck = false}) {
+      if (type == null) {
+        return;
+      }
+      if (fromLaunchCheck && _handledInitialQuickAction) {
+        return;
+      }
+      _handledInitialQuickAction = true;
       _handleQuickAction(type);
-    });
+    }
+
+    _quickActions.initialize(dispatchQuickAction);
 
     Future<void> setupShortcuts() async {
       try {
-        await _quickActions.setShortcutItems(const <ShortcutItem>[
-          ShortcutItem(type: _quickActionNewTab, localizedTitle: '新分頁'),
-          ShortcutItem(type: _quickActionMedia, localizedTitle: '媒體'),
-        ]);
+        if (Platform.isAndroid) {
+          await _quickActions.setShortcutItems(const <ShortcutItem>[
+            ShortcutItem(type: _quickActionNewTab, localizedTitle: '新分頁'),
+            ShortcutItem(type: _quickActionMedia, localizedTitle: '媒體'),
+          ]);
+        }
+        if (!_handledInitialQuickAction) {
+          final initialType = await _quickActions.getLaunchAction();
+          if (initialType != null) {
+            dispatchQuickAction(initialType, fromLaunchCheck: true);
+          }
+        }
       } catch (_) {
         // Quick actions are optional enhancements; ignore platform errors.
-      } finally {
-        _handledInitialQuickAction = true;
       }
     }
 
     unawaited(setupShortcuts());
   }
 
-  void _handleQuickAction(String? type) {
-    if (type == null) {
-      return;
-    }
-    _handledInitialQuickAction = true;
+  void _handleQuickAction(String type) {
     if (!mounted) {
       return;
     }
