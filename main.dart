@@ -163,7 +163,13 @@ class _RootNavState extends State<RootNav> {
       _handleQuickAction(type);
     }
 
-    _quickActions.initialize(dispatchQuickAction);
+    bool hasProcessedInitialCallback = false;
+
+    _quickActions.initialize((String? type) {
+      final bool fromLaunchCallback = !hasProcessedInitialCallback;
+      hasProcessedInitialCallback = true;
+      dispatchQuickAction(type, fromLaunchCheck: fromLaunchCallback);
+    });
 
     Future<void> setupShortcuts() async {
       try {
@@ -172,12 +178,6 @@ class _RootNavState extends State<RootNav> {
             ShortcutItem(type: _quickActionNewTab, localizedTitle: '新分頁'),
             ShortcutItem(type: _quickActionMedia, localizedTitle: '媒體'),
           ]);
-        }
-        if (!_handledInitialQuickAction) {
-          final initialType = await _quickActions.getLaunchAction();
-          if (initialType != null) {
-            dispatchQuickAction(initialType, fromLaunchCheck: true);
-          }
         }
       } catch (_) {
         // Quick actions are optional enhancements; ignore platform errors.
