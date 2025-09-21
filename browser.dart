@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
+
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/log.dart';
 import 'package:ffmpeg_kit_flutter_new/session.dart';
@@ -140,6 +141,27 @@ class _BrowserPageState extends State<BrowserPage> {
     'blob',
     'file',
   };
+  static const List<String> _kExternalAppFlagKeys = [
+    'shouldPerformAppLink',
+    'iosShouldPerformAppLink',
+    'iosShouldOpenExternalApp',
+    'shouldOpenExternalApp',
+    'shouldOpenApp',
+    'shouldOpenAppLink',
+    'androidShouldOpenExternalApp',
+    'androidShouldLeaveApplication',
+    'iosShouldOpenApp',
+    'iosWKNavigationActionShouldPerformAppLink',
+    'iosWKNavigationActionShouldOpenApp',
+    'shouldPerformAppLinkForCurrentRequest',
+    'shouldAllowExternalApp',
+    'shouldOpenExternalAppUrl',
+    'shouldAllowOpenInExternalApp',
+    'shouldOpenInExternalApp',
+    'openExternalApp',
+    'opensExternalApp',
+    'openWithSystemBrowser',
+  ];
 
   static const double _edgeSwipeWidth = 32.0;
   static const double _edgeSwipeDistanceThreshold = 48.0;
@@ -1781,6 +1803,19 @@ class _BrowserPageState extends State<BrowserPage> {
     return false;
   }
 
+  bool _mapContainsExternalAppHint(Map<dynamic, dynamic>? map) {
+    if (map == null) {
+      return false;
+    }
+    for (final key in _kExternalAppFlagKeys) {
+      final dynamic flag = map[key];
+      if (_flagTruthy(flag)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   bool _navigationActionRequestsExternalApp(NavigationAction action) {
     bool shouldBlock = false;
     try {
@@ -1826,50 +1861,19 @@ class _BrowserPageState extends State<BrowserPage> {
       try {
         final dynamic rawMap = action.toMap();
         if (rawMap is Map) {
-          final keysToCheck = [
-            'shouldPerformAppLink',
-            'iosShouldPerformAppLink',
-            'iosShouldOpenExternalApp',
-            'shouldOpenExternalApp',
-            'shouldOpenApp',
-            'shouldOpenAppLink',
-            'androidShouldOpenExternalApp',
-            'androidShouldLeaveApplication',
-            'iosShouldOpenApp',
-            'iosWKNavigationActionShouldPerformAppLink',
-            'iosWKNavigationActionShouldOpenApp',
-            'shouldPerformAppLinkForCurrentRequest',
-            'shouldAllowExternalApp',
-            'shouldOpenExternalAppUrl',
-          ];
-          for (final key in keysToCheck) {
-            final dynamic flag = rawMap[key];
-            if (_flagTruthy(flag)) {
-              shouldBlock = true;
-              break;
-            }
+          if (_mapContainsExternalAppHint(rawMap)) {
+            shouldBlock = true;
           }
           if (!shouldBlock) {
             final dynamic requestMap = rawMap['request'];
-            if (requestMap is Map) {
-              for (final key in keysToCheck) {
-                final dynamic flag = requestMap[key];
-                if (_flagTruthy(flag)) {
-                  shouldBlock = true;
-                  break;
-                }
-              }
+            if (requestMap is Map && _mapContainsExternalAppHint(requestMap)) {
+              shouldBlock = true;
             }
             if (!shouldBlock) {
               final dynamic optionsMap = rawMap['options'];
-              if (optionsMap is Map) {
-                for (final key in keysToCheck) {
-                  final dynamic flag = optionsMap[key];
-                  if (_flagTruthy(flag)) {
-                    shouldBlock = true;
-                    break;
-                  }
-                }
+              if (optionsMap is Map &&
+                  _mapContainsExternalAppHint(optionsMap)) {
+                shouldBlock = true;
               }
             }
           }
@@ -1879,9 +1883,34 @@ class _BrowserPageState extends State<BrowserPage> {
     return shouldBlock;
   }
 
+  bool _createWindowRequestRequestsExternalApp(
+    CreateWindowRequest createWindowRequest,
+  ) {
+    try {
+      final dynamic rawMap = createWindowRequest.toMap();
+      if (rawMap is Map) {
+        if (_mapContainsExternalAppHint(rawMap)) {
+          return true;
+        }
+        final dynamic requestMap = rawMap['request'];
+        if (requestMap is Map && _mapContainsExternalAppHint(requestMap)) {
+          return true;
+        }
+        final dynamic optionsMap =
+            rawMap['options'] ?? rawMap['windowFeatures'];
+        if (optionsMap is Map && _mapContainsExternalAppHint(optionsMap)) {
+          return true;
+        }
+      }
+    } catch (_) {}
+    return false;
+  }
+
   _BlockedExternalNavigation? _shouldPreventExternalNavigation(
     WebUri? uri, {
     NavigationAction? action,
+    URLRequest? request,
+    CreateWindowRequest? createWindowRequest,
   }) {
     if (!_blockExternalApp) return null;
 
@@ -1890,29 +1919,44 @@ class _BrowserPageState extends State<BrowserPage> {
     WebUri? resolvedUri = uri;
     bool shouldBlock = false;
 
-    if (action != null) {
+    void ingestUrlRequest(URLRequest? req) {
+      if (req == null) {
+        return;
+      }
       try {
-        final req = action.request;
-        if (rawUrl == null || rawUrl.isEmpty) {
+        if (rawUrl == null || rawUrl!.isEmpty) {
           rawUrl = req.url?.toString();
         }
-        if ((scheme == null || scheme.isEmpty) && req.url != null) {
+        if ((scheme == null || scheme!.isEmpty) && req.url != null) {
           scheme = req.url!.scheme;
           resolvedUri ??= req.url;
         }
-        // Fallback: some versions only expose raw URL via toMap()
-        if (rawUrl == null || rawUrl.isEmpty) {
+        if (rawUrl == null || rawUrl!.isEmpty) {
           try {
-            final m = req.toMap();
-            final u = m['url'];
-            if (u is String && u.isNotEmpty) {
-              rawUrl = u;
+            final mapped = req.toMap();
+            final dynamic urlValue = mapped['url'];
+            if (urlValue is String && urlValue.isNotEmpty) {
+              rawUrl = urlValue;
+            }
+            final dynamic schemeValue = mapped['scheme'];
+            if (schemeValue is String && schemeValue.isNotEmpty) {
+              scheme ??= schemeValue;
             }
           } catch (_) {}
         }
       } catch (_) {}
     }
-    if ((rawUrl == null || rawUrl.isEmpty) && action != null) {
+
+    if (action != null) {
+      try {
+        ingestUrlRequest(action.request);
+      } catch (_) {}
+    }
+    ingestUrlRequest(request);
+    if (createWindowRequest != null) {
+      ingestUrlRequest(createWindowRequest.request);
+    }
+    if ((rawUrl == null || rawUrl!.isEmpty) && action != null) {
       try {
         final dynamic rawMap = action.toMap();
         if (rawMap is Map) {
@@ -1930,14 +1974,32 @@ class _BrowserPageState extends State<BrowserPage> {
         }
       } catch (_) {}
     }
-    if ((scheme == null || scheme.isEmpty) && rawUrl != null) {
+    if ((rawUrl == null || rawUrl!.isEmpty) && createWindowRequest != null) {
       try {
-        final parsed = WebUri(rawUrl);
+        final dynamic rawMap = createWindowRequest.toMap();
+        if (rawMap is Map) {
+          final dynamic requestMap = rawMap['request'];
+          if (requestMap is Map) {
+            final dynamic mappedUrl = requestMap['url'];
+            if (mappedUrl is String && mappedUrl.isNotEmpty) {
+              rawUrl = mappedUrl;
+            }
+            final dynamic mappedScheme = requestMap['scheme'];
+            if (mappedScheme is String && mappedScheme.isNotEmpty) {
+              scheme ??= mappedScheme;
+            }
+          }
+        }
+      } catch (_) {}
+    }
+    if ((scheme == null || scheme!.isEmpty) && rawUrl != null) {
+      try {
+        final parsed = WebUri(rawUrl!);
         scheme = parsed.scheme;
         resolvedUri ??= parsed;
       } catch (_) {
         try {
-          scheme = Uri.tryParse(rawUrl)?.scheme;
+          scheme = Uri.tryParse(rawUrl!)?.scheme;
         } catch (_) {}
       }
     }
@@ -1986,22 +2048,27 @@ class _BrowserPageState extends State<BrowserPage> {
         shouldBlock = true;
       }
     }
+    if (!shouldBlock && createWindowRequest != null) {
+      if (_createWindowRequestRequestsExternalApp(createWindowRequest)) {
+        shouldBlock = true;
+      }
+    }
 
     if (!shouldBlock) {
       return null;
     }
 
     final effectiveRaw =
-        (rawUrl != null && rawUrl.isNotEmpty)
+        (rawUrl != null && rawUrl!.isNotEmpty)
             ? rawUrl
             : (resolvedUri?.toString() ?? '');
     final effectiveScheme =
         (scheme != null && scheme!.isNotEmpty)
             ? scheme
-            : Uri.tryParse(effectiveRaw)?.scheme;
+            : Uri.tryParse(effectiveRaw!)?.scheme;
 
     return _BlockedExternalNavigation(
-      rawUrl: effectiveRaw,
+      rawUrl: effectiveRaw ?? '',
       scheme: effectiveScheme,
     );
   }
@@ -2358,7 +2425,11 @@ class _BrowserPageState extends State<BrowserPage> {
                         onCreateWindow: (ctl, createWindowRequest) async {
                           final req = createWindowRequest.request;
                           final uri = req?.url;
-                          final blocked = _shouldPreventExternalNavigation(uri);
+                          final blocked = _shouldPreventExternalNavigation(
+                            uri,
+                            request: req,
+                            createWindowRequest: createWindowRequest,
+                          );
                           if (blocked != null) {
                             _handleBlockedExternalNavigation(
                               blocked,
