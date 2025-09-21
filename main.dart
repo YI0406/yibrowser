@@ -17,6 +17,7 @@ import 'package:firebase_analytics/observer.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:app_tracking_transparency/app_tracking_transparency.dart';
 import 'package:quick_actions/quick_actions.dart';
+import 'package:flutter/services.dart';
 
 /// Entry point of the application. Initializes WebView debugging and sets up
 /// the root navigation with three tabs: browser, media, and settings.
@@ -117,8 +118,13 @@ class _RootNavState extends State<RootNav> {
   late final List<Widget> pages;
   static const String _quickActionNewTab = 'quick_action_new_tab';
   static const String _quickActionMedia = 'quick_action_media';
+  static const MethodChannel _iosQuickActionChannel = MethodChannel(
+    'app.quick_actions_bridge',
+  );
   final QuickActions _quickActions = const QuickActions();
   bool _handledInitialQuickAction = false;
+  DateTime? _lastQuickActionAt;
+  String? _lastQuickActionType;
   @override
   void initState() {
     super.initState();
@@ -156,20 +162,22 @@ class _RootNavState extends State<RootNav> {
       if (type == null) {
         return;
       }
-      if (fromLaunchCheck && _handledInitialQuickAction) {
+      if (fromLaunchCheck) {
+        if (_handledInitialQuickAction) {
+          return;
+        }
+        _handledInitialQuickAction = true;
+      }
+      final now = DateTime.now();
+      if (_lastQuickActionType == type &&
+          _lastQuickActionAt != null &&
+          now.difference(_lastQuickActionAt!).inMilliseconds < 300) {
         return;
       }
-      _handledInitialQuickAction = true;
+      _lastQuickActionType = type;
+      _lastQuickActionAt = now;
       _handleQuickAction(type);
     }
-
-    bool hasProcessedInitialCallback = false;
-
-    _quickActions.initialize((String? type) {
-      final bool fromLaunchCallback = !hasProcessedInitialCallback;
-      hasProcessedInitialCallback = true;
-      dispatchQuickAction(type, fromLaunchCheck: fromLaunchCallback);
-    });
 
     Future<void> setupShortcuts() async {
       try {
@@ -184,6 +192,46 @@ class _RootNavState extends State<RootNav> {
       }
     }
 
+    if (Platform.isIOS) {
+      _iosQuickActionChannel.setMethodCallHandler((call) async {
+        if (call.method != 'launchShortcut') {
+          return;
+        }
+        String? type;
+        bool fromLaunch = false;
+        final args = call.arguments;
+        if (args is Map) {
+          final dynamic rawType = args['type'];
+          if (rawType is String) {
+            type = rawType;
+          }
+          fromLaunch = args['from_launch'] == true;
+        } else if (args is String?) {
+          type = args;
+        }
+        dispatchQuickAction(type, fromLaunchCheck: fromLaunch);
+      });
+
+      Future<void> requestInitialShortcut() async {
+        try {
+          await _iosQuickActionChannel.invokeMethod('readyForQuickActions');
+        } catch (_) {
+          // Missing handler or other native errors can be ignored safely.
+        }
+      }
+
+      unawaited(setupShortcuts());
+      unawaited(requestInitialShortcut());
+      return;
+    }
+
+    bool hasProcessedInitialCallback = false;
+
+    _quickActions.initialize((String? type) {
+      final bool fromLaunchCallback = !hasProcessedInitialCallback;
+      hasProcessedInitialCallback = true;
+      dispatchQuickAction(type, fromLaunchCheck: fromLaunchCallback);
+    });
     unawaited(setupShortcuts());
   }
 
