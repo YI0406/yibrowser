@@ -1884,8 +1884,13 @@ class _BrowserPageState extends State<BrowserPage> {
   }
 
   bool _createWindowRequestRequestsExternalApp(
-    CreateWindowRequest createWindowRequest,
+    // `CreateWindowRequest` was renamed in flutter_inappwebview v6, so accept
+    // a dynamic value to stay compatible with multiple versions of the plugin.
+    dynamic createWindowRequest,
   ) {
+    if (createWindowRequest == null) {
+      return false;
+    }
     try {
       final dynamic rawMap = createWindowRequest.toMap();
       if (rawMap is Map) {
@@ -1910,7 +1915,8 @@ class _BrowserPageState extends State<BrowserPage> {
     WebUri? uri, {
     NavigationAction? action,
     URLRequest? request,
-    CreateWindowRequest? createWindowRequest,
+    // Accept dynamic for compatibility with renamed CreateWindowRequest class.
+    dynamic createWindowRequest,
   }) {
     if (!_blockExternalApp) return null;
 
