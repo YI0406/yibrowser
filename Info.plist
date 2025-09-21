@@ -39,6 +39,8 @@
 	</dict>
 	<key>NSFaceIDUsageDescription</key>
 	<string>用於解鎖私人影片。</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Allow camera to capture photos or scan when you choose to use it.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>需要寫入相簿權限以將下載的影片儲存到相簿。</string>
 	<key>NSPhotoLibraryUsageDescription</key>
@@ -244,14 +246,31 @@
 			<string>3qcr597p9d.skadnetwork</string>
 		</dict>
 	</array>
+	<key>UIApplicationShortcutItems</key>
+	<array>
+		<dict>
+			<key>UIApplicationShortcutItemType</key>
+			<string>_quickActionNewTab</string>
+			<key>UIApplicationShortcutItemTitle</key>
+			<string>QuickAction.NewTab.Title</string>
+			<key>UIApplicationShortcutItemIconType</key>
+			<string>UIApplicationShortcutIconTypeAdd</string>
+		</dict>
+		<dict>
+			<key>UIApplicationShortcutItemType</key>
+			<string>_quickActionMedia</string>
+			<key>UIApplicationShortcutItemTitle</key>
+			<string>QuickAction.Media.Title</string>
+			<key>UIApplicationShortcutItemIconType</key>
+			<string>UIApplicationShortcutIconTypePlay</string>
+		</dict>
+	</array>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
-	<key>UIBackgroundModes</key>
-	<array>
-		<string>audio</string>
-		<string>airplay</string>
-		<string>picture-in-picture</string>
-	</array>
+<key>UIBackgroundModes</key>
+<array>
+  <string>audio</string>
+</array>
 	<key>UIFileSharingEnabled</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>

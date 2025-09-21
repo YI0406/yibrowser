@@ -15,9 +15,25 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_analytics/firebase_analytics.dart';
 import 'package:firebase_analytics/observer.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
+import 'package:app_tracking_transparency/app_tracking_transparency.dart';
+import 'package:quick_actions/quick_actions.dart';
 
 /// Entry point of the application. Initializes WebView debugging and sets up
 /// the root navigation with three tabs: browser, media, and settings.
+Future<void> _requestATTIfNeeded() async {
+  if (!Platform.isIOS) return;
+  try {
+    final status = await AppTrackingTransparency.trackingAuthorizationStatus;
+    if (status == TrackingStatus.notDetermined) {
+      // Give iOS a brief moment to ensure the dialog can be presented cleanly.
+      await Future.delayed(const Duration(milliseconds: 200));
+      await AppTrackingTransparency.requestTrackingAuthorization();
+    }
+  } catch (e) {
+    debugPrint('ATT request error: $e');
+  }
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -48,6 +64,8 @@ void main() async {
   AppRepo.I.setPremiumUnlocked(purchaseService.isPremiumUnlocked);
 
   await AdService.instance.init();
+  // Request ATT prior to initializing ads (iOS only)
+  await _requestATTIfNeeded();
   AdService.instance.setPremiumUnlocked(purchaseService.isPremiumUnlocked);
   runApp(const MyApp());
 }
@@ -97,7 +115,10 @@ class _RootNavState extends State<RootNav> {
   int index = 1;
   // Pages for bottom navigation bar: media, home, browser, settings. Initialized in initState.
   late final List<Widget> pages;
-
+  static const String _quickActionNewTab = 'quick_action_new_tab';
+  static const String _quickActionMedia = 'quick_action_media';
+  final QuickActions _quickActions = const QuickActions();
+  bool _handledInitialQuickAction = false;
   @override
   void initState() {
     super.initState();
@@ -124,6 +145,55 @@ class _RootNavState extends State<RootNav> {
       ),
       const SettingPage(),
     ];
+    _configureQuickActions();
+  }
+
+  void _configureQuickActions() {
+    if (!(Platform.isIOS || Platform.isAndroid)) {
+      return;
+    }
+
+    _quickActions.initialize((type) {
+      _handleQuickAction(type);
+    });
+
+    Future<void> setupShortcuts() async {
+      try {
+        await _quickActions.setShortcutItems(const <ShortcutItem>[
+          ShortcutItem(type: _quickActionNewTab, localizedTitle: '新分頁'),
+          ShortcutItem(type: _quickActionMedia, localizedTitle: '媒體'),
+        ]);
+      } catch (_) {
+        // Quick actions are optional enhancements; ignore platform errors.
+      } finally {
+        _handledInitialQuickAction = true;
+      }
+    }
+
+    unawaited(setupShortcuts());
+  }
+
+  void _handleQuickAction(String? type) {
+    if (type == null) {
+      return;
+    }
+    _handledInitialQuickAction = true;
+    if (!mounted) {
+      return;
+    }
+    switch (type) {
+      case _quickActionNewTab:
+        setState(() {
+          index = 2;
+        });
+        AppRepo.I.requestNewTab();
+        break;
+      case _quickActionMedia:
+        setState(() {
+          index = 0;
+        });
+        break;
+    }
   }
 
   @override

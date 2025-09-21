@@ -1950,6 +1950,13 @@ class AppRepo extends ChangeNotifier {
     _saveState();
   }
 
+  /// Signal that the browser should create a new blank tab. The UI layer
+  /// listens to [pendingNewTab] and clears the notifier after handling the
+  /// request, so each invocation here results in a single new tab.
+  void requestNewTab() {
+    pendingNewTab.value = Object();
+  }
+
   // ---------------------------------------------------------------------------
   // Home screen management
 
@@ -2087,6 +2094,11 @@ class AppRepo extends ChangeNotifier {
   /// Keeping this state here allows the user’s open pages to be restored
   /// across app launches rather than always starting with a single blank tab.
   final ValueNotifier<List<String>> openTabs = ValueNotifier<List<String>>([]);
+
+  /// A transient notifier used to request the browser page to create a new
+  /// blank tab. The value is set to a new object for each request so listeners
+  /// can react even if a previous request is still pending.
+  final ValueNotifier<Object?> pendingNewTab = ValueNotifier<Object?>(null);
 
   /// A transient notifier used to communicate a URL from the home page to the
   /// browser. When a value is set, the browser page should load the URL

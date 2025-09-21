@@ -79,7 +79,7 @@ class _MediaPageState extends State<MediaPage>
             title: const Text('媒體'),
             bottom: TabBar(
               controller: _tab,
-              tabs: const [Tab(text: '媒體'), Tab(text: '我的收藏')],
+              tabs: const [Tab(text: '媒體'), Tab(text: '收藏')],
             ),
           ),
           body: TabBarView(

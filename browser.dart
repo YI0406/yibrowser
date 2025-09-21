@@ -1268,6 +1268,28 @@ class _BrowserPageState extends State<BrowserPage> {
     return tab;
   }
 
+  void _onPendingNewTab() {
+    final token = repo.pendingNewTab.value;
+    if (token == null) {
+      return;
+    }
+    // Clear the request before creating the new tab to avoid re-entrant
+    // handling when the notifier updates.
+    repo.pendingNewTab.value = null;
+    final tab = _createTab();
+    if (mounted) {
+      setState(() {
+        _tabs.add(tab);
+        _currentTabIndex = _tabs.length - 1;
+      });
+    } else {
+      _tabs.add(tab);
+      _currentTabIndex = _tabs.length - 1;
+    }
+    _updateOpenTabs();
+    _persistCurrentTabIndex();
+  }
+
   void _ensureActiveTab() {
     if (_tabs.isEmpty) {
       final tab = _createTab();
