@@ -168,6 +168,8 @@ class _BrowserPageState extends State<BrowserPage> {
   ScaffoldFeatureController<SnackBar, SnackBarClosedReason>?
   _blockedExternalSnackBarController;
   final Set<String> _appLinkBypassUrls = <String>{};
+  static const Duration _kRecentAppLinkBypassHostTtl = Duration(seconds: 8);
+  final Map<String, DateTime> _recentAppLinkBypassHosts = <String, DateTime>{};
   static const Set<String> _kDefaultIosUniversalLinkHosts = {
     'x.com',
     'www.x.com',
@@ -2192,6 +2194,8 @@ class _BrowserPageState extends State<BrowserPage> {
     dynamic createWindowRequest,
   }) {
     if (!_blockExternalApp) return null;
+    final now = DateTime.now();
+    _purgeExpiredAppLinkBypassHosts(now);
 
     String? scheme = uri?.scheme;
     String? rawUrl = uri?.toString();
@@ -2397,6 +2401,26 @@ class _BrowserPageState extends State<BrowserPage> {
         (scheme != null && scheme!.isNotEmpty)
             ? scheme
             : Uri.tryParse(effectiveRaw!)?.scheme;
+    if (shouldBlock && dueToAppLink) {
+      String? hostForBypass = normalizedHost;
+      String? schemeForBypass = effectiveScheme ?? scheme;
+      if ((hostForBypass == null || hostForBypass.isEmpty) &&
+          effectiveRaw != null &&
+          effectiveRaw.isNotEmpty) {
+        final parsedEffective = Uri.tryParse(effectiveRaw);
+        if (parsedEffective != null) {
+          hostForBypass = parsedEffective.host;
+          schemeForBypass ??= parsedEffective.scheme;
+        }
+      }
+      if (_shouldBypassHostDueToRecentAllowance(
+        scheme: schemeForBypass,
+        host: hostForBypass,
+        now: now,
+      )) {
+        return null;
+      }
+    }
 
     if (_consumePendingAppLinkBypass(
       effectiveRaw: effectiveRaw,
@@ -2520,6 +2544,77 @@ class _BrowserPageState extends State<BrowserPage> {
     return matched;
   }
 
+  void _purgeExpiredAppLinkBypassHosts(DateTime now) {
+    _recentAppLinkBypassHosts.removeWhere(
+      (_, ts) => now.difference(ts) > _kRecentAppLinkBypassHostTtl,
+    );
+  }
+
+  void _rememberTemporaryHostBypass({String? scheme, String? host}) {
+    final normalizedHost = host?.trim().toLowerCase();
+    if (normalizedHost == null || normalizedHost.isEmpty) {
+      return;
+    }
+    final normalizedScheme = scheme?.trim().toLowerCase();
+    if (normalizedScheme != null &&
+        normalizedScheme.isNotEmpty &&
+        !_isHttpScheme(normalizedScheme)) {
+      return;
+    }
+    final now = DateTime.now();
+    _purgeExpiredAppLinkBypassHosts(now);
+    _recentAppLinkBypassHosts[normalizedHost] = now;
+    if (normalizedScheme != null && normalizedScheme.isNotEmpty) {
+      _recentAppLinkBypassHosts['$normalizedScheme://$normalizedHost'] = now;
+    }
+  }
+
+  void _rememberTemporaryHostBypassFromUrl(String? url) {
+    if (url == null) {
+      return;
+    }
+    final parsed = Uri.tryParse(url);
+    if (parsed == null) {
+      return;
+    }
+    _rememberTemporaryHostBypass(scheme: parsed.scheme, host: parsed.host);
+  }
+
+  bool _shouldBypassHostDueToRecentAllowance({
+    required DateTime now,
+    String? scheme,
+    String? host,
+  }) {
+    final normalizedHost = host?.trim().toLowerCase();
+    if (normalizedHost == null || normalizedHost.isEmpty) {
+      return false;
+    }
+    final normalizedScheme = scheme?.trim().toLowerCase();
+    if (normalizedScheme != null &&
+        normalizedScheme.isNotEmpty &&
+        !_isHttpScheme(normalizedScheme)) {
+      return false;
+    }
+    final keys = <String>{normalizedHost};
+    if (normalizedScheme != null && normalizedScheme.isNotEmpty) {
+      keys.add('$normalizedScheme://$normalizedHost');
+    }
+    bool allowed = false;
+    for (final key in keys) {
+      final ts = _recentAppLinkBypassHosts[key];
+      if (ts == null) {
+        continue;
+      }
+      if (now.difference(ts) <= _kRecentAppLinkBypassHostTtl) {
+        allowed = true;
+        _recentAppLinkBypassHosts[key] = now;
+      } else {
+        _recentAppLinkBypassHosts.remove(key);
+      }
+    }
+    return allowed;
+  }
+
   WebUri? _tryParseWebUri(String value) {
     try {
       return WebUri(value);
@@ -2554,6 +2649,9 @@ class _BrowserPageState extends State<BrowserPage> {
     if (candidateKeys.isEmpty) {
       return;
     }
+    _rememberTemporaryHostBypassFromUrl(targetString);
+    _rememberTemporaryHostBypassFromUrl(blocked.rawUrl);
+    _rememberTemporaryHostBypassFromUrl(blocked.resolvedUri?.toString());
     if (candidateKeys.any(_appLinkBypassUrls.contains)) {
       return;
     }
