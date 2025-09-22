@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
-
+import 'package:flutter/foundation.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/log.dart';
 import 'package:ffmpeg_kit_flutter_new/session.dart';
@@ -45,6 +45,11 @@ class _TabData {
   String? currentUrl;
   InAppWebViewController? controller;
   final Set<String> allowedAppLinkHosts = <String>{};
+  final List<String> history = <String>[];
+  int historyIndex = -1;
+  int? pendingHistoryIndex;
+  bool skipNextHistorySync = false;
+  bool restoringInitialHistory = false;
 
   /// When true the first page load should not be recorded in history.
   bool skipInitialHistory = true;
@@ -840,19 +845,23 @@ class _BrowserPageState extends State<BrowserPage> {
         ty.contains('m3u8');
   }
 
-  /// Whether this entry should be counted as a real "download task"
-  /// (used by the badge and sheet). Excludes local/imported/library items.
+  /// Whether this entry represents a real download task (either ongoing or completed).
+  /// Excludes local/imported/library items from the downloads UI entirely.
   bool _isDownloadTaskEntry(DownloadTask t) {
-    final s = (t.state).toString().toLowerCase();
     final isLocalUrl =
         t.url.startsWith('file://') ||
         t.url.startsWith('/') ||
         t.url.startsWith('asset://');
     final fromLibrary =
         (t.kind == 'library' || t.kind == 'local' || t.kind == 'import');
-    final activeStates = <String>{'downloading', 'paused', 'queued', 'error'};
-    final countableState = activeStates.contains(s);
-    return !isLocalUrl && !fromLibrary && countableState;
+    return !isLocalUrl && !fromLibrary;
+  }
+
+  /// Whether the download task should be counted as "active" for the badge.
+  bool _isActiveDownloadTask(DownloadTask t) {
+    final s = (t.state).toString().toLowerCase();
+    const activeStates = <String>{'downloading', 'paused', 'queued', 'error'};
+    return activeStates.contains(s);
   }
 
   /// Produce a compact progress text for a download entry.
@@ -919,7 +928,165 @@ class _BrowserPageState extends State<BrowserPage> {
   /// pending URL if the page has not yet loaded).
   void _updateOpenTabs() {
     final urls = _tabs.map((t) => t.urlCtrl.text.trim()).toList();
-    repo.setOpenTabs(urls);
+    final sessions = _tabs.map(_buildSessionForTab).toList();
+    repo.setOpenTabs(urls, sessions: sessions);
+  }
+
+  TabSessionState _buildSessionForTab(_TabData tab) {
+    final urlText = tab.urlCtrl.text.trim();
+    final history =
+        tab.history
+            .map((e) => e.trim())
+            .where(
+              (e) => e.isNotEmpty && !e.toLowerCase().startsWith('about:blank'),
+            )
+            .toList();
+    int index = tab.historyIndex;
+    if (history.isEmpty) {
+      index = -1;
+    } else {
+      if (index < 0) {
+        index = history.length - 1;
+      } else if (index >= history.length) {
+        index = history.length - 1;
+      }
+    }
+    return TabSessionState(
+      history: history,
+      currentIndex: index,
+      urlText: urlText,
+    );
+  }
+
+  bool _canNavigateHistory(_TabData tab, int delta) {
+    if (tab.history.isEmpty) return false;
+    if (tab.historyIndex < 0) return false;
+    final target = tab.historyIndex + delta;
+    return target >= 0 && target < tab.history.length;
+  }
+
+  void _navigateHistoryDelta(int delta) {
+    if (_tabs.isEmpty) return;
+    _navigateHistoryForTab(_currentTabIndex, delta);
+  }
+
+  void _navigateHistoryForTab(int tabIndex, int delta) {
+    if (tabIndex < 0 || tabIndex >= _tabs.length) return;
+    final tab = _tabs[tabIndex];
+    if (!_canNavigateHistory(tab, delta)) {
+      final controller = tab.controller;
+      if (controller == null) return;
+      if (delta < 0) {
+        controller.goBack();
+      } else {
+        controller.goForward();
+      }
+      return;
+    }
+    final targetIndex = tab.historyIndex + delta;
+    if (targetIndex < 0 || targetIndex >= tab.history.length) return;
+    final targetUrl = tab.history[targetIndex];
+    tab.pendingHistoryIndex = targetIndex;
+    tab.skipNextHistorySync = true;
+    tab.currentUrl = targetUrl;
+    tab.urlCtrl.text = targetUrl;
+    unawaited(
+      tab.controller?.loadUrl(urlRequest: URLRequest(url: WebUri(targetUrl))),
+    );
+  }
+
+  void _updateHistoryForUrl(_TabData tab, String url) {
+    final normalized = url.trim();
+    if (normalized.isEmpty) return;
+    if (normalized.toLowerCase().startsWith('about:blank')) return;
+
+    if (tab.pendingHistoryIndex != null) {
+      final target = tab.pendingHistoryIndex!;
+      tab.pendingHistoryIndex = null;
+      if (target >= 0 && target < tab.history.length) {
+        tab.historyIndex = target;
+      } else if (target >= tab.history.length) {
+        tab.history.add(normalized);
+        tab.historyIndex = tab.history.length - 1;
+      } else if (tab.history.isNotEmpty) {
+        tab.historyIndex = 0;
+      } else {
+        tab.historyIndex = -1;
+      }
+      return;
+    }
+
+    final currentIndex = tab.historyIndex;
+    if (currentIndex >= 0 && currentIndex < tab.history.length) {
+      if (tab.history[currentIndex] == normalized) {
+        return;
+      }
+      final prevIndex = currentIndex - 1;
+      final nextIndex = currentIndex + 1;
+      final prevMatch = prevIndex >= 0 && tab.history[prevIndex] == normalized;
+      final nextMatch =
+          nextIndex < tab.history.length &&
+          tab.history[nextIndex] == normalized;
+      if (prevMatch || nextMatch) {
+        tab.historyIndex = prevMatch ? prevIndex : nextIndex;
+        return;
+      }
+    }
+
+    if (currentIndex >= 0 && currentIndex < tab.history.length - 1) {
+      tab.history.removeRange(currentIndex + 1, tab.history.length);
+    }
+    if (tab.history.isEmpty || tab.history.last != normalized) {
+      tab.history.add(normalized);
+    }
+    tab.historyIndex = tab.history.length - 1;
+  }
+
+  Future<void> _syncHistoryFromController(_TabData tab) async {
+    final controller = tab.controller;
+    if (controller == null) return;
+    try {
+      final history = await controller.getCopyBackForwardList();
+      if (history == null) return;
+      final dynamic dynHistory = history;
+      List<dynamic>? rawItems;
+      if (dynHistory.historyItemList is List) {
+        rawItems = List<dynamic>.from(dynHistory.historyItemList as List);
+      } else if (dynHistory.list is List) {
+        rawItems = List<dynamic>.from(dynHistory.list as List);
+      } else if (dynHistory.historyItems is List) {
+        rawItems = List<dynamic>.from(dynHistory.historyItems as List);
+      }
+      if (rawItems == null) return;
+      final sanitized = <String>[];
+      for (final raw in rawItems) {
+        final dynamic item = raw;
+        final url =
+            (item.url?.toString() ?? item.originalUrl?.toString() ?? '').trim();
+        if (url.isEmpty) continue;
+        if (url.toLowerCase().startsWith('about:blank')) continue;
+        sanitized.add(url);
+      }
+      int idx = -1;
+      final dynamic idxDyn = dynHistory.currentIndex;
+      if (idxDyn is int) {
+        idx = idxDyn;
+      } else if (idxDyn is num) {
+        idx = idxDyn.toInt();
+      }
+      if (idx >= sanitized.length) {
+        idx = sanitized.length - 1;
+      }
+      if (idx < 0 && sanitized.isNotEmpty) {
+        idx = sanitized.length - 1;
+      }
+      if (!listEquals(tab.history, sanitized) || tab.historyIndex != idx) {
+        tab.history
+          ..clear()
+          ..addAll(sanitized);
+        tab.historyIndex = sanitized.isEmpty ? -1 : idx;
+      }
+    } catch (_) {}
   }
 
   bool _looksLikeLikelyUrl(String value) {
@@ -1711,17 +1878,59 @@ class _BrowserPageState extends State<BrowserPage> {
         if (mounted && _showPaste) setState(() => _showPaste = false);
       }
     });
-    // Restore any previously open tabs from the repository. If none
-    // exist, start with a single blank tab. Each tab’s URL controller
-    // will update the UI when its text changes.
-    final savedTabs = repo.openTabs.value;
-    if (savedTabs.isNotEmpty) {
-      for (final url in savedTabs) {
-        _tabs.add(_createTab(initialUrl: url));
+    // Restore any previously open tabs (with history) from the repository.
+    // If none exist, start with a single blank tab.
+    final savedSessions = repo.tabSessions.value;
+    if (savedSessions.isNotEmpty) {
+      for (final session in savedSessions) {
+        final current = session.currentUrl;
+        final initial =
+            (current != null && current.isNotEmpty) ? current : 'about:blank';
+        final tab = _createTab(initialUrl: initial);
+        final text = session.urlText;
+        tab.urlCtrl.text = text;
+        tab.currentUrl = current;
+        tab.history
+          ..clear()
+          ..addAll(session.history);
+        final rawIndex = session.currentIndex;
+        if (tab.history.isEmpty) {
+          tab.historyIndex = -1;
+          tab.pendingHistoryIndex = null;
+        } else {
+          final clamped = rawIndex.clamp(0, tab.history.length - 1).toInt();
+          tab.historyIndex = clamped;
+          tab.pendingHistoryIndex = clamped;
+        }
+        tab.skipNextHistorySync = true;
+        tab.restoringInitialHistory = true;
+        _tabs.add(tab);
+      }
+      if (_tabs.isEmpty) {
+        _tabs.add(_createTab());
       }
       _currentTabIndex = 0;
     } else {
-      _tabs.add(_createTab());
+      final savedTabs = repo.openTabs.value;
+      if (savedTabs.isNotEmpty) {
+        for (final url in savedTabs) {
+          final tab = _createTab(initialUrl: url);
+          final trimmed = url.trim();
+          if (trimmed.isNotEmpty &&
+              !trimmed.toLowerCase().startsWith('about:blank')) {
+            tab.history
+              ..clear()
+              ..add(trimmed);
+            tab.historyIndex = 0;
+            tab.currentUrl = trimmed;
+            tab.pendingHistoryIndex = 0;
+          }
+          _tabs.add(tab);
+        }
+        _currentTabIndex = 0;
+      } else {
+        _tabs.add(_createTab());
+      }
     }
     // Save the restored tabs back into the repo in case they were just
     // created from saved state. This ensures that any default blank tab
@@ -3324,6 +3533,10 @@ class _BrowserPageState extends State<BrowserPage> {
 
                             // about:blank 不寫入歷史；復原的第一筆載入也跳過
                             if (!isBlank) {
+                              if (tab.restoringInitialHistory) {
+                                tab.restoringInitialHistory = false;
+                              }
+                              _updateHistoryForUrl(tab, s);
                               if (!tab.skipInitialHistory) {
                                 repo.addHistory(s, title ?? '');
                               } else {
@@ -3331,7 +3544,14 @@ class _BrowserPageState extends State<BrowserPage> {
                               }
                             } else {
                               tab.skipInitialHistory = false;
+                              tab.restoringInitialHistory = false;
                             }
+                            if (tab.skipNextHistorySync) {
+                              tab.skipNextHistorySync = false;
+                            } else {
+                              unawaited(_syncHistoryFromController(tab));
+                            }
+                            _updateOpenTabs();
                             if (mounted) setState(() {});
                           }
                         },
@@ -3755,24 +3975,14 @@ class _BrowserPageState extends State<BrowserPage> {
               IconButton(
                 icon: const Icon(Icons.arrow_back),
                 tooltip: '返回',
-                onPressed: () {
-                  if (_tabs.isNotEmpty) {
-                    final tab = _tabs[_currentTabIndex];
-                    tab.controller?.goBack();
-                  }
-                },
+                onPressed: () => _navigateHistoryDelta(-1),
               ),
             ),
             pad(
               IconButton(
                 icon: const Icon(Icons.arrow_forward),
                 tooltip: '前進',
-                onPressed: () {
-                  if (_tabs.isNotEmpty) {
-                    final tab = _tabs[_currentTabIndex];
-                    tab.controller?.goForward();
-                  }
-                },
+                onPressed: () => _navigateHistoryDelta(1),
               ),
             ),
           ];
@@ -3852,7 +4062,11 @@ class _BrowserPageState extends State<BrowserPage> {
               ValueListenableBuilder<List<DownloadTask>>(
                 valueListenable: repo.downloads,
                 builder: (context, list, _) {
-                  final downloadCount = list.where(_isDownloadTaskEntry).length;
+                  final downloadCount =
+                      list
+                          .where(_isDownloadTaskEntry)
+                          .where(_isActiveDownloadTask)
+                          .length;
                   return IconButton(
                     tooltip:
                         downloadCount > 0 ? '下載清單（$downloadCount）' : '下載清單',
@@ -4173,8 +4387,8 @@ class _BrowserPageState extends State<BrowserPage> {
           drag = 0;
         },
         onHorizontalDragEnd: (details) {
-          final controller =
-              tabIndex < _tabs.length ? _tabs[tabIndex].controller : null;
+          final tab = tabIndex < _tabs.length ? _tabs[tabIndex] : null;
+          final controller = tab?.controller;
           if (controller == null) {
             drag = 0;
             return;
@@ -4186,13 +4400,21 @@ class _BrowserPageState extends State<BrowserPage> {
               directionalVelocity > _edgeSwipeVelocityThreshold;
           if (exceededDistance || exceededVelocity) {
             if (isLeft) {
-              controller.canGoBack().then((can) {
-                if (can) controller.goBack();
-              });
+              if (tab != null && _canNavigateHistory(tab, -1)) {
+                _navigateHistoryForTab(tabIndex, -1);
+              } else {
+                controller.canGoBack().then((can) {
+                  if (can) controller.goBack();
+                });
+              }
             } else {
-              controller.canGoForward().then((can) {
-                if (can) controller.goForward();
-              });
+              if (tab != null && _canNavigateHistory(tab, 1)) {
+                _navigateHistoryForTab(tabIndex, 1);
+              } else {
+                controller.canGoForward().then((can) {
+                  if (can) controller.goForward();
+                });
+              }
             }
           }
           drag = 0;
@@ -4785,7 +5007,7 @@ class _BrowserPageState extends State<BrowserPage> {
             builder: (_, __) {
               final list = repo.downloads.value;
 
-              // 只顯示「下載任務」：與工具列徽章一致
+              // 只顯示真實的下載任務（排除匯入/本機項目），完成項目仍會保留在清單中。
               final tasks =
                   list.where(_isDownloadTaskEntry).toList()
                     ..sort((a, b) => b.timestamp.compareTo(a.timestamp));

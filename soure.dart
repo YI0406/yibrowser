@@ -354,6 +354,67 @@ class HomeItem {
   }
 }
 
+/// Persisted browser tab session containing address bar text and navigation history.
+/// The browser restores these sessions to keep tab stacks (back/forward) after restarts.
+class TabSessionState {
+  final List<String> history;
+  final int currentIndex;
+  final String urlText;
+
+  TabSessionState({List<String>? history, int? currentIndex, String? urlText})
+    : this._internal(_cleanHistory(history), currentIndex, urlText);
+
+  TabSessionState._internal(List<String> history, int? index, String? text)
+    : history = List<String>.from(history),
+      currentIndex = _normalizeIndex(history, index),
+      urlText = text?.trim() ?? '';
+
+  static List<String> _cleanHistory(List<String>? values) {
+    if (values == null) return <String>[];
+    return values
+        .map((e) => e.toString().trim())
+        .where(
+          (element) =>
+              element.isNotEmpty &&
+              !element.toLowerCase().startsWith('about:blank'),
+        )
+        .toList();
+  }
+
+  static int _normalizeIndex(List<String> history, int? index) {
+    if (history.isEmpty) return -1;
+    if (index == null) return history.length - 1;
+    if (index < 0) return history.length - 1;
+    if (index >= history.length) return history.length - 1;
+    return index;
+  }
+
+  factory TabSessionState.fromJson(Map<String, dynamic> json) {
+    final rawHistory =
+        (json['history'] as List<dynamic>? ?? [])
+            .map((e) => e.toString())
+            .toList();
+    final idx = (json['index'] as num?)?.toInt();
+    final text = json['urlText'] as String? ?? '';
+    return TabSessionState(
+      history: rawHistory,
+      currentIndex: idx,
+      urlText: text,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'history': history,
+    'index': currentIndex,
+    'urlText': urlText,
+  };
+
+  String? get currentUrl {
+    if (currentIndex < 0 || currentIndex >= history.length) return null;
+    return history[currentIndex];
+  }
+}
+
 /// Represents a download task for either a direct media file or HLS playlist.
 /// Represents a download job. Each task knows where it came from (url),
 /// where it is stored on disk (savePath), what kind of download it is
@@ -818,6 +879,7 @@ class AppRepo extends ChangeNotifier {
         // Persist the list of open browser tabs. Each entry is a URL. This
         // ensures the user’s open tabs are restored on the next launch.
         'openTabs': openTabs.value,
+        'openTabsV2': tabSessions.value.map((e) => e.toJson()).toList(),
       };
       await file.writeAsString(jsonEncode(data));
     } catch (e) {
@@ -833,6 +895,7 @@ class AppRepo extends ChangeNotifier {
       favorites.value = [];
       autoSave.value = true;
       openTabs.value = [];
+      tabSessions.value = [];
       _resumePositionsMs.clear();
       return;
     }
@@ -889,15 +952,42 @@ class AppRepo extends ChangeNotifier {
               .toList();
       homeItems.value = homes;
 
-      // Restore open browser tabs. If absent, set to empty list.
-      final List<dynamic> tabRaw = data['openTabs'] as List<dynamic>? ?? [];
-      openTabs.value = tabRaw.map((e) => e.toString()).toList();
+      // Restore open browser tabs (with full history when available).
+      final List<dynamic> sessionRaw =
+          data['openTabsV2'] as List<dynamic>? ?? const [];
+      if (sessionRaw.isNotEmpty) {
+        final sessions =
+            sessionRaw
+                .map(
+                  (e) => TabSessionState.fromJson(
+                    Map<String, dynamic>.from(e as Map),
+                  ),
+                )
+                .toList();
+        tabSessions.value = sessions;
+        openTabs.value = sessions.map((e) => e.urlText).toList();
+      } else {
+        final List<dynamic> tabRaw = data['openTabs'] as List<dynamic>? ?? [];
+        final urls = tabRaw.map((e) => e.toString()).toList();
+        openTabs.value = urls;
+        tabSessions.value =
+            urls
+                .map(
+                  (url) => TabSessionState(
+                    history: [url],
+                    currentIndex: 0,
+                    urlText: url,
+                  ),
+                )
+                .toList();
+      }
     } catch (e) {
       if (kDebugMode) print('Failed to load state: $e');
       downloads.value = [];
       favorites.value = [];
       autoSave.value = true;
       openTabs.value = [];
+      tabSessions.value = [];
       _resumePositionsMs.clear();
     }
   }
@@ -1945,8 +2035,22 @@ class AppRepo extends ChangeNotifier {
   /// modified (added, removed or navigated). By using this helper
   /// instead of directly assigning to [openTabs], consumers ensure that
   /// the state file is updated on disk and the notifier emits.
-  void setOpenTabs(List<String> urls) {
+  void setOpenTabs(List<String> urls, {List<TabSessionState>? sessions}) {
     openTabs.value = List<String>.from(urls);
+    if (sessions != null) {
+      tabSessions.value = List<TabSessionState>.from(sessions);
+    } else {
+      tabSessions.value =
+          urls
+              .map(
+                (url) => TabSessionState(
+                  history: [url],
+                  currentIndex: 0,
+                  urlText: url,
+                ),
+              )
+              .toList();
+    }
     _saveState();
   }
 
@@ -2114,6 +2218,11 @@ class AppRepo extends ChangeNotifier {
   /// Keeping this state here allows the user’s open pages to be restored
   /// across app launches rather than always starting with a single blank tab.
   final ValueNotifier<List<String>> openTabs = ValueNotifier<List<String>>([]);
+
+  /// Persisted per-tab sessions including navigation history so back/forward
+  /// stacks survive application restarts.
+  final ValueNotifier<List<TabSessionState>> tabSessions =
+      ValueNotifier<List<TabSessionState>>([]);
 
   /// A transient notifier used to request the browser page to create a new
   /// blank tab. The value is set to a new object for each request so listeners
