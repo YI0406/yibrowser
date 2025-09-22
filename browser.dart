@@ -75,6 +75,8 @@ class _BlockedExternalNavigation {
   });
 }
 
+enum _BlockedNavigationFallbackResult { openedNewTab, suppressed, unavailable }
+
 class _ExternalNavigationIntent {
   final bool shouldBlock;
   final bool isAppLink;
@@ -1821,6 +1823,7 @@ class _BrowserPageState extends State<BrowserPage> {
   void _showExternalAppBlockedSnackBar(
     _BlockedExternalNavigation blocked, {
     bool openedInNewTab = false,
+    bool bypassedInWebView = false,
   }) {
     if (!mounted) return;
     final now = DateTime.now();
@@ -1832,7 +1835,7 @@ class _BrowserPageState extends State<BrowserPage> {
 
     final messenger = ScaffoldMessenger.of(context);
     final label = _describeExternalAppTarget(blocked);
-    final bool fallbackToWeb = blocked.canBypassInWebView;
+    final bool fallbackToWeb = bypassedInWebView;
     final messageText =
         openedInNewTab
             ? '已阻止網頁打開第三方 App($label)，已在新分頁開啟網頁內容'
@@ -1941,17 +1944,29 @@ class _BrowserPageState extends State<BrowserPage> {
         }
       }
     }
-    final openedInNewTab = _openBlockedNavigationInNewTab(blocked);
-    _showExternalAppBlockedSnackBar(blocked, openedInNewTab: openedInNewTab);
-    if (!openedInNewTab && controller != null) {
-      _attemptAppLinkBypass(controller, blocked);
+    final fallbackResult = _openBlockedNavigationInNewTab(blocked);
+    final openedInNewTab =
+        fallbackResult == _BlockedNavigationFallbackResult.openedNewTab;
+    final shouldAttemptBypass =
+        controller != null &&
+        fallbackResult == _BlockedNavigationFallbackResult.unavailable &&
+        blocked.canBypassInWebView;
+    _showExternalAppBlockedSnackBar(
+      blocked,
+      openedInNewTab: openedInNewTab,
+      bypassedInWebView: shouldAttemptBypass,
+    );
+    if (shouldAttemptBypass) {
+      _attemptAppLinkBypass(controller!, blocked);
     }
   }
 
-  bool _openBlockedNavigationInNewTab(_BlockedExternalNavigation blocked) {
+  _BlockedNavigationFallbackResult _openBlockedNavigationInNewTab(
+    _BlockedExternalNavigation blocked,
+  ) {
     final normalizedFallback = _normalizeHttpUrl(blocked.fallbackUrl);
     if (normalizedFallback == null) {
-      return false;
+      return _BlockedNavigationFallbackResult.unavailable;
     }
     final fallbackVariants = _normalizedBypassCandidates(normalizedFallback)
       ..add(normalizedFallback);
@@ -1962,7 +1977,7 @@ class _BrowserPageState extends State<BrowserPage> {
     for (final variant in fallbackVariants) {
       final ts = _recentBlockedFallbacks[variant];
       if (ts != null && now.difference(ts) <= _kBlockedFallbackCooldown) {
-        return false;
+        return _BlockedNavigationFallbackResult.suppressed;
       }
     }
     for (final tab in _tabs) {
@@ -1977,14 +1992,14 @@ class _BrowserPageState extends State<BrowserPage> {
         for (final variant in fallbackVariants) {
           _recentBlockedFallbacks[variant] = now;
         }
-        return false;
+        return _BlockedNavigationFallbackResult.suppressed;
       }
     }
     for (final variant in fallbackVariants) {
       _recentBlockedFallbacks[variant] = now;
     }
     unawaited(_openLinkInNewTab(normalizedFallback));
-    return true;
+    return _BlockedNavigationFallbackResult.openedNewTab;
   }
 
   bool _flagTruthy(dynamic value) {
