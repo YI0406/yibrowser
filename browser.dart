@@ -1998,6 +1998,10 @@ class _BrowserPageState extends State<BrowserPage> {
     for (final variant in fallbackVariants) {
       _recentBlockedFallbacks[variant] = now;
     }
+    _rememberTemporaryHostBypassFromUrl(normalizedFallback);
+    for (final variant in fallbackVariants) {
+      _appLinkBypassUrls.add(variant);
+    }
     unawaited(_openLinkInNewTab(normalizedFallback));
     return _BlockedNavigationFallbackResult.openedNewTab;
   }
