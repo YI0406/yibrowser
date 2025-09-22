@@ -24,8 +24,11 @@
 	<string>????</string>
 	<key>CFBundleVersion</key>
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
+	<key>AppGroupId</key>
+	<string>$(CUSTOM_GROUP_ID)</string>
 	<key>GADApplicationIdentifier</key>
 	<string>ca-app-pub-1219775982243471~1725741402</string>
+	
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
@@ -244,6 +247,17 @@
 		<dict>
 			<key>SKAdNetworkIdentifier</key>
 			<string>3qcr597p9d.skadnetwork</string>
+		</dict>
+	</array>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>ShareMedia-$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+			</array>
 		</dict>
 	</array>
 	<key>UIApplicationShortcutItems</key>
