@@ -2,6 +2,7 @@ import Flutter
 import UIKit
 import AVFoundation
 
+
 @main
 @objc class AppDelegate: FlutterAppDelegate {
   override func application(
@@ -30,4 +31,5 @@ import AVFoundation
     // Background Modes -> Audio, AirPlay, and Picture in Picture
     return result
   }
+    
 }

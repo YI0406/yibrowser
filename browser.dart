@@ -207,6 +207,8 @@ class _BrowserPageState extends State<BrowserPage> {
     'business.instagram.com',
     'threads.net',
     'www.threads.net',
+    'threads.com',
+    'www.threads.com',
   };
   final Set<String> _learnedIosUniversalLinkHosts = <String>{};
   final Set<String> _allKnownIosUniversalLinkHosts = {

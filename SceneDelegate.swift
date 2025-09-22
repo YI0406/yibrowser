@@ -1,6 +1,7 @@
 import UIKit
 import Flutter
 
+
 class SceneDelegate: UIResponder, UIWindowSceneDelegate {
   var window: UIWindow?
     private var quickActionChannel: FlutterMethodChannel?
@@ -73,4 +74,5 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
       }
       completionHandler(true)
     }
+    
 }
