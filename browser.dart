@@ -165,7 +165,38 @@ class _BrowserPageState extends State<BrowserPage> {
   String? _lastBlockedExternalUrl;
   DateTime? _lastBlockedExternalAt;
   final Set<String> _appLinkBypassUrls = <String>{};
+  static const Set<String> _kDefaultIosUniversalLinkHosts = {
+    'x.com',
+    'www.x.com',
+    'twitter.com',
+    'www.twitter.com',
+    'mobile.twitter.com',
+    'm.twitter.com',
+    'facebook.com',
+    'www.facebook.com',
+    'm.facebook.com',
+    'l.facebook.com',
+    'lm.facebook.com',
+    'mbasic.facebook.com',
+    'fb.com',
+    'www.fb.com',
+    'm.fb.com',
+    'messenger.com',
+    'www.messenger.com',
+    'm.me',
+    'instagram.com',
+    'www.instagram.com',
+    'm.instagram.com',
+    'l.instagram.com',
+    'business.instagram.com',
+    'threads.net',
+    'www.threads.net',
+  };
   final Set<String> _learnedIosUniversalLinkHosts = <String>{};
+  final Set<String> _allKnownIosUniversalLinkHosts = {
+    ..._kDefaultIosUniversalLinkHosts,
+  };
+
   static const Set<String> _kWebSchemes = {
     'http',
     'https',
@@ -195,18 +226,8 @@ class _BrowserPageState extends State<BrowserPage> {
     'opensExternalApp',
     'openWithSystemBrowser',
   ];
-  static const Set<String> _kIosUniversalLinkExactHosts = {
-    'x.com',
-    'www.x.com',
-    'twitter.com',
-    'www.twitter.com',
-    'mobile.twitter.com',
-    'm.twitter.com',
-    'm.facebook.com',
-    'facebook.com',
-    'www.instagram.com',
-    'instagram.com',
-  };
+  static const String _kPrefLearnedUniversalLinkHosts =
+      'learned_universal_link_hosts';
   static const Set<String> _kIosUniversalLinkHostSuffixes = {
     'apps.apple.com',
     'itunes.apple.com',
@@ -1717,6 +1738,31 @@ class _BrowserPageState extends State<BrowserPage> {
       _blockExternalApp = sp.getBool('block_external_app') ?? false;
       if (mounted) setState(() {});
     }();
+    // Load cached universal-link hosts so iOS can automatically keep pages in-web.
+    () async {
+      final sp = await SharedPreferences.getInstance();
+      final saved =
+          sp.getStringList(_kPrefLearnedUniversalLinkHosts) ?? const <String>[];
+      final normalized =
+          saved
+              .map((e) => e.trim().toLowerCase())
+              .where(
+                (element) =>
+                    element.isNotEmpty &&
+                    !_kDefaultIosUniversalLinkHosts.contains(element),
+              )
+              .toSet();
+      if (_learnedIosUniversalLinkHosts.isNotEmpty) {
+        normalized.addAll(_learnedIosUniversalLinkHosts);
+      }
+      _learnedIosUniversalLinkHosts
+        ..clear()
+        ..addAll(normalized);
+      _allKnownIosUniversalLinkHosts
+        ..clear()
+        ..addAll(_kDefaultIosUniversalLinkHosts)
+        ..addAll(_learnedIosUniversalLinkHosts);
+    }();
   }
 
   void _toggleBlockExternalAppSetting() async {
@@ -1901,7 +1947,7 @@ class _BrowserPageState extends State<BrowserPage> {
 
   bool _matchesIosUniversalLinkHost(String host) {
     final normalizedHost = host.toLowerCase();
-    if (_learnedIosUniversalLinkHosts.contains(normalizedHost)) {
+    if (_allKnownIosUniversalLinkHosts.contains(normalizedHost)) {
       return true;
     }
     for (final suffix in _kIosUniversalLinkHostSuffixes) {
