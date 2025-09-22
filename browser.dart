@@ -1141,14 +1141,18 @@ class _BrowserPageState extends State<BrowserPage> {
     );
   }
 
-  Future<void> _openLinkInNewTab(String url) async {
+  Future<void> _openLinkInNewTab(String url, {bool makeActive = true}) async {
     final target = url.trim();
     if (target.isEmpty) return;
     final tab = _createTab(initialUrl: target);
     tab.currentUrl = target;
+    final previousIndex =
+        (_currentTabIndex >= 0 && _currentTabIndex < _tabs.length)
+            ? _currentTabIndex
+            : 0;
     setState(() {
       _tabs.add(tab);
-      _currentTabIndex = _tabs.length - 1;
+      _currentTabIndex = makeActive ? _tabs.length - 1 : previousIndex;
     });
     _updateOpenTabs();
     await _persistCurrentTabIndex();
@@ -1941,6 +1945,7 @@ class _BrowserPageState extends State<BrowserPage> {
     unawaited(() async {
       try {
         final sp = await SharedPreferences.getInstance();
+        await sp.setStringList(_kPrefLearnedUniversalLinkHosts, snapshot);
       } catch (_) {}
     }());
   }
@@ -2435,6 +2440,29 @@ class _BrowserPageState extends State<BrowserPage> {
     return normalized.toString();
   }
 
+  Set<String> _normalizedBypassCandidates(String? url) {
+    final normalized = _normalizeUrlForBypass(url);
+    if (normalized.isEmpty) {
+      return <String>{};
+    }
+
+    final variants = <String>{normalized};
+    final parsed = Uri.tryParse(normalized);
+    if (parsed != null &&
+        _isHttpScheme(parsed.scheme) &&
+        (parsed.path.isEmpty || parsed.path == '/') &&
+        !parsed.hasQuery &&
+        !parsed.hasFragment) {
+      final base =
+          '${parsed.scheme.toLowerCase()}://${parsed.host.toLowerCase()}';
+      variants
+        ..add(base)
+        ..add('$base/');
+    }
+
+    return variants;
+  }
+
   bool _consumePendingAppLinkBypass({
     String? effectiveRaw,
     String? rawUrl,
@@ -2442,10 +2470,7 @@ class _BrowserPageState extends State<BrowserPage> {
   }) {
     final candidates = <String>{};
     void addCandidate(String? value) {
-      final normalized = _normalizeUrlForBypass(value);
-      if (normalized.isNotEmpty) {
-        candidates.add(normalized);
-      }
+      candidates.addAll(_normalizedBypassCandidates(value));
     }
 
     addCandidate(effectiveRaw);
@@ -2490,17 +2515,22 @@ class _BrowserPageState extends State<BrowserPage> {
     if (target == null) {
       return;
     }
-    final normalizedTarget = _normalizeUrlForBypass(target.toString());
-    if (normalizedTarget.isEmpty) {
+    final targetString = target.toString();
+    if (targetString.trim().isEmpty) {
       return;
     }
-    if (_appLinkBypassUrls.contains(normalizedTarget)) {
+    final candidateKeys =
+        <String>{}
+          ..addAll(_normalizedBypassCandidates(targetString))
+          ..addAll(_normalizedBypassCandidates(blocked.rawUrl))
+          ..addAll(
+            _normalizedBypassCandidates(blocked.resolvedUri?.toString()),
+          );
+    if (candidateKeys.isEmpty) {
       return;
     }
-    final candidateKeys = <String>{normalizedTarget};
-    final rawNormalized = _normalizeUrlForBypass(blocked.rawUrl);
-    if (rawNormalized.isNotEmpty) {
-      candidateKeys.add(rawNormalized);
+    if (candidateKeys.any(_appLinkBypassUrls.contains)) {
+      return;
     }
     for (final key in candidateKeys) {
       _appLinkBypassUrls.add(key);
@@ -2882,13 +2912,11 @@ class _BrowserPageState extends State<BrowserPage> {
                             return true;
                           }
                           if (uri != null && repo.blockPopup.value) {
-                            ctl.loadUrl(urlRequest: URLRequest(url: uri));
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                duration: Duration(seconds: 1),
-                                content: Text('彈出視窗已被阻擋'),
-                              ),
+                            await _openLinkInNewTab(
+                              uri.toString(),
+                              makeActive: false,
                             );
+                            _showSnackBar('已在新分頁開啟');
                             return true;
                           }
                           return false;
