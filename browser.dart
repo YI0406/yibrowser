@@ -43,6 +43,7 @@ class _TabData {
   String? pageTitle;
   String? currentUrl;
   InAppWebViewController? controller;
+  final Set<String> allowedAppLinkHosts = <String>{};
 
   /// When true the first page load should not be recorded in history.
   bool skipInitialHistory = true;
@@ -1156,10 +1157,17 @@ class _BrowserPageState extends State<BrowserPage> {
     );
   }
 
-  Future<void> _openLinkInNewTab(String url, {bool makeActive = true}) async {
+  Future<void> _openLinkInNewTab(
+    String url, {
+    bool makeActive = true,
+    Set<String>? allowedAppLinkHosts,
+  }) async {
     final target = url.trim();
     if (target.isEmpty) return;
-    final tab = _createTab(initialUrl: target);
+    final tab = _createTab(
+      initialUrl: target,
+      allowedAppLinkHosts: allowedAppLinkHosts,
+    );
     tab.currentUrl = target;
     final previousIndex =
         (_currentTabIndex >= 0 && _currentTabIndex < _tabs.length)
@@ -1388,8 +1396,19 @@ class _BrowserPageState extends State<BrowserPage> {
 
   // Removed the obsolete _showHome flag. Home navigation happens via RootNav.
 
-  _TabData _createTab({String initialUrl = 'about:blank'}) {
+  _TabData _createTab({
+    String initialUrl = 'about:blank',
+    Set<String>? allowedAppLinkHosts,
+  }) {
     final tab = _TabData(initialUrl: initialUrl);
+    if (allowedAppLinkHosts != null && allowedAppLinkHosts.isNotEmpty) {
+      for (final host in allowedAppLinkHosts) {
+        final normalized = _normalizeHostComponent(host);
+        if (normalized != null) {
+          tab.allowedAppLinkHosts.add(normalized);
+        }
+      }
+    }
     tab.urlCtrl.addListener(() {
       if (mounted) setState(() {});
     });
@@ -2002,7 +2021,21 @@ class _BrowserPageState extends State<BrowserPage> {
     for (final variant in fallbackVariants) {
       _appLinkBypassUrls.add(variant);
     }
-    unawaited(_openLinkInNewTab(normalizedFallback));
+    final allowedHosts = <String>{};
+    void addHostCandidate(String? host) {
+      final normalized = _normalizeHostComponent(host);
+      if (normalized != null) {
+        allowedHosts.add(normalized);
+      }
+    }
+
+    addHostCandidate(_extractHostFromString(normalizedFallback));
+    addHostCandidate(_extractHostFromString(blocked.rawUrl));
+    addHostCandidate(_extractHostFromWebUri(blocked.resolvedUri));
+
+    unawaited(
+      _openLinkInNewTab(normalizedFallback, allowedAppLinkHosts: allowedHosts),
+    );
     return _BlockedNavigationFallbackResult.openedNewTab;
   }
 
@@ -2264,10 +2297,13 @@ class _BrowserPageState extends State<BrowserPage> {
     NavigationAction? action,
     URLRequest? request,
     dynamic createWindowRequest,
+    InAppWebViewController? controller,
   }) {
     if (!_blockExternalApp) return null;
     final now = DateTime.now();
     _purgeExpiredAppLinkBypassHosts(now);
+    final _TabData? requestingTab =
+        controller != null ? _tabForController(controller) : null;
 
     String? scheme = uri?.scheme;
     String? rawUrl = uri?.toString();
@@ -2478,6 +2514,27 @@ class _BrowserPageState extends State<BrowserPage> {
       rawUrl: rawUrl,
       resolvedUri: resolvedUri,
     );
+    if (shouldBlock &&
+        requestingTab != null &&
+        requestingTab.allowedAppLinkHosts.isNotEmpty) {
+      final candidateHosts = <String>{};
+      void addCandidate(String? host) {
+        final normalized = _normalizeHostComponent(host);
+        if (normalized != null) {
+          candidateHosts.add(normalized);
+        }
+      }
+
+      addCandidate(normalizedHost);
+      addCandidate(_extractHostFromString(effectiveRaw));
+      addCandidate(_extractHostFromString(rawUrl));
+      addCandidate(_extractHostFromWebUri(resolvedUri));
+      addCandidate(_extractHostFromString(fallbackUrl));
+
+      if (candidateHosts.any(requestingTab.allowedAppLinkHosts.contains)) {
+        return null;
+      }
+    }
     if (shouldBlock && dueToAppLink) {
       String? hostForBypass = normalizedHost;
       String? schemeForBypass = effectiveScheme ?? scheme;
@@ -2555,6 +2612,45 @@ class _BrowserPageState extends State<BrowserPage> {
       return null;
     }
     return parsed.toString();
+  }
+
+  String? _normalizeHostComponent(String? host) {
+    final normalized = host?.trim().toLowerCase();
+    if (normalized == null || normalized.isEmpty) {
+      return null;
+    }
+    return normalized;
+  }
+
+  String? _extractHostFromString(String? value) {
+    if (value == null) {
+      return null;
+    }
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) {
+      return null;
+    }
+    try {
+      final parsed = Uri.tryParse(trimmed);
+      final host = parsed?.host;
+      if (host != null && host.isNotEmpty) {
+        return host.toLowerCase();
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  String? _extractHostFromWebUri(WebUri? uri) {
+    if (uri == null) {
+      return null;
+    }
+    try {
+      final host = uri.host;
+      if (host != null && host.isNotEmpty) {
+        return host.toLowerCase();
+      }
+    } catch (_) {}
+    return _extractHostFromString(uri.toString());
   }
 
   bool _isHttpUrlString(String? value) {
@@ -3129,7 +3225,10 @@ class _BrowserPageState extends State<BrowserPage> {
                         },
                         onLoadStart: (c, u) async {
                           // 雙保險：硬攔非 Web scheme（極少數情況仍可能觸發）
-                          final blocked = _shouldPreventExternalNavigation(u);
+                          final blocked = _shouldPreventExternalNavigation(
+                            u,
+                            controller: c,
+                          );
                           if (blocked != null) {
                             _handleBlockedExternalNavigation(
                               blocked,
@@ -3219,6 +3318,7 @@ class _BrowserPageState extends State<BrowserPage> {
                           final uri = req?.url;
                           final blocked = _shouldPreventExternalNavigation(
                             uri,
+                            controller: ctl,
                             request: req,
                             createWindowRequest: createWindowRequest,
                           );
@@ -3283,6 +3383,7 @@ class _BrowserPageState extends State<BrowserPage> {
                         ) async {
                           final blocked = _shouldPreventExternalNavigation(
                             navigationAction.request.url,
+                            controller: controller,
                             action: navigationAction,
                           );
                           if (blocked != null) {
