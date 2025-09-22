@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:ui';
-
+import 'package:path/path.dart' as p;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
@@ -14,12 +14,16 @@ class VideoPlayerPage extends StatefulWidget {
   final String path;
   final String title;
   final Duration? startAt;
+  final List<DownloadTask>? playlist;
+  final int? initialIndex;
 
   const VideoPlayerPage({
     super.key,
     required this.path,
     this.title = '播放器',
     this.startAt,
+    this.playlist,
+    this.initialIndex,
   });
 
   @override
@@ -31,6 +35,12 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   final NativePlayerController _player = NativePlayerController();
   final VolumeController _systemVolume = VolumeController.instance;
   final GlobalKey _surfaceKey = GlobalKey();
+  late String _currentPath;
+  late String _currentTitle;
+  Duration? _pendingStartAt;
+  int? _currentPlaylistIndex;
+  List<DownloadTask> _playlist = <DownloadTask>[];
+  bool _completionHandled = false;
 
   static final Map<String, Duration> _resumePositions = {};
 
@@ -60,28 +70,57 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   double _speedBoostOriginalRate = 1.0;
   bool _showSpeedOverlay = false;
   Size _videoSurfaceSize = Size.zero;
+  bool get _hasPlaylist =>
+      _playlist.isNotEmpty && _currentPlaylistIndex != null;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _currentPath = widget.path;
+    _currentTitle = widget.title;
+    _pendingStartAt = widget.startAt;
+    if (widget.playlist != null && widget.playlist!.isNotEmpty) {
+      _playlist = List<DownloadTask>.from(widget.playlist!);
+      int? resolvedIndex = widget.initialIndex;
+      if (resolvedIndex == null ||
+          resolvedIndex < 0 ||
+          resolvedIndex >= _playlist.length) {
+        resolvedIndex = _playlist.indexWhere(
+          (task) => task.savePath == widget.path,
+        );
+      }
+      if (resolvedIndex != null &&
+          resolvedIndex >= 0 &&
+          resolvedIndex < _playlist.length) {
+        _currentPlaylistIndex = resolvedIndex;
+        final entry = _playlist[resolvedIndex];
+        _currentPath = entry.savePath;
+        _currentTitle = entry.name ?? p.basename(entry.savePath);
+      }
+    }
     _player.addListener(_handlePlayerValue);
     _initializePlayer();
     _bindVolume();
   }
 
   Future<void> _initializePlayer() async {
-    await _player.setSource(widget.path);
-    if (widget.startAt != null && widget.startAt! > Duration.zero) {
-      _dragTarget = widget.startAt!;
+    await _player.setSource(_currentPath);
+    final initial = _pendingStartAt;
+    if (initial != null && initial > Duration.zero) {
+      _dragTarget = initial;
     } else {
       final resume =
-          _resumePositions[widget.path] ??
-          AppRepo.I.resumePositionFor(widget.path);
+          _resumePositions[_currentPath] ??
+          AppRepo.I.resumePositionFor(_currentPath);
       if (resume != null && resume > Duration.zero) {
         _dragTarget = resume;
+      } else {
+        _dragTarget = Duration.zero;
       }
     }
+    _pendingStartAt = null;
+    _completionHandled = false;
     WidgetsBinding.instance.addPostFrameCallback((_) => _updateViewport());
   }
 
@@ -104,6 +143,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   }
 
   void _handlePlayerValue() {
+    final previous = _latestValue;
     final value = _player.value;
     _latestValue = value;
     final newSpeed = value.speed;
@@ -114,8 +154,8 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     final pos = value.position;
     if ((pos - _lastPersistedPosition).abs() >= const Duration(seconds: 5)) {
       _lastPersistedPosition = pos;
-      _resumePositions[widget.path] = pos;
-      AppRepo.I.setResumePosition(widget.path, pos);
+      _resumePositions[_currentPath] = pos;
+      AppRepo.I.setResumePosition(_currentPath, pos);
     }
     if (!_initialized && value.isInitialized) {
       _initialized = true;
@@ -127,6 +167,64 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
       }
       _scheduleHideControls();
     }
+    if (value.isCompleted && !previous.isCompleted) {
+      _handlePlaybackCompleted();
+    } else if (!value.isCompleted) {
+      _completionHandled = false;
+    }
+  }
+
+  int? _nextPlayableIndex(int current) {
+    if (_playlist.isEmpty) return null;
+    for (int i = current + 1; i < _playlist.length; i++) {
+      final task = _playlist[i];
+      final type = AppRepo.I.resolvedTaskType(task);
+      final exists = File(task.savePath).existsSync();
+      if (exists && (type == 'video' || type == 'audio')) {
+        return i;
+      }
+    }
+    return null;
+  }
+
+  Future<void> _switchToPlaylistIndex(int index) async {
+    if (index < 0 || index >= _playlist.length) return;
+    final task = _playlist[index];
+    final type = AppRepo.I.resolvedTaskType(task);
+    final exists = File(task.savePath).existsSync();
+    if (!(exists && (type == 'video' || type == 'audio'))) {
+      final fallback = _nextPlayableIndex(index);
+      if (fallback != null) {
+        await _switchToPlaylistIndex(fallback);
+      }
+      return;
+    }
+    final currentValue = _player.value;
+    final currentPos = currentValue.position;
+    _resumePositions[_currentPath] = currentPos;
+    AppRepo.I.setResumePosition(_currentPath, currentPos);
+    final newTitle = task.name ?? p.basename(task.savePath);
+    setState(() {
+      _currentPlaylistIndex = index;
+      _currentPath = task.savePath;
+      _currentTitle = newTitle;
+      _pendingStartAt = null;
+      _dragTarget = Duration.zero;
+      _initialized = false;
+      _completionHandled = false;
+    });
+    await _initializePlayer();
+  }
+
+  void _handlePlaybackCompleted() {
+    if (!_hasPlaylist) return;
+    if (_completionHandled) return;
+    final currentIndex = _currentPlaylistIndex;
+    if (currentIndex == null) return;
+    final nextIndex = _nextPlayableIndex(currentIndex);
+    if (nextIndex == null) return;
+    _completionHandled = true;
+    unawaited(_switchToPlaylistIndex(nextIndex));
   }
 
   @override
@@ -135,8 +233,8 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     _player.removeListener(_handlePlayerValue);
     final value = _player.value;
     final pos = value.position;
-    _resumePositions[widget.path] = pos;
-    AppRepo.I.setResumePosition(widget.path, pos);
+    _resumePositions[_currentPath] = pos;
+    AppRepo.I.setResumePosition(_currentPath, pos);
     if (!value.inPip) {
       // Ensure playback stops when leaving the page to avoid lingering native sessions.
       unawaited(_player.pause());
@@ -400,7 +498,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   @override
   Widget build(BuildContext context) {
     final mediaPadding = MediaQuery.of(context).padding;
-    final title = widget.title;
+    final title = _currentTitle;
 
     return Scaffold(
       backgroundColor: Colors.black,

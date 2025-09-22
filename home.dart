@@ -437,7 +437,22 @@ class _HomePageState extends State<HomePage>
     bool editing = false,
     int? index,
   }) {
-    final uri = Uri.tryParse(item.url);
+    String _normalizeUrl(String input) {
+      final trimmed = input.trim();
+      if (trimmed.isEmpty) return trimmed;
+      final schemePattern = RegExp(r'^[a-zA-Z][a-zA-Z0-9+.-]*://');
+      if (schemePattern.hasMatch(trimmed)) {
+        return trimmed;
+      }
+      if (trimmed.startsWith('//')) {
+        return 'https:$trimmed';
+      }
+      final guess = Uri.tryParse('https://$trimmed');
+      return guess?.toString() ?? trimmed;
+    }
+
+    final normalizedUrl = _normalizeUrl(item.url);
+    final uri = Uri.tryParse(normalizedUrl);
     final host = uri?.host ?? '';
     // 先嘗試網站自己的 favicon.ico，失敗再退回 Google s2 服務
     final faviconDirect = host.isNotEmpty ? 'https://$host/favicon.ico' : null;
@@ -512,7 +527,8 @@ class _HomePageState extends State<HomePage>
     if (!editing) {
       return GestureDetector(
         onTap: () {
-          widget.onOpen?.call(item.url);
+          final target = normalizedUrl.isNotEmpty ? normalizedUrl : item.url;
+          widget.onOpen?.call(target);
         },
         onLongPress: () {
           setState(() {

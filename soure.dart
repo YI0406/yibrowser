@@ -1964,8 +1964,28 @@ class AppRepo extends ChangeNotifier {
   /// a valid web resource and [name] should be a short label. Both
   /// parameters are trimmed before use. After inserting the item the
   /// updated state is persisted to disk.
+  String _normalizeHomeUrl(String url) {
+    final trimmed = url.trim();
+    if (trimmed.isEmpty) return trimmed;
+    final parsed = Uri.tryParse(trimmed);
+    if (parsed == null) return trimmed;
+    if (parsed.hasScheme && parsed.host.isNotEmpty) {
+      return trimmed;
+    }
+    if (trimmed.startsWith('//')) {
+      final candidate = 'https:$trimmed';
+      final uri = Uri.tryParse(candidate);
+      return (uri != null && uri.host.isNotEmpty) ? candidate : trimmed;
+    }
+    final guess = Uri.tryParse('https://$trimmed');
+    if (guess != null && guess.host.isNotEmpty) {
+      return guess.toString();
+    }
+    return trimmed;
+  }
+
   void addHomeItem(String url, String name) {
-    final u = url.trim();
+    final u = _normalizeHomeUrl(url);
     final n = name.trim();
     if (u.isEmpty || n.isEmpty) return;
     if (hasReachedFreeHomeShortcutLimit) {
@@ -1998,7 +2018,7 @@ class AppRepo extends ChangeNotifier {
     final item = items[index];
     final u = url?.trim();
     final n = name?.trim();
-    if (u != null && u.isNotEmpty) item.url = u;
+    if (u != null && u.isNotEmpty) item.url = _normalizeHomeUrl(u);
     if (n != null && n.isNotEmpty) item.name = n;
     homeItems.value = items;
     notifyListeners();

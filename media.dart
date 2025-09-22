@@ -261,7 +261,11 @@ class _MediaAllState extends State<_MediaAll> {
     });
   }
 
-  Future<void> _openTask(BuildContext context, DownloadTask t) async {
+  Future<void> _openTask(
+    BuildContext context,
+    DownloadTask t, {
+    List<DownloadTask>? candidates,
+  }) async {
     if (!File(t.savePath).existsSync()) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(duration: Duration(seconds: 1), content: Text('檔案已不存在')),
@@ -270,12 +274,35 @@ class _MediaAllState extends State<_MediaAll> {
     }
     final resolvedType = AppRepo.I.resolvedTaskType(t);
     if (resolvedType == 'video' || resolvedType == 'audio') {
+      List<DownloadTask>? playlist;
+      int? initialIndex;
+      if (candidates != null) {
+        final filtered = <DownloadTask>[];
+        for (final item in candidates) {
+          final type = AppRepo.I.resolvedTaskType(item);
+          final exists = File(item.savePath).existsSync();
+          if (exists && (type == 'video' || type == 'audio')) {
+            filtered.add(item);
+          }
+        }
+        if (filtered.isNotEmpty) {
+          final idx = filtered.indexWhere(
+            (item) => item.savePath == t.savePath,
+          );
+          if (idx >= 0) {
+            playlist = filtered;
+            initialIndex = idx;
+          }
+        }
+      }
       Navigator.of(context).push(
         MaterialPageRoute(
           builder:
               (_) => VideoPlayerPage(
                 path: t.savePath,
                 title: t.name ?? path.basename(t.savePath),
+                playlist: playlist,
+                initialIndex: initialIndex,
               ),
         ),
       );
@@ -573,7 +600,7 @@ class _MediaAllState extends State<_MediaAll> {
                       if (_selectMode) {
                         _toggleSelect(task);
                       } else {
-                        _openTask(context, task);
+                        _openTask(context, task, candidates: tasks);
                       }
                     },
                     onLongPress: () async {
@@ -706,7 +733,11 @@ class _MyFavorites extends StatelessWidget {
     await Share.shareXFiles([XFile(task.savePath)]);
   }
 
-  Future<void> _handleOpen(BuildContext context, DownloadTask task) async {
+  Future<void> _handleOpen(
+    BuildContext context,
+    DownloadTask task, {
+    List<DownloadTask>? candidates,
+  }) async {
     if (!File(task.savePath).existsSync()) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(duration: Duration(seconds: 1), content: Text('檔案已不存在')),
@@ -715,12 +746,35 @@ class _MyFavorites extends StatelessWidget {
     }
     final resolvedType = AppRepo.I.resolvedTaskType(task);
     if (resolvedType == 'video' || resolvedType == 'audio') {
+      List<DownloadTask>? playlist;
+      int? initialIndex;
+      if (candidates != null) {
+        final filtered = <DownloadTask>[];
+        for (final item in candidates) {
+          final type = AppRepo.I.resolvedTaskType(item);
+          final exists = File(item.savePath).existsSync();
+          if (exists && (type == 'video' || type == 'audio')) {
+            filtered.add(item);
+          }
+        }
+        if (filtered.isNotEmpty) {
+          final idx = filtered.indexWhere(
+            (item) => item.savePath == task.savePath,
+          );
+          if (idx >= 0) {
+            playlist = filtered;
+            initialIndex = idx;
+          }
+        }
+      }
       Navigator.of(context).push(
         MaterialPageRoute(
           builder:
               (_) => VideoPlayerPage(
                 path: task.savePath,
                 title: task.name ?? path.basename(task.savePath),
+                playlist: playlist,
+                initialIndex: initialIndex,
               ),
         ),
       );
@@ -827,7 +881,7 @@ class _MyFavorites extends StatelessWidget {
                     Text('時長: ${formatDuration(task.duration!)}'),
                 ],
               ),
-              onTap: () => _handleOpen(context, task),
+              onTap: () => _handleOpen(context, task, candidates: favs),
               trailing: IconButton(
                 icon: const Icon(Icons.favorite, color: Colors.redAccent),
                 tooltip: '取消收藏',

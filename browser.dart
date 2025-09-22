@@ -40,6 +40,7 @@ class _TabData {
   final Key webviewKey;
   final TextEditingController urlCtrl;
   final ValueNotifier<double> progress;
+  final ValueNotifier<bool> isLoading;
   String? pageTitle;
   String? currentUrl;
   InAppWebViewController? controller;
@@ -55,7 +56,8 @@ class _TabData {
                 ? ''
                 : initialUrl,
       ),
-      progress = ValueNotifier<double>(0.0);
+      progress = ValueNotifier<double>(0.0),
+      isLoading = ValueNotifier<bool>(false);
 }
 
 class _BlockedExternalNavigation {
@@ -848,15 +850,9 @@ class _BrowserPageState extends State<BrowserPage> {
         t.url.startsWith('asset://');
     final fromLibrary =
         (t.kind == 'library' || t.kind == 'local' || t.kind == 'import');
-    final isTaskState =
-        s == 'downloading' ||
-        s == 'paused' ||
-        s == 'queued' ||
-        s == 'error' ||
-        s == 'done' ||
-        s == 'canceled' ||
-        s == 'cancelled';
-    return !isLocalUrl && !fromLibrary && isTaskState;
+    final activeStates = <String>{'downloading', 'paused', 'queued', 'error'};
+    final countableState = activeStates.contains(s);
+    return !isLocalUrl && !fromLibrary && countableState;
   }
 
   /// Produce a compact progress text for a download entry.
@@ -1252,6 +1248,7 @@ class _BrowserPageState extends State<BrowserPage> {
                             final removed = _tabs.removeAt(i);
                             removed.urlCtrl.dispose();
                             removed.progress.dispose();
+                            removed.isLoading.dispose();
                             if (_currentTabIndex >= _tabs.length) {
                               _currentTabIndex = _tabs.length - 1;
                             } else if (_currentTabIndex > i) {
@@ -1379,6 +1376,7 @@ class _BrowserPageState extends State<BrowserPage> {
                   final removed = _tabs.removeAt(index);
                   removed.urlCtrl.dispose();
                   removed.progress.dispose();
+                  removed.isLoading.dispose();
                   if (_tabs.isEmpty) {
                     _tabs.add(_createTab());
                     _currentTabIndex = 0;
@@ -1957,6 +1955,8 @@ class _BrowserPageState extends State<BrowserPage> {
       } catch (_) {}
       final tab = _tabForController(controller);
       if (tab != null) {
+        tab.isLoading.value = false;
+        tab.progress.value = 0.0;
         final current = tab.currentUrl;
         if (current != null && current.isNotEmpty) {
           tab.urlCtrl.text = current;
@@ -2978,6 +2978,7 @@ class _BrowserPageState extends State<BrowserPage> {
     for (final tab in _tabs) {
       tab.urlCtrl.dispose();
       tab.progress.dispose();
+      tab.isLoading.dispose();
       _closeMiniPlayer();
     }
     uaNotifier.removeListener(_onUaChanged);
@@ -3100,16 +3101,40 @@ class _BrowserPageState extends State<BrowserPage> {
                     );
                   },
                 ),
-                IconButton(
-                  icon: const Icon(Icons.refresh),
-                  tooltip: '重新整理',
-                  visualDensity: VisualDensity.compact,
-                  onPressed: () {
-                    if (_tabs.isNotEmpty) {
-                      _tabs[_currentTabIndex].controller?.reload();
-                    }
-                  },
-                ),
+                if (_tabs.isEmpty ||
+                    _currentTabIndex < 0 ||
+                    _currentTabIndex >= _tabs.length)
+                  const IconButton(
+                    icon: Icon(Icons.refresh),
+                    tooltip: '重新整理',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: null,
+                  )
+                else
+                  ValueListenableBuilder<bool>(
+                    valueListenable: _tabs[_currentTabIndex].isLoading,
+                    builder: (context, loading, _) {
+                      final tab = _tabs[_currentTabIndex];
+                      return IconButton(
+                        icon: Icon(loading ? Icons.close : Icons.refresh),
+                        tooltip: loading ? '停止載入' : '重新整理',
+                        visualDensity: VisualDensity.compact,
+                        onPressed: () {
+                          final controller = tab.controller;
+                          if (controller == null) return;
+                          if (loading) {
+                            try {
+                              unawaited(controller.stopLoading());
+                            } catch (_) {}
+                            tab.isLoading.value = false;
+                            tab.progress.value = 0.0;
+                          } else {
+                            controller.reload();
+                          }
+                        },
+                      );
+                    },
+                  ),
                 const SizedBox(width: 4),
                 _buildToolbarMenuButton(),
               ],
@@ -3240,8 +3265,10 @@ class _BrowserPageState extends State<BrowserPage> {
                           }
                           _iosLinkMenuBridgeReady = false;
                           await _injectIosLinkContextMenuBridge(c);
+                          final tab = _tabs[tabIndex];
+                          tab.isLoading.value = true;
+                          tab.progress.value = 0.0;
                           if (u != null) {
-                            final tab = _tabs[tabIndex];
                             final s = u.toString();
                             final isBlank = s.trim().toLowerCase().startsWith(
                               'about:blank',
@@ -3283,6 +3310,8 @@ class _BrowserPageState extends State<BrowserPage> {
                           final title = await c.getTitle();
                           if (curUrl != null) {
                             final tab = _tabs[tabIndex];
+                            tab.isLoading.value = false;
+                            tab.progress.value = 1.0;
                             final s = curUrl.toString();
                             final isBlank = s.trim().toLowerCase().startsWith(
                               'about:blank',
@@ -3313,7 +3342,18 @@ class _BrowserPageState extends State<BrowserPage> {
                         },
                         onProgressChanged: (c, progress) {
                           final tab = _tabs[tabIndex];
-                          tab.progress.value = progress / 100.0;
+                          final fraction = progress / 100.0;
+                          tab.progress.value = fraction;
+                          if (progress >= 100) {
+                            tab.isLoading.value = false;
+                          } else if (progress > 0) {
+                            tab.isLoading.value = true;
+                          }
+                        },
+                        onReceivedError: (controller, request, error) {
+                          final tab = _tabs[tabIndex];
+                          tab.isLoading.value = false;
+                          tab.progress.value = 0.0;
                         },
                         onCreateWindow: (ctl, createWindowRequest) async {
                           final req = createWindowRequest.request;
@@ -3650,6 +3690,7 @@ class _BrowserPageState extends State<BrowserPage> {
     for (final t in _tabs) {
       t.urlCtrl.dispose();
       t.progress.dispose();
+      t.isLoading.dispose();
     }
     setState(() {
       _tabs.clear();
