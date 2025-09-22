@@ -165,6 +165,7 @@ class _BrowserPageState extends State<BrowserPage> {
   String? _lastBlockedExternalUrl;
   DateTime? _lastBlockedExternalAt;
   final Set<String> _appLinkBypassUrls = <String>{};
+  final Set<String> _learnedIosUniversalLinkHosts = <String>{};
   static const Set<String> _kWebSchemes = {
     'http',
     'https',
@@ -201,6 +202,10 @@ class _BrowserPageState extends State<BrowserPage> {
     'www.twitter.com',
     'mobile.twitter.com',
     'm.twitter.com',
+    'm.facebook.com',
+    'facebook.com',
+    'www.instagram.com',
+    'instagram.com',
   };
   static const Set<String> _kIosUniversalLinkHostSuffixes = {
     'apps.apple.com',
@@ -1865,9 +1870,38 @@ class _BrowserPageState extends State<BrowserPage> {
     return false;
   }
 
+  bool _flagNameIndicatesAppLink(String key) {
+    final lower = key.toLowerCase();
+    return lower.contains('applink') ||
+        lower.contains('externalapp') ||
+        lower.contains('systembrowser') ||
+        lower.contains('openinbrowser') ||
+        lower.contains('openapp') ||
+        lower.contains('leaveapplication');
+  }
+
+  void _rememberIosUniversalLinkHost(String? host) {
+    final normalized = host?.trim().toLowerCase();
+    if (normalized == null || normalized.isEmpty) {
+      return;
+    }
+    if (_learnedIosUniversalLinkHosts.add(normalized)) {
+      _persistLearnedIosUniversalLinkHosts();
+    }
+  }
+
+  void _persistLearnedIosUniversalLinkHosts() {
+    final snapshot = _learnedIosUniversalLinkHosts.toList()..sort();
+    unawaited(() async {
+      try {
+        final sp = await SharedPreferences.getInstance();
+      } catch (_) {}
+    }());
+  }
+
   bool _matchesIosUniversalLinkHost(String host) {
     final normalizedHost = host.toLowerCase();
-    if (_kIosUniversalLinkExactHosts.contains(normalizedHost)) {
+    if (_learnedIosUniversalLinkHosts.contains(normalizedHost)) {
       return true;
     }
     for (final suffix in _kIosUniversalLinkHostSuffixes) {
@@ -1918,19 +1952,33 @@ class _BrowserPageState extends State<BrowserPage> {
     }
     bool shouldBlock = false;
     bool isAppLink = false;
+    void inspectKey(String key, dynamic value) {
+      if (!_flagTruthy(value)) {
+        return;
+      }
+      shouldBlock = true;
+      if (_flagNameIndicatesAppLink(key)) {
+        isAppLink = true;
+      }
+    }
+
     for (final key in _kExternalAppFlagKeys) {
       if (!map.containsKey(key)) {
         continue;
       }
-      final dynamic flag = map[key];
-      if (_flagTruthy(flag)) {
-        shouldBlock = true;
-        final keyStr = key.toString().toLowerCase();
-        if (keyStr.contains('applink')) {
-          isAppLink = true;
-        }
-      }
+      inspectKey(key.toString(), map[key]);
     }
+    map.forEach((rawKey, rawValue) {
+      if (rawKey is! String) {
+        return;
+      }
+      if (_kExternalAppFlagKeys.contains(rawKey)) {
+        return;
+      }
+      if (_flagNameIndicatesAppLink(rawKey)) {
+        inspectKey(rawKey, rawValue);
+      }
+    });
     if (!shouldBlock) {
       return _ExternalNavigationIntent.none;
     }
@@ -1946,8 +1994,7 @@ class _BrowserPageState extends State<BrowserPage> {
     void inspectFlag(dynamic value, String debugName) {
       if (_flagTruthy(value)) {
         shouldBlock = true;
-        final lower = debugName.toLowerCase();
-        if (lower.contains('applink')) {
+        if (_flagNameIndicatesAppLink(debugName)) {
           isAppLink = true;
         }
       }
@@ -2075,6 +2122,7 @@ class _BrowserPageState extends State<BrowserPage> {
     WebUri? resolvedUri = uri;
     bool shouldBlock = false;
     bool dueToAppLink = false;
+    String? normalizedHost;
 
     void ingestUrlRequest(URLRequest? req) {
       if (req == null) {
@@ -2160,10 +2208,44 @@ class _BrowserPageState extends State<BrowserPage> {
         } catch (_) {}
       }
     }
-
+    try {
+      final host = resolvedUri?.host;
+      if (host != null && host.isNotEmpty) {
+        normalizedHost = host.toLowerCase();
+      }
+    } catch (_) {}
+    if ((normalizedHost == null || normalizedHost!.isEmpty) &&
+        rawUrl != null &&
+        rawUrl!.isNotEmpty) {
+      try {
+        final parsed = WebUri(rawUrl!);
+        final host = parsed.host;
+        if (host != null && host.isNotEmpty) {
+          normalizedHost = host.toLowerCase();
+        }
+      } catch (_) {
+        final host = Uri.tryParse(rawUrl!)?.host;
+        if (host != null && host.isNotEmpty) {
+          normalizedHost = host.toLowerCase();
+        }
+      }
+    }
     final normalizedScheme = (scheme ?? '').toLowerCase();
     final normalizedRaw = (rawUrl ?? '').toLowerCase();
+    final bool schemeLooksHttp = _isHttpScheme(scheme);
+    final bool rawLooksHttp =
+        normalizedRaw.startsWith('http://') ||
+        normalizedRaw.startsWith('https://');
 
+    final bool hostLearned =
+        normalizedHost != null &&
+        _learnedIosUniversalLinkHosts.contains(normalizedHost);
+    if (hostLearned) {
+      shouldBlock = true;
+      if (schemeLooksHttp || rawLooksHttp) {
+        dueToAppLink = true;
+      }
+    }
     if (normalizedScheme.isNotEmpty &&
         !_kWebSchemes.contains(normalizedScheme)) {
       shouldBlock = true;
@@ -2224,6 +2306,9 @@ class _BrowserPageState extends State<BrowserPage> {
       shouldBlock = true;
       dueToAppLink = true;
     }
+    if (shouldBlock && !dueToAppLink && (schemeLooksHttp || rawLooksHttp)) {
+      dueToAppLink = true;
+    }
     if (!shouldBlock) {
       return null;
     }
@@ -2248,7 +2333,20 @@ class _BrowserPageState extends State<BrowserPage> {
     final normalizedEffectiveScheme = effectiveScheme?.toLowerCase();
     final canBypassInWebView =
         dueToAppLink && _isHttpScheme(normalizedEffectiveScheme);
-
+    if (Platform.isIOS && dueToAppLink && canBypassInWebView) {
+      String? hostToRemember = normalizedHost;
+      if (hostToRemember == null || hostToRemember.isEmpty) {
+        final fallback = effectiveRaw ?? rawUrl ?? '';
+        if (fallback.isNotEmpty) {
+          final parsed = Uri.tryParse(fallback);
+          final fallbackHost = parsed?.host;
+          if (fallbackHost != null && fallbackHost.isNotEmpty) {
+            hostToRemember = fallbackHost.toLowerCase();
+          }
+        }
+      }
+      _rememberIosUniversalLinkHost(hostToRemember);
+    }
     return _BlockedExternalNavigation(
       rawUrl: effectiveRaw ?? '',
       scheme: effectiveScheme,
