@@ -164,6 +164,9 @@ class _BrowserPageState extends State<BrowserPage> {
   bool _blockExternalApp = false; // 阻擋由網頁開啟第三方 App
   String? _lastBlockedExternalUrl;
   DateTime? _lastBlockedExternalAt;
+  String? _lastBlockedExternalMessage;
+  ScaffoldFeatureController<SnackBar, SnackBarClosedReason>?
+  _blockedExternalSnackBarController;
   final Set<String> _appLinkBypassUrls = <String>{};
   static const Set<String> _kDefaultIosUniversalLinkHosts = {
     'x.com',
@@ -1813,8 +1816,6 @@ class _BrowserPageState extends State<BrowserPage> {
         now.difference(_lastBlockedExternalAt!).inMilliseconds < 500) {
       return;
     }
-    _lastBlockedExternalUrl = blocked.rawUrl;
-    _lastBlockedExternalAt = now;
 
     final messenger = ScaffoldMessenger.of(context);
     final label = _describeExternalAppTarget(blocked);
@@ -1824,8 +1825,25 @@ class _BrowserPageState extends State<BrowserPage> {
             ? '已阻止網頁打開第三方 App($label)，改以網頁顯示內容'
             : '已阻止網頁打開第三方 App($label)';
     final bool canLaunch = blocked.rawUrl.isNotEmpty;
-    messenger.hideCurrentSnackBar();
-    messenger.showSnackBar(
+    final bool isDuplicateMessage =
+        _blockedExternalSnackBarController != null &&
+        _lastBlockedExternalUrl == blocked.rawUrl &&
+        _lastBlockedExternalMessage == messageText;
+    if (isDuplicateMessage) {
+      return;
+    }
+
+    final previousController = _blockedExternalSnackBarController;
+    if (previousController != null) {
+      previousController.close();
+      _blockedExternalSnackBarController = null;
+    }
+
+    _lastBlockedExternalUrl = blocked.rawUrl;
+    _lastBlockedExternalAt = now;
+    _lastBlockedExternalMessage = messageText;
+
+    final controller = messenger.showSnackBar(
       SnackBar(
         behavior: SnackBarBehavior.floating,
         duration: const Duration(seconds: 4),
@@ -1852,6 +1870,13 @@ class _BrowserPageState extends State<BrowserPage> {
                 : null,
       ),
     );
+    _blockedExternalSnackBarController = controller;
+    controller.closed.then((_) {
+      if (identical(_blockedExternalSnackBarController, controller)) {
+        _blockedExternalSnackBarController = null;
+        _lastBlockedExternalMessage = null;
+      }
+    });
   }
 
   Future<void> _launchExternalApp(String rawUrl) async {
