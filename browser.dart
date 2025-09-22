@@ -173,6 +173,8 @@ class _BrowserPageState extends State<BrowserPage> {
   String? _lastBlockedExternalMessage;
   ScaffoldFeatureController<SnackBar, SnackBarClosedReason>?
   _blockedExternalSnackBarController;
+  static const Duration _kBlockedFallbackCooldown = Duration(seconds: 5);
+  final Map<String, DateTime> _recentBlockedFallbacks = <String, DateTime>{};
   final Set<String> _appLinkBypassUrls = <String>{};
   static const Duration _kRecentAppLinkBypassHostTtl = Duration(seconds: 8);
   final Map<String, DateTime> _recentAppLinkBypassHosts = <String, DateTime>{};
@@ -1950,6 +1952,36 @@ class _BrowserPageState extends State<BrowserPage> {
     final normalizedFallback = _normalizeHttpUrl(blocked.fallbackUrl);
     if (normalizedFallback == null) {
       return false;
+    }
+    final fallbackVariants = _normalizedBypassCandidates(normalizedFallback)
+      ..add(normalizedFallback);
+    final now = DateTime.now();
+    _recentBlockedFallbacks.removeWhere(
+      (_, ts) => now.difference(ts) > _kBlockedFallbackCooldown,
+    );
+    for (final variant in fallbackVariants) {
+      final ts = _recentBlockedFallbacks[variant];
+      if (ts != null && now.difference(ts) <= _kBlockedFallbackCooldown) {
+        return false;
+      }
+    }
+    for (final tab in _tabs) {
+      final normalizedTabUrl = _normalizeHttpUrl(tab.currentUrl);
+      if (normalizedTabUrl == null) {
+        continue;
+      }
+      final tabVariants = _normalizedBypassCandidates(normalizedTabUrl)
+        ..add(normalizedTabUrl);
+      final intersects = tabVariants.any(fallbackVariants.contains);
+      if (intersects) {
+        for (final variant in fallbackVariants) {
+          _recentBlockedFallbacks[variant] = now;
+        }
+        return false;
+      }
+    }
+    for (final variant in fallbackVariants) {
+      _recentBlockedFallbacks[variant] = now;
     }
     unawaited(_openLinkInNewTab(normalizedFallback));
     return true;
