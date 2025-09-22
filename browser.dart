@@ -63,6 +63,7 @@ class _BlockedExternalNavigation {
   final WebUri? resolvedUri;
   final bool isAppLink;
   final bool canBypassInWebView;
+  final String? fallbackUrl;
 
   const _BlockedExternalNavigation({
     required this.rawUrl,
@@ -70,6 +71,7 @@ class _BlockedExternalNavigation {
     this.resolvedUri,
     this.isAppLink = false,
     this.canBypassInWebView = false,
+    this.fallbackUrl,
   });
 }
 
@@ -128,6 +130,10 @@ enum _LinkContextMenuAction {
 }
 
 class _BrowserPageState extends State<BrowserPage> {
+  static final RegExp _kHttpUrlPattern = RegExp(
+    r'''https?:\/\/[^\s'"<>]+''',
+    caseSensitive: false,
+  );
   // Global key used to control the Scaffold (e.g. open the end drawer) from
   // contexts where Scaffold.of(context) does not resolve correctly, such as
   // bottom sheets. This allows the side drawer to slide in from the right
@@ -1810,7 +1816,10 @@ class _BrowserPageState extends State<BrowserPage> {
     return blocked.rawUrl.isEmpty ? '未知' : blocked.rawUrl;
   }
 
-  void _showExternalAppBlockedSnackBar(_BlockedExternalNavigation blocked) {
+  void _showExternalAppBlockedSnackBar(
+    _BlockedExternalNavigation blocked, {
+    bool openedInNewTab = false,
+  }) {
     if (!mounted) return;
     final now = DateTime.now();
     if (_lastBlockedExternalUrl == blocked.rawUrl &&
@@ -1823,7 +1832,9 @@ class _BrowserPageState extends State<BrowserPage> {
     final label = _describeExternalAppTarget(blocked);
     final bool fallbackToWeb = blocked.canBypassInWebView;
     final messageText =
-        fallbackToWeb
+        openedInNewTab
+            ? '已阻止網頁打開第三方 App($label)，已在新分頁開啟網頁內容'
+            : fallbackToWeb
             ? '已阻止網頁打開第三方 App($label)，改以網頁顯示內容'
             : '已阻止網頁打開第三方 App($label)';
     final bool canLaunch = blocked.rawUrl.isNotEmpty;
@@ -1928,10 +1939,20 @@ class _BrowserPageState extends State<BrowserPage> {
         }
       }
     }
-    _showExternalAppBlockedSnackBar(blocked);
-    if (controller != null) {
+    final openedInNewTab = _openBlockedNavigationInNewTab(blocked);
+    _showExternalAppBlockedSnackBar(blocked, openedInNewTab: openedInNewTab);
+    if (!openedInNewTab && controller != null) {
       _attemptAppLinkBypass(controller, blocked);
     }
+  }
+
+  bool _openBlockedNavigationInNewTab(_BlockedExternalNavigation blocked) {
+    final normalizedFallback = _normalizeHttpUrl(blocked.fallbackUrl);
+    if (normalizedFallback == null) {
+      return false;
+    }
+    unawaited(_openLinkInNewTab(normalizedFallback));
+    return true;
   }
 
   bool _flagTruthy(dynamic value) {
@@ -2401,6 +2422,11 @@ class _BrowserPageState extends State<BrowserPage> {
         (scheme != null && scheme!.isNotEmpty)
             ? scheme
             : Uri.tryParse(effectiveRaw!)?.scheme;
+    final fallbackUrl = _determineBlockedNavigationFallback(
+      effectiveRaw: effectiveRaw,
+      rawUrl: rawUrl,
+      resolvedUri: resolvedUri,
+    );
     if (shouldBlock && dueToAppLink) {
       String? hostForBypass = normalizedHost;
       String? schemeForBypass = effectiveScheme ?? scheme;
@@ -2453,6 +2479,7 @@ class _BrowserPageState extends State<BrowserPage> {
       resolvedUri: resolvedUri,
       isAppLink: dueToAppLink,
       canBypassInWebView: canBypassInWebView,
+      fallbackUrl: fallbackUrl,
     );
   }
 
@@ -2462,6 +2489,124 @@ class _BrowserPageState extends State<BrowserPage> {
     }
     final normalized = scheme.toLowerCase();
     return normalized == 'http' || normalized == 'https';
+  }
+
+  String? _normalizeHttpUrl(String? value) {
+    if (value == null) {
+      return null;
+    }
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) {
+      return null;
+    }
+    final parsed = Uri.tryParse(trimmed);
+    if (parsed == null || !_isHttpScheme(parsed.scheme)) {
+      return null;
+    }
+    return parsed.toString();
+  }
+
+  bool _isHttpUrlString(String? value) {
+    return _normalizeHttpUrl(value) != null;
+  }
+
+  String? _extractFallbackFromIntentUri(String? rawUrl) {
+    if (rawUrl == null) {
+      return null;
+    }
+    final trimmed = rawUrl.trim();
+    if (trimmed.isEmpty) {
+      return null;
+    }
+    if (!trimmed.toLowerCase().startsWith('intent://')) {
+      return null;
+    }
+    final intentIndex = trimmed.indexOf('#Intent;');
+    if (intentIndex <= 0) {
+      return null;
+    }
+    final metadata = trimmed.substring(intentIndex + '#Intent;'.length);
+    final parts = metadata.split(';');
+    String? fallback;
+    String? scheme;
+    for (final part in parts) {
+      if (part.startsWith('S.browser_fallback_url=')) {
+        final encoded = part.substring('S.browser_fallback_url='.length);
+        try {
+          fallback = Uri.decodeComponent(encoded);
+        } catch (_) {
+          fallback = encoded;
+        }
+      } else if (part.startsWith('scheme=')) {
+        scheme = part.substring('scheme='.length);
+      }
+    }
+    final normalizedFallback = _normalizeHttpUrl(fallback);
+    if (normalizedFallback != null) {
+      return normalizedFallback;
+    }
+    final normalizedScheme = scheme?.trim();
+    if (normalizedScheme != null &&
+        normalizedScheme.isNotEmpty &&
+        _isHttpScheme(normalizedScheme)) {
+      final remainder = trimmed.substring('intent://'.length, intentIndex);
+      if (remainder.isNotEmpty) {
+        return '$normalizedScheme://$remainder';
+      }
+    }
+    return null;
+  }
+
+  String? _extractHttpUrlFromString(String? value) {
+    if (value == null) {
+      return null;
+    }
+    String? search(String input) {
+      final match = _kHttpUrlPattern.firstMatch(input);
+      if (match == null) {
+        return null;
+      }
+      final candidate = match.group(0);
+      return _normalizeHttpUrl(candidate);
+    }
+
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) {
+      return null;
+    }
+    String? candidate = search(trimmed);
+    if (candidate != null) {
+      return candidate;
+    }
+    final decoders = <String Function(String)>[
+      (v) => Uri.decodeComponent(v),
+      (v) => Uri.decodeFull(v),
+    ];
+    for (final decode in decoders) {
+      try {
+        final decoded = decode(trimmed);
+        if (decoded != trimmed) {
+          candidate = search(decoded);
+          if (candidate != null) {
+            return candidate;
+          }
+        }
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  String? _determineBlockedNavigationFallback({
+    String? effectiveRaw,
+    String? rawUrl,
+    WebUri? resolvedUri,
+  }) {
+    String? candidate = _normalizeHttpUrl(effectiveRaw);
+    candidate ??= _normalizeHttpUrl(resolvedUri?.toString());
+    candidate ??= _normalizeHttpUrl(rawUrl);
+    candidate ??= _extractFallbackFromIntentUri(rawUrl);
+    candidate ??= _extractHttpUrlFromString(rawUrl);
+    return candidate;
   }
 
   String _normalizeUrlForBypass(String? url) {
