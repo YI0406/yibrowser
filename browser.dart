@@ -194,6 +194,24 @@ class _BrowserPageState extends State<BrowserPage> {
     'opensExternalApp',
     'openWithSystemBrowser',
   ];
+  static const Set<String> _kIosUniversalLinkExactHosts = {
+    'x.com',
+    'www.x.com',
+    'twitter.com',
+    'www.twitter.com',
+    'mobile.twitter.com',
+    'm.twitter.com',
+  };
+  static const Set<String> _kIosUniversalLinkHostSuffixes = {
+    'apps.apple.com',
+    'itunes.apple.com',
+    'appsto.re',
+  };
+  static const List<String> _kIosUniversalLinkRawMarkers = [
+    '://apps.apple.com/',
+    '://itunes.apple.com/',
+    '://appsto.re/',
+  ];
 
   static const double _edgeSwipeWidth = 32.0;
   static const double _edgeSwipeDistanceThreshold = 48.0;
@@ -1847,6 +1865,51 @@ class _BrowserPageState extends State<BrowserPage> {
     return false;
   }
 
+  bool _matchesIosUniversalLinkHost(String host) {
+    final normalizedHost = host.toLowerCase();
+    if (_kIosUniversalLinkExactHosts.contains(normalizedHost)) {
+      return true;
+    }
+    for (final suffix in _kIosUniversalLinkHostSuffixes) {
+      final normalizedSuffix = suffix.toLowerCase();
+      if (normalizedHost == normalizedSuffix ||
+          normalizedHost.endsWith('.$normalizedSuffix')) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool _isLikelyIosUniversalLink({WebUri? uri, String? rawUrl}) {
+    if (!Platform.isIOS) {
+      return false;
+    }
+    final fallbackRaw = rawUrl ?? uri?.toString();
+    final normalizedRaw = (fallbackRaw ?? '').toLowerCase();
+
+    WebUri? candidateUri = uri;
+    if (candidateUri == null && fallbackRaw != null && fallbackRaw.isNotEmpty) {
+      candidateUri = _tryParseWebUri(fallbackRaw);
+    }
+    String? host;
+    try {
+      host = candidateUri?.host;
+    } catch (_) {}
+    if (host != null && host.isNotEmpty) {
+      if (_matchesIosUniversalLinkHost(host)) {
+        return true;
+      }
+    }
+    if (normalizedRaw.isNotEmpty) {
+      for (final marker in _kIosUniversalLinkRawMarkers) {
+        if (normalizedRaw.contains(marker)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
   _ExternalNavigationIntent _mapContainsExternalAppHint(
     Map<dynamic, dynamic>? map,
   ) {
@@ -2157,7 +2220,10 @@ class _BrowserPageState extends State<BrowserPage> {
         }
       }
     }
-
+    if (_isLikelyIosUniversalLink(uri: resolvedUri, rawUrl: rawUrl)) {
+      shouldBlock = true;
+      dueToAppLink = true;
+    }
     if (!shouldBlock) {
       return null;
     }
