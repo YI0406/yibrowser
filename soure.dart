@@ -1030,6 +1030,8 @@ class AppRepo extends ChangeNotifier {
         'history': history.value.map((e) => e.toJson()).toList(),
         // Persist the pop‑up blocking setting.
         'blockPopup': blockPopup.value,
+        // Persist the Adblocker toggle so it survives restarts.
+        'adBlockEnabled': adBlockEnabled.value,
         // Persist the auto save setting (whether downloads are automatically
         // saved to the system photo gallery).
         'autoSave': autoSave.value,
@@ -1078,6 +1080,7 @@ class AppRepo extends ChangeNotifier {
     favorites.value = [];
     history.value = [];
     blockPopup.value = false;
+    adBlockEnabled.value = false;
     autoSave.value = true;
     homeItems.value = [];
     openTabs.value = [];
@@ -1162,6 +1165,7 @@ class AppRepo extends ChangeNotifier {
         );
       // Restore pop‑up blocking preference.
       blockPopup.value = data['blockPopup'] as bool? ?? false;
+      adBlockEnabled.value = data['adBlockEnabled'] as bool? ?? false;
       autoSave.value = data['autoSave'] as bool? ?? true;
 
       // Restore custom home screen items. If absent, leave empty.
@@ -2220,6 +2224,13 @@ class AppRepo extends ChangeNotifier {
     _saveState();
   }
 
+  /// Toggle the Adblocker feature which relies on WebView content blockers.
+  void setAdBlockEnabled(bool v) {
+    if (adBlockEnabled.value == v) return;
+    adBlockEnabled.value = v;
+    _saveState();
+  }
+
   /// Remove all download tasks and their associated files. Uses [removeTasks]
   /// under the hood. This is useful for clearing the downloads list from the
   /// side drawer.
@@ -2421,6 +2432,9 @@ class AppRepo extends ChangeNotifier {
   /// the URL will open in the same tab. When false, the new window will be
   /// allowed (which in WebView opens within the same WebView instance).
   final ValueNotifier<bool> blockPopup = ValueNotifier(false);
+
+  /// Whether the built-in Adblocker (content blockers) is enabled for WebView.
+  final ValueNotifier<bool> adBlockEnabled = ValueNotifier(false);
 
   /// Data for the global mini player overlay. When non‑null, the root widget
   /// should display a floating mini player allowing background playback.

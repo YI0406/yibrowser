@@ -124,6 +124,8 @@ class BrowserPage extends StatefulWidget {
 enum _ToolbarMenuAction {
   openFavorites,
   openHistory,
+  clearBrowsingData,
+  toggleAdBlocker,
   toggleBlockPopup,
   blockExternalApp,
   addHome,
@@ -143,6 +145,80 @@ class _BrowserPageState extends State<BrowserPage> {
     r'''https?:\/\/[^\s'"<>]+''',
     caseSensitive: false,
   );
+  static const List<String> _adBlockHostPatterns = [
+    'doubleclick.net',
+    'googlesyndication.com',
+    'googletagservices.com',
+    'googletagmanager.com',
+    'googleadservices.com',
+    'googleads.g.doubleclick.net',
+    'adservice.google.com',
+    'adservice.google.com.tw',
+    'ads.yahoo.com',
+    'adnxs.com',
+    'taboola.com',
+    'outbrain.com',
+    'scorecardresearch.com',
+    'zedo.com',
+    'rubiconproject.com',
+    'criteo.net',
+  ];
+
+  static final List<ContentBlocker> _adBlockerRules = _buildAdBlockerRules();
+
+  static List<ContentBlocker> _buildAdBlockerRules() {
+    final selectors =
+        '.adsbygoogle, .ad, .ads, .adsbox, .ad-banner, .adslot, '
+        '.advertisement, .sponsored, .promoted, '
+        '[class*="-ad"], [class*="ad-"], [class*="_ad"], '
+        '[id^="ad_"], [id^="ads"], [id*="-ad"], '
+        '[data-ad-client], [data-ad-name]';
+    final List<ContentBlocker> rules = [];
+    for (final host in _adBlockHostPatterns) {
+      rules.add(
+        ContentBlocker(
+          trigger: ContentBlockerTrigger(
+            urlFilter: '.*${RegExp.escape(host)}.*',
+            resourceType: const [
+              ContentBlockerTriggerResourceType.SCRIPT,
+              ContentBlockerTriggerResourceType.IMAGE,
+              ContentBlockerTriggerResourceType.STYLE_SHEET,
+              ContentBlockerTriggerResourceType.FONT,
+            ],
+          ),
+          action: ContentBlockerAction(type: ContentBlockerActionType.BLOCK),
+        ),
+      );
+    }
+
+    rules.add(
+      ContentBlocker(
+        trigger: ContentBlockerTrigger(
+          urlFilter: '.*',
+          resourceType: const [
+            ContentBlockerTriggerResourceType.SCRIPT,
+            ContentBlockerTriggerResourceType.IMAGE,
+            ContentBlockerTriggerResourceType.STYLE_SHEET,
+          ],
+          loadType: const [ContentBlockerTriggerLoadType.THIRD_PARTY],
+        ),
+        action: ContentBlockerAction(type: ContentBlockerActionType.BLOCK),
+      ),
+    );
+
+    rules.add(
+      ContentBlocker(
+        trigger: ContentBlockerTrigger(urlFilter: '.*'),
+        action: ContentBlockerAction(
+          type: ContentBlockerActionType.CSS_DISPLAY_NONE,
+          selector: selectors,
+        ),
+      ),
+    );
+
+    return rules;
+  }
+
   // Global key used to control the Scaffold (e.g. open the end drawer) from
   // contexts where Scaffold.of(context) does not resolve correctly, such as
   // bottom sheets. This allows the side drawer to slide in from the right
@@ -3444,6 +3520,10 @@ class _BrowserPageState extends State<BrowserPage> {
                           useShouldOverrideUrlLoading: true,
                           javaScriptEnabled: true,
                           allowsBackForwardNavigationGestures: true,
+                          contentBlockers:
+                              repo.adBlockEnabled.value
+                                  ? _adBlockerRules
+                                  : const [],
                         ),
                         initialUrlRequest: URLRequest(
                           url: WebUri(
@@ -4261,6 +4341,7 @@ class _BrowserPageState extends State<BrowserPage> {
         repo.favorites,
         repo.history,
         repo.blockPopup,
+        repo.adBlockEnabled,
       ]),
       builder: (context, _) {
         return IconButton(
@@ -4293,6 +4374,7 @@ class _BrowserPageState extends State<BrowserPage> {
     final favoriteCount = repo.favorites.value.length;
     final historyCount = repo.history.value.length;
     final blockPopupOn = repo.blockPopup.value;
+    final adBlockOn = repo.adBlockEnabled.value;
 
     PopupMenuItem<_ToolbarMenuAction> buildItem(
       _ToolbarMenuAction action,
@@ -4340,6 +4422,19 @@ class _BrowserPageState extends State<BrowserPage> {
         iconColor: historyCount > 0 ? colorScheme.primary : null,
       ),
       buildItem(
+        _ToolbarMenuAction.clearBrowsingData,
+        Icons.cleaning_services,
+        '清除瀏覽記錄與網站資料',
+        iconColor: colorScheme.error,
+      ),
+      const PopupMenuDivider(),
+      buildItem(
+        _ToolbarMenuAction.toggleAdBlocker,
+        adBlockOn ? Icons.toggle_on : Icons.toggle_off,
+        'Adblocker 廣告阻擋',
+        iconColor: adBlockOn ? colorScheme.primary : null,
+      ),
+      buildItem(
         _ToolbarMenuAction.toggleBlockPopup,
         blockPopupOn ? Icons.toggle_on : Icons.toggle_off,
         '阻擋彈出視窗',
@@ -4368,7 +4463,8 @@ class _BrowserPageState extends State<BrowserPage> {
 
     final keepOpen =
         selected == _ToolbarMenuAction.toggleBlockPopup ||
-        selected == _ToolbarMenuAction.blockExternalApp;
+        selected == _ToolbarMenuAction.blockExternalApp ||
+        selected == _ToolbarMenuAction.toggleAdBlocker;
 
     switch (selected) {
       case _ToolbarMenuAction.openFavorites:
@@ -4376,6 +4472,12 @@ class _BrowserPageState extends State<BrowserPage> {
         break;
       case _ToolbarMenuAction.openHistory:
         await _openHistoryPage();
+        break;
+      case _ToolbarMenuAction.clearBrowsingData:
+        await _clearBrowsingData();
+        break;
+      case _ToolbarMenuAction.toggleAdBlocker:
+        _toggleAdBlockerSetting();
         break;
       case _ToolbarMenuAction.toggleBlockPopup:
         _toggleBlockPopupSetting();
@@ -4557,6 +4659,87 @@ class _BrowserPageState extends State<BrowserPage> {
                 }
               },
             ),
+      ),
+    );
+  }
+
+  Future<void> _clearBrowsingData() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder:
+          (_) => AlertDialog(
+            title: const Text('清除瀏覽資料'),
+            content: const Text('將刪除所有瀏覽記錄、Cookies 與網站資料，確定要繼續嗎？'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('取消'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('清除'),
+              ),
+            ],
+          ),
+    );
+
+    if (confirm != true) {
+      return;
+    }
+
+    repo.clearHistory();
+
+    try {
+      await CookieManager.instance().deleteAllCookies();
+    } catch (_) {}
+
+    try {
+      await WebStorageManager.instance().deleteAllData();
+    } catch (_) {}
+
+    for (final tab in _tabs) {
+      final controller = tab.controller;
+      if (controller == null) continue;
+      try {
+        await InAppWebViewController.clearAllCache();
+      } catch (_) {}
+    }
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        duration: Duration(seconds: 1),
+        content: Text('已清除瀏覽記錄與網站資料'),
+      ),
+    );
+  }
+
+  Future<void> _applyAdBlockerSetting() async {
+    final enabled = repo.adBlockEnabled.value;
+    final blockers = enabled ? _adBlockerRules : const <ContentBlocker>[];
+    for (int i = 0; i < _tabs.length; i++) {
+      final controller = _tabs[i].controller;
+      if (controller == null) continue;
+      try {
+        await controller.setSettings(
+          settings: InAppWebViewSettings(contentBlockers: blockers),
+        );
+        if (i == _currentTabIndex) {
+          await controller.reload();
+        }
+      } catch (_) {}
+    }
+  }
+
+  void _toggleAdBlockerSetting() {
+    final next = !repo.adBlockEnabled.value;
+    repo.setAdBlockEnabled(next);
+    unawaited(_applyAdBlockerSetting());
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 1),
+        content: Text(next ? '已開啟 Adblocker' : '已關閉 Adblocker'),
       ),
     );
   }
