@@ -267,8 +267,6 @@ class _BrowserPageState extends State<BrowserPage> {
         return ContentBlockerTriggerResourceType.SVG_DOCUMENT;
       case 'raw':
         return ContentBlockerTriggerResourceType.RAW;
-      case 'popup':
-        return ContentBlockerTriggerResourceType.POPUP;
       default:
         return null;
     }
@@ -306,12 +304,22 @@ class _BrowserPageState extends State<BrowserPage> {
       }
     }
 
+    String? selector;
+    if (actionType == ContentBlockerActionType.CSS_DISPLAY_NONE) {
+      final rawSelector = action['selector'];
+      if (rawSelector is! String || rawSelector.isEmpty) {
+        return null;
+      }
+      selector = rawSelector;
+    }
+
     return ContentBlocker(
       trigger: ContentBlockerTrigger(
         urlFilter: urlFilter,
-        resourceType: resourceTypes,
+        resourceType:
+            resourceTypes ?? const <ContentBlockerTriggerResourceType>[],
       ),
-      action: ContentBlockerAction(type: actionType),
+      action: ContentBlockerAction(type: actionType, selector: selector),
     );
   }
 
@@ -353,7 +361,7 @@ class _BrowserPageState extends State<BrowserPage> {
 
   Future<void> _initAdBlockerRules() async {
     final assetRules = await _loadContentBlockersFromAsset(
-      'assets/adblock/blockers.json',
+      'assets/adblocker/blockers.json',
     );
     final rules =
         assetRules != null
