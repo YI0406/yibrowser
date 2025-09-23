@@ -29,7 +29,7 @@ class ShareViewController: RSIShareViewController {
     private var hasProcessedShare = false
     private var didCompleteRequest = false
     override func shouldAutoRedirect() -> Bool {
-        return false
+        return true
     }
     
     override func viewDidLoad() {
@@ -175,36 +175,36 @@ class ShareViewController: RSIShareViewController {
            }
 
     private func completeRequest(redirectAfter completion: (() -> Void)? = nil) {
-                   let performCompletion: () -> Void = {
-                       guard let completion else { return }
+        let performCompletion: () -> Void = {
+                   guard let completion else { return }
+                   if Thread.isMainThread {
+                       completion()
+                   } else {
                        DispatchQueue.main.async(execute: completion)
                    }
+               }
 
-                   if didCompleteRequest {
-                       performCompletion()
-                       return
+               if didCompleteRequest {
+                   performCompletion()
+                   return
+               }
+
+               didCompleteRequest = true
+
+               let finishRequest: () -> Void = { [weak self] in
+                   guard let self else { return }
+                   if let context = self.extensionContext {
+                       context.completeRequest(returningItems: nil, completionHandler: nil)
                    }
+               }
 
-                   didCompleteRequest = true
+               performCompletion()
 
-                   let finishRequest: () -> Void = { [weak self] in
-                       guard let self else {
-                           performCompletion()
-                           return
-                       }
-                       if let context = self.extensionContext {
-                           context.completeRequest(returningItems: nil) { _ in
-                               performCompletion()
-                           }
-                       } else {
-                           performCompletion()
-                       }
-                   }
                if Thread.isMainThread {
                    finishRequest()
-                                 } else {
-                                     DispatchQueue.main.async(execute: finishRequest)
-                                 }
+               } else {
+                   DispatchQueue.main.async(execute: finishRequest)
+               }
            }
 
            private func preferredTypeIdentifier(for provider: NSItemProvider) -> String? {
