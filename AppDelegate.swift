@@ -29,6 +29,7 @@ import receive_sharing_intent
       PlayerEngine.shared.configureChannels(messenger: messenger)
       registrar.register(NativePlayerViewFactory(messenger: messenger), withId: "native-player-view")
     }
+      SharedDownloadsManager.shared.syncHostMetadata()
 
     // 提醒（僅註解）：Xcode > Signing & Capabilities 要勾選：
     // Background Modes -> Audio, AirPlay, and Picture in Picture
@@ -39,6 +40,7 @@ import receive_sharing_intent
           name: "com.yibrowser/share",
           binaryMessenger: controller.binaryMessenger
         )
+        SharedDownloadsManager.shared.syncHostMetadata()
         shareChannel = channel
         channel.setMethodCallHandler { [weak self] call, result in
           guard let self else {

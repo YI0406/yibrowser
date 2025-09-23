@@ -46,6 +46,8 @@ final class SharedDownloadsManager {
     private struct Constants {
         static let queueKey = "yibrowser_shared_downloads_queue"
         static let defaultGroupId = "group.com.yibrowser.yibrowser-share"
+        static let hostSchemeKey = "yibrowser_host_url_scheme"
+        static let hostBundleIdKey = "yibrowser_host_bundle_identifier"
     }
 
     private let fileManager = FileManager.default
@@ -89,7 +91,16 @@ final class SharedDownloadsManager {
         guard let groupId = appGroupId() else { return nil }
         return fileManager.containerURL(forSecurityApplicationGroupIdentifier: groupId)
     }
-
+    private func persistHostMetadataIfNeeded() {
+           guard let defaults = sharedDefaults() else { return }
+           if let scheme = expectedURLScheme(), !scheme.isEmpty {
+               defaults.set(scheme, forKey: Constants.hostSchemeKey)
+           }
+           if let bundleId = Bundle.main.bundleIdentifier, !bundleId.isEmpty {
+               defaults.set(bundleId, forKey: Constants.hostBundleIdKey)
+           }
+           defaults.synchronize()
+       }
     var hasPendingItems: Bool {
         guard let defaults = sharedDefaults() else { return false }
         guard let entries = defaults.array(forKey: Constants.queueKey) as? [[String: Any]] else {
@@ -122,7 +133,9 @@ final class SharedDownloadsManager {
         NSLog("[ShareBridge] Consumed %d pending item(s)", items.count)
         return items
     }
-
+    func syncHostMetadata() {
+            persistHostMetadataIfNeeded()
+        }
     func cleanup(relativePaths: [String]) {
         guard let container = containerURL(), !relativePaths.isEmpty else {
             return
