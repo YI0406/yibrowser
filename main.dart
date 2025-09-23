@@ -250,8 +250,12 @@ class _RootNavState extends State<RootNav> {
     if (!(Platform.isIOS || Platform.isAndroid)) {
       return;
     }
+    debugPrint('[Share] Initializing share handling listeners');
     _sharedMediaSubscription = _receiveSharingIntent.getMediaStream().listen(
       (mediaFiles) {
+        debugPrint(
+          '[Share] Stream event received with ${mediaFiles.length} item(s)',
+        );
         _importAndPresentSharedMedia(mediaFiles);
       },
       onError: (Object err) {
@@ -262,6 +266,9 @@ class _RootNavState extends State<RootNav> {
     _receiveSharingIntent
         .getInitialMedia()
         .then((mediaFiles) {
+          debugPrint(
+            '[Share] Initial media fetch returned ${mediaFiles.length} item(s)',
+          );
           if (mediaFiles.isEmpty) {
             return;
           }
@@ -276,6 +283,7 @@ class _RootNavState extends State<RootNav> {
     List<SharedMediaFile> mediaFiles,
   ) async {
     if (mediaFiles.isEmpty) {
+      debugPrint('[Share] Import requested with 0 items; ignoring');
       return;
     }
     debugPrint(
@@ -287,6 +295,7 @@ class _RootNavState extends State<RootNav> {
     if (_lastShareEventKey == signature &&
         _lastShareEventAt != null &&
         now.difference(_lastShareEventAt!) < const Duration(seconds: 2)) {
+      debugPrint('[Share] Duplicate share event ignored for $signature');
       return;
     }
     _lastShareEventKey = signature;
@@ -298,6 +307,9 @@ class _RootNavState extends State<RootNav> {
       String resolvedPath = originalPath;
       final uri = Uri.tryParse(originalPath);
       if (uri != null && uri.hasScheme) {
+        if (uri.scheme != 'file') {
+          debugPrint('[Share] Non-file URI detected: $originalPath');
+        }
         try {
           resolvedPath = uri.toFilePath();
         } catch (err) {
@@ -318,6 +330,8 @@ class _RootNavState extends State<RootNav> {
       );
       if (task != null) {
         imported.add(task);
+      } else {
+        debugPrint('[Share] Import returned null for $resolvedPath');
       }
     }
     if (imported.isEmpty) {

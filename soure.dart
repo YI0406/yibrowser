@@ -692,8 +692,18 @@ class AppRepo extends ChangeNotifier {
         counter += 1;
       }
 
-      final copied = await sourceFile.copy(destinationPath);
+      File copied;
+      try {
+        copied = await sourceFile.copy(destinationPath);
+      } catch (err, stackTrace) {
+        debugPrint(
+          '[Share] Failed to copy shared file to $destinationPath: $err',
+        );
+        debugPrint(stackTrace.toString());
+        return null;
+      }
       debugPrint('[Share] Copied file to $destinationPath');
+
       final canonical = _canonicalPath(copied.path);
       final newFile = File(canonical);
 
@@ -752,10 +762,9 @@ class AppRepo extends ChangeNotifier {
       }
       debugPrint('[Share] Import finished for ${task.name} (${task.type})');
       return task;
-    } catch (e) {
-      if (kDebugMode) {
-        print('importSharedMediaFile error: $e');
-      }
+    } catch (e, stackTrace) {
+      debugPrint('[Share] importSharedMediaFile error: $e');
+      debugPrint(stackTrace.toString());
       return null;
     }
   }
