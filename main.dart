@@ -278,6 +278,10 @@ class _RootNavState extends State<RootNav> {
     if (mediaFiles.isEmpty) {
       return;
     }
+    debugPrint(
+      '[Share] Incoming media files: '
+      '${mediaFiles.map((f) => '${f.path} (type: ${f.type})').join(', ')}',
+    );
     final signature = mediaFiles.map((f) => f.path).join('|');
     final now = DateTime.now();
     if (_lastShareEventKey == signature &&
@@ -290,9 +294,26 @@ class _RootNavState extends State<RootNav> {
 
     final List<DownloadTask> imported = [];
     for (final media in mediaFiles) {
+      final originalPath = media.path;
+      String resolvedPath = originalPath;
+      final uri = Uri.tryParse(originalPath);
+      if (uri != null && uri.hasScheme) {
+        try {
+          resolvedPath = uri.toFilePath();
+        } catch (err) {
+          debugPrint('[Share] Failed to convert URI $originalPath: $err');
+        }
+      }
+      if (resolvedPath != originalPath) {
+        debugPrint(
+          '[Share] Resolved share path: $originalPath -> $resolvedPath',
+        );
+      }
+      final exists = await File(resolvedPath).exists();
+      debugPrint('[Share] Candidate path check: $resolvedPath exists=$exists');
       final task = await AppRepo.I.importSharedMediaFile(
-        sourcePath: media.path,
-        displayName: p.basename(media.path),
+        sourcePath: resolvedPath,
+        displayName: p.basename(resolvedPath),
         typeHint: _shareTypeHint(media),
       );
       if (task != null) {
@@ -300,6 +321,7 @@ class _RootNavState extends State<RootNav> {
       }
     }
     if (imported.isEmpty) {
+      debugPrint('[Share] No media files were imported successfully.');
       return;
     }
 

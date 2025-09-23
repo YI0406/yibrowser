@@ -644,8 +644,14 @@ class AppRepo extends ChangeNotifier {
     Duration? durationHint,
   }) async {
     try {
+      debugPrint(
+        '[Share] Import request: '
+        'source=$sourcePath, displayName=$displayName, typeHint=$typeHint',
+      );
       final sourceFile = File(sourcePath);
-      if (!await sourceFile.exists()) {
+      final exists = await sourceFile.exists();
+      debugPrint('[Share] Source exists: $exists');
+      if (!exists) {
         return null;
       }
 
@@ -687,6 +693,7 @@ class AppRepo extends ChangeNotifier {
       }
 
       final copied = await sourceFile.copy(destinationPath);
+      debugPrint('[Share] Copied file to $destinationPath');
       final canonical = _canonicalPath(copied.path);
       final newFile = File(canonical);
 
@@ -743,6 +750,7 @@ class AppRepo extends ChangeNotifier {
       if (task.type == 'video') {
         unawaited(_generatePreview(task));
       }
+      debugPrint('[Share] Import finished for ${task.name} (${task.type})');
       return task;
     } catch (e) {
       if (kDebugMode) {
