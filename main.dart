@@ -125,7 +125,8 @@ class _RootNavState extends State<RootNav> {
     'app.quick_actions_bridge',
   );
   final QuickActions _quickActions = const QuickActions();
-  final ReceiveSharingIntent _receiveSharingIntent = ReceiveSharingIntent();
+  ReceiveSharingIntent get _receiveSharingIntent =>
+      ReceiveSharingIntent.instance;
   bool _handledInitialQuickAction = false;
   DateTime? _lastQuickActionAt;
   String? _lastQuickActionType;
