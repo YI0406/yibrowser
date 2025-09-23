@@ -5,12 +5,14 @@ import 'media.dart';
 import 'video_player_page.dart';
 import 'setting.dart';
 import 'soure.dart';
+import 'image_preview_page.dart';
 import 'package:flutter_in_app_pip/flutter_in_app_pip.dart';
 import 'package:video_player/video_player.dart';
 import 'dart:io';
 import 'ads.dart';
 import 'iap.dart';
 import 'dart:async';
+import 'package:path/path.dart' as p;
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_analytics/firebase_analytics.dart';
 import 'package:firebase_analytics/observer.dart';
@@ -18,6 +20,7 @@ import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:app_tracking_transparency/app_tracking_transparency.dart';
 import 'package:quick_actions/quick_actions.dart';
 import 'package:flutter/services.dart';
+import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 
 /// Entry point of the application. Initializes WebView debugging and sets up
 /// the root navigation with three tabs: browser, media, and settings.
@@ -125,6 +128,9 @@ class _RootNavState extends State<RootNav> {
   bool _handledInitialQuickAction = false;
   DateTime? _lastQuickActionAt;
   String? _lastQuickActionType;
+  StreamSubscription<List<SharedMediaFile>>? _sharedMediaSubscription;
+  String? _lastShareEventKey;
+  DateTime? _lastShareEventAt;
   @override
   void initState() {
     super.initState();
@@ -152,6 +158,7 @@ class _RootNavState extends State<RootNav> {
       const SettingPage(),
     ];
     _configureQuickActions();
+    _initShareHandling();
   }
 
   void _configureQuickActions() {
@@ -235,6 +242,162 @@ class _RootNavState extends State<RootNav> {
       dispatchQuickAction(type, fromLaunchCheck: fromLaunchCallback);
     });
     unawaited(setupAndroidShortcuts());
+  }
+
+  void _initShareHandling() {
+    if (!(Platform.isIOS || Platform.isAndroid)) {
+      return;
+    }
+    _sharedMediaSubscription = ReceiveSharingIntent.getMediaStream().listen(
+      (mediaFiles) {
+        _importAndPresentSharedMedia(mediaFiles);
+      },
+      onError: (Object err) {
+        debugPrint('Share stream error: $err');
+      },
+    );
+
+    ReceiveSharingIntent.getInitialMedia()
+        .then((mediaFiles) {
+          if (mediaFiles.isEmpty) {
+            return;
+          }
+          _importAndPresentSharedMedia(mediaFiles);
+        })
+        .catchError((Object err) {
+          debugPrint('Initial media error: $err');
+        });
+  }
+
+  Future<void> _importAndPresentSharedMedia(
+    List<SharedMediaFile> mediaFiles,
+  ) async {
+    if (mediaFiles.isEmpty) {
+      return;
+    }
+    final signature = mediaFiles.map((f) => f.path).join('|');
+    final now = DateTime.now();
+    if (_lastShareEventKey == signature &&
+        _lastShareEventAt != null &&
+        now.difference(_lastShareEventAt!) < const Duration(seconds: 2)) {
+      return;
+    }
+    _lastShareEventKey = signature;
+    _lastShareEventAt = now;
+
+    final List<DownloadTask> imported = [];
+    for (final media in mediaFiles) {
+      final task = await AppRepo.I.importSharedMediaFile(
+        sourcePath: media.path,
+        displayName: p.basename(media.path),
+        typeHint: _shareTypeHint(media),
+      );
+      if (task != null) {
+        imported.add(task);
+      }
+    }
+    if (imported.isEmpty) {
+      return;
+    }
+
+    try {
+      await ReceiveSharingIntent.reset();
+    } catch (_) {}
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      index = 0;
+    });
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _presentSharedMedia(imported);
+    });
+  }
+
+  String? _shareTypeHint(SharedMediaFile file) {
+    final dynamic rawType = file.type;
+    if (rawType is SharedMediaType) {
+      switch (rawType) {
+        case SharedMediaType.image:
+          return 'image';
+        case SharedMediaType.video:
+          return 'video';
+        case SharedMediaType.audio:
+          return 'audio';
+        case SharedMediaType.file:
+          return null;
+      }
+    }
+    if (rawType is String) {
+      final lower = rawType.toLowerCase();
+      if (lower.contains('video')) return 'video';
+      if (lower.contains('audio')) return 'audio';
+      if (lower.contains('image')) return 'image';
+    }
+    return null;
+  }
+
+  void _presentSharedMedia(List<DownloadTask> tasks, {int attempt = 0}) {
+    if (!mounted || tasks.isEmpty) {
+      return;
+    }
+    final nav = navigatorKey.currentState;
+    final ctx = navigatorKey.currentContext ?? context;
+    if (nav == null || ctx == null) {
+      if (attempt >= 5) {
+        return;
+      }
+      Future.delayed(const Duration(milliseconds: 200), () {
+        _presentSharedMedia(tasks, attempt: attempt + 1);
+      });
+      return;
+    }
+
+    final first = tasks.first;
+    final firstType = AppRepo.I.resolvedTaskType(first);
+    if (firstType == 'image') {
+      nav.push(
+        MaterialPageRoute(
+          builder:
+              (_) => ImagePreviewPage(
+                filePath: first.savePath,
+                title: first.name ?? p.basename(first.savePath),
+              ),
+        ),
+      );
+    } else if (firstType == 'video' || firstType == 'audio') {
+      final playlist =
+          tasks.where((task) {
+            final type = AppRepo.I.resolvedTaskType(task);
+            return type == 'video' || type == 'audio';
+          }).toList();
+      nav.push(
+        MaterialPageRoute(
+          builder:
+              (_) => VideoPlayerPage(
+                path: first.savePath,
+                title: first.name ?? p.basename(first.savePath),
+                playlist: playlist.length > 1 ? playlist : null,
+                initialIndex: 0,
+              ),
+        ),
+      );
+    }
+
+    final importedCount = tasks.length;
+    final firstName = first.name ?? p.basename(first.savePath);
+    final message =
+        importedCount > 1 ? '已匯入 $importedCount 個檔案到媒體' : '已匯入到媒體：$firstName';
+    ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  @override
+  void dispose() {
+    _sharedMediaSubscription?.cancel();
+    super.dispose();
   }
 
   void _handleQuickAction(String type) {

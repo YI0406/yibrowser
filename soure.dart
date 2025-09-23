@@ -633,6 +633,125 @@ class AppRepo extends ChangeNotifier {
     return dir;
   }
 
+  /// Copies an externally provided media file (from iOS share extension or
+  /// other integrations) into the persistent downloads folder, adds it to the
+  /// downloads list and optionally kicks off preview generation. Returns the
+  /// created [DownloadTask] so callers can immediately present it.
+  Future<DownloadTask?> importSharedMediaFile({
+    required String sourcePath,
+    String? displayName,
+    String? typeHint,
+    Duration? durationHint,
+  }) async {
+    try {
+      final sourceFile = File(sourcePath);
+      if (!await sourceFile.exists()) {
+        return null;
+      }
+
+      final downloadsDir = await _downloadsDir();
+
+      String baseName = (displayName ?? p.basename(sourcePath)).trim();
+      if (baseName.isEmpty || baseName == '.' || baseName == '..') {
+        baseName = 'shared_${DateTime.now().millisecondsSinceEpoch}';
+      }
+      baseName = baseName.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+
+      String extension = p.extension(baseName);
+      if (extension.isEmpty) {
+        extension = p.extension(sourcePath);
+      }
+      String inferredType = typeHint ?? '';
+      if (extension.isEmpty && inferredType.isNotEmpty) {
+        extension = '.${_defaultExtensionForType(inferredType)}';
+      }
+      if (extension.isEmpty) {
+        extension = '.${_defaultExtensionForType('file')}';
+      }
+      if (!extension.startsWith('.')) {
+        extension = '.$extension';
+      }
+
+      String stem = p.basenameWithoutExtension(baseName);
+      if (stem.isEmpty) {
+        stem = 'shared_${DateTime.now().millisecondsSinceEpoch}';
+      }
+
+      String candidateName = '$stem$extension';
+      String destinationPath = p.join(downloadsDir.path, candidateName);
+      int counter = 1;
+      while (File(destinationPath).existsSync()) {
+        candidateName = '$stem ($counter)$extension';
+        destinationPath = p.join(downloadsDir.path, candidateName);
+        counter += 1;
+      }
+
+      final copied = await sourceFile.copy(destinationPath);
+      final canonical = _canonicalPath(copied.path);
+      final newFile = File(canonical);
+
+      int size = 0;
+      try {
+        size = await newFile.length();
+      } catch (_) {}
+
+      DateTime timestamp;
+      try {
+        final stat = await newFile.stat();
+        timestamp = stat.modified;
+      } catch (_) {
+        timestamp = DateTime.now();
+      }
+
+      if (inferredType.isEmpty) {
+        final extWithoutDot = extension.replaceFirst('.', '');
+        inferredType = _typeFromExtension(extWithoutDot);
+      }
+      if (inferredType.isEmpty || inferredType == 'file') {
+        inferredType = _inferType(canonical);
+      }
+      if (inferredType.isEmpty) {
+        inferredType = 'file';
+      }
+
+      final task = DownloadTask(
+        url: canonical,
+        savePath: canonical,
+        kind: 'file',
+        received: size,
+        total: size,
+        state: 'done',
+        timestamp: timestamp,
+        name: p.basename(canonical),
+        type: inferredType,
+        favorite: false,
+        thumbnailPath: null,
+        duration: durationHint,
+        paused: false,
+      );
+
+      final List<DownloadTask> updated = [
+        task,
+        ...downloads.value.where(
+          (existing) => _canonicalPath(existing.savePath) != canonical,
+        ),
+      ];
+      updated.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+      downloads.value = updated;
+      notifyListeners();
+      unawaited(_saveState());
+      if (task.type == 'video') {
+        unawaited(_generatePreview(task));
+      }
+      return task;
+    } catch (e) {
+      if (kDebugMode) {
+        print('importSharedMediaFile error: $e');
+      }
+      return null;
+    }
+  }
+
   // 在 AppRepo class 裡新增
   Future<void> rescanDownloadsFolder({
     bool regenerateThumbnails = false,
