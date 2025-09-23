@@ -25,7 +25,7 @@
 	<key>CFBundleVersion</key>
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>AppGroupId</key>
-	<string>$(CUSTOM_GROUP_ID)</string>
+	<string>group.com.yibrowser.yibrowser-share</string>
 	<key>GADApplicationIdentifier</key>
 	<string>ca-app-pub-1219775982243471~1725741402</string>
 	

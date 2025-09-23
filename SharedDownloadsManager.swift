@@ -45,6 +45,7 @@ final class SharedDownloadsManager {
 
     private struct Constants {
         static let queueKey = "yibrowser_shared_downloads_queue"
+        static let defaultGroupId = "group.com.yibrowser.yibrowser-share"
     }
 
     private let fileManager = FileManager.default
@@ -56,13 +57,27 @@ final class SharedDownloadsManager {
         if let cachedGroupId {
             return cachedGroupId
         }
-        guard let groupId = Bundle.main.object(forInfoDictionaryKey: "AppGroupId") as? String,
-              !groupId.isEmpty else {
+        var resolvedGroupId: String?
+                if let groupId = Bundle.main.object(forInfoDictionaryKey: "AppGroupId") as? String {
+                    let trimmed = groupId.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if trimmed.isEmpty {
+                        NSLog("[ShareBridge] AppGroupId in Info.plist is empty")
+                    } else if trimmed.contains("$(") || trimmed.contains("CUSTOM_GROUP_ID") {
+                        NSLog("[ShareBridge] AppGroupId placeholder detected: %@", trimmed)
+                    } else {
+                        resolvedGroupId = trimmed
+                    }
+                } else {
             NSLog("[ShareBridge] Missing AppGroupId in host Info.plist")
-            return nil
+            
         }
-        cachedGroupId = groupId
-        return groupId
+        if resolvedGroupId == nil {
+                   resolvedGroupId = Constants.defaultGroupId
+                   NSLog("[ShareBridge] Falling back to default AppGroupId: %@", resolvedGroupId ?? "<nil>")
+               }
+
+               cachedGroupId = resolvedGroupId
+               return resolvedGroupId
     }
 
     private func sharedDefaults() -> UserDefaults? {

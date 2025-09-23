@@ -3,7 +3,7 @@
 <plist version="1.0">
   <dict>
     <key>AppGroupId</key>
-    <string>$(CUSTOM_GROUP_ID)</string>
+    <string>group.com.yibrowser.yibrowser-share</string>
 	<key>CFBundleVersion</key>
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>NSExtension</key>
