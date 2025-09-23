@@ -125,6 +125,7 @@ class _RootNavState extends State<RootNav> {
     'app.quick_actions_bridge',
   );
   final QuickActions _quickActions = const QuickActions();
+  final ReceiveSharingIntent _receiveSharingIntent = ReceiveSharingIntent();
   bool _handledInitialQuickAction = false;
   DateTime? _lastQuickActionAt;
   String? _lastQuickActionType;
@@ -248,7 +249,7 @@ class _RootNavState extends State<RootNav> {
     if (!(Platform.isIOS || Platform.isAndroid)) {
       return;
     }
-    _sharedMediaSubscription = ReceiveSharingIntent.getMediaStream().listen(
+    _sharedMediaSubscription = _receiveSharingIntent.getMediaStream().listen(
       (mediaFiles) {
         _importAndPresentSharedMedia(mediaFiles);
       },
@@ -257,7 +258,8 @@ class _RootNavState extends State<RootNav> {
       },
     );
 
-    ReceiveSharingIntent.getInitialMedia()
+    _receiveSharingIntent
+        .getInitialMedia()
         .then((mediaFiles) {
           if (mediaFiles.isEmpty) {
             return;
@@ -301,7 +303,7 @@ class _RootNavState extends State<RootNav> {
     }
 
     try {
-      await ReceiveSharingIntent.reset();
+      await _receiveSharingIntent.reset();
     } catch (_) {}
 
     if (!mounted) {
@@ -320,15 +322,18 @@ class _RootNavState extends State<RootNav> {
   String? _shareTypeHint(SharedMediaFile file) {
     final dynamic rawType = file.type;
     if (rawType is SharedMediaType) {
-      switch (rawType) {
-        case SharedMediaType.image:
-          return 'image';
-        case SharedMediaType.video:
-          return 'video';
-        case SharedMediaType.audio:
-          return 'audio';
-        case SharedMediaType.file:
-          return null;
+      final name = rawType.toString().toLowerCase();
+      if (name.contains('video')) {
+        return 'video';
+      }
+      if (name.contains('audio')) {
+        return 'audio';
+      }
+      if (name.contains('image')) {
+        return 'image';
+      }
+      if (rawType == SharedMediaType.file) {
+        return null;
       }
     }
     if (rawType is String) {
