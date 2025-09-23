@@ -191,20 +191,12 @@ class _BrowserPageState extends State<BrowserPage> {
       );
     }
 
-    rules.add(
-      ContentBlocker(
-        trigger: ContentBlockerTrigger(
-          urlFilter: '.*',
-          resourceType: const [
-            ContentBlockerTriggerResourceType.SCRIPT,
-            ContentBlockerTriggerResourceType.IMAGE,
-            ContentBlockerTriggerResourceType.STYLE_SHEET,
-          ],
-          loadType: const [ContentBlockerTriggerLoadType.THIRD_PARTY],
-        ),
-        action: ContentBlockerAction(type: ContentBlockerActionType.BLOCK),
-      ),
-    );
+    // NOTE: We intentionally avoid a "block all third-party resources" rule
+    // because many modern sites load essential scripts and styles from CDNs.
+    // A previous implementation blocked every third-party script/image/style,
+    // which caused blank pages when core assets were hosted on another domain.
+    // Ad hosts are instead targeted explicitly above and the fallback CSS rule
+    // below hides common ad containers without breaking the page layout.
 
     rules.add(
       ContentBlocker(
