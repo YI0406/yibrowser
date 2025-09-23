@@ -145,7 +145,7 @@ class _BrowserPageState extends State<BrowserPage> {
     r'''https?:\/\/[^\s'"<>]+''',
     caseSensitive: false,
   );
-  static const List<String> _adBlockHostPatterns = [
+  static const List<String> _kLegacyAdBlockHostPatterns = [
     'doubleclick.net',
     'googlesyndication.com',
     'googletagservices.com',
@@ -164,38 +164,50 @@ class _BrowserPageState extends State<BrowserPage> {
     'criteo.net',
   ];
 
-  static final List<ContentBlocker> _adBlockerRules = _buildAdBlockerRules();
+  static const List<String> _kAdBlockCssSelectors = [
+    '.adsbygoogle',
+    '.ad',
+    '.ads',
+    '.adsbox',
+    '.ad-banner',
+    '.adslot',
+    '.advertisement',
+    '.sponsored',
+    '.promoted',
+    // Match common ad containers without catching words like "thread" or
+    // "download" that contain the substring "ad".
+    '[class^="ad-"]',
+    '[class^="ads-"]',
+    r'[class$="-ad"]',
+    r'[class$="-ads"]',
+    '[class*=" ad-"]',
+    '[class*=" ads-"]',
+    '[class*=" ad_"]',
+    '[class*=" ads_"]',
+    '[id^="ad_"]',
+    '[id^="ads_"]',
+    r'[id$="_ad"]',
+    r'[id$="_ads"]',
+    '[data-ad-client]',
+    '[data-ad-name]',
+  ];
 
-  static List<ContentBlocker> _buildAdBlockerRules() {
-    final selectors = <String>[
-      '.adsbygoogle',
-      '.ad',
-      '.ads',
-      '.adsbox',
-      '.ad-banner',
-      '.adslot',
-      '.advertisement',
-      '.sponsored',
-      '.promoted',
-      // Match common ad containers without catching words like "thread" or
-      // "download" that contain the substring "ad".
-      '[class^="ad-"]',
-      '[class^="ads-"]',
-      r'[class$="-ad"]',
-      r'[class$="-ads"]',
-      '[class*=" ad-"]',
-      '[class*=" ads-"]',
-      '[class*=" ad_"]',
-      '[class*=" ads_"]',
-      '[id^="ad_"]',
-      '[id^="ads_"]',
-      r'[id$="_ad"]',
-      r'[id$="_ads"]',
-      '[data-ad-client]',
-      '[data-ad-name]',
-    ].join(', ');
+  List<ContentBlocker> _adBlockerRules = const <ContentBlocker>[];
+
+  static ContentBlocker _buildCssDisplayNoneRule() {
+    final selectors = _kAdBlockCssSelectors.join(', ');
+    return ContentBlocker(
+      trigger: ContentBlockerTrigger(urlFilter: '.*'),
+      action: ContentBlockerAction(
+        type: ContentBlockerActionType.CSS_DISPLAY_NONE,
+        selector: selectors,
+      ),
+    );
+  }
+
+  static List<ContentBlocker> _buildLegacyAdBlockerRules() {
     final List<ContentBlocker> rules = [];
-    for (final host in _adBlockHostPatterns) {
+    for (final host in _kLegacyAdBlockHostPatterns) {
       rules.add(
         ContentBlocker(
           trigger: ContentBlockerTrigger(
@@ -214,22 +226,149 @@ class _BrowserPageState extends State<BrowserPage> {
 
     // NOTE: We intentionally avoid a "block all third-party resources" rule
     // because many modern sites load essential scripts and styles from CDNs.
-    // A previous implementation blocked every third-party script/image/style,
-    // which caused blank pages when core assets were hosted on another domain.
+
     // Ad hosts are instead targeted explicitly above and the fallback CSS rule
     // below hides common ad containers without breaking the page layout.
-
-    rules.add(
-      ContentBlocker(
-        trigger: ContentBlockerTrigger(urlFilter: '.*'),
-        action: ContentBlockerAction(
-          type: ContentBlockerActionType.CSS_DISPLAY_NONE,
-          selector: selectors,
-        ),
-      ),
-    );
-
+    rules.add(_buildCssDisplayNoneRule());
     return rules;
+  }
+
+  static ContentBlockerActionType? _parseActionType(String? value) {
+    switch (value) {
+      case 'block':
+        return ContentBlockerActionType.BLOCK;
+      case 'css-display-none':
+        return ContentBlockerActionType.CSS_DISPLAY_NONE;
+      case 'ignore-previous-rules':
+        return ContentBlockerActionType.IGNORE_PREVIOUS_RULES;
+      case 'make-https':
+        return ContentBlockerActionType.MAKE_HTTPS;
+      default:
+        return null;
+    }
+  }
+
+  static ContentBlockerTriggerResourceType? _parseResourceType(dynamic value) {
+    if (value is! String) return null;
+    switch (value) {
+      case 'document':
+        return ContentBlockerTriggerResourceType.DOCUMENT;
+      case 'image':
+        return ContentBlockerTriggerResourceType.IMAGE;
+      case 'style-sheet':
+        return ContentBlockerTriggerResourceType.STYLE_SHEET;
+      case 'script':
+        return ContentBlockerTriggerResourceType.SCRIPT;
+      case 'font':
+        return ContentBlockerTriggerResourceType.FONT;
+      case 'media':
+        return ContentBlockerTriggerResourceType.MEDIA;
+      case 'svg-document':
+        return ContentBlockerTriggerResourceType.SVG_DOCUMENT;
+      case 'raw':
+        return ContentBlockerTriggerResourceType.RAW;
+      case 'popup':
+        return ContentBlockerTriggerResourceType.POPUP;
+      default:
+        return null;
+    }
+  }
+
+  static ContentBlocker? _contentBlockerFromMap(Map<String, dynamic> map) {
+    final triggerRaw = map['trigger'];
+    final actionRaw = map['action'];
+    if (triggerRaw is! Map || actionRaw is! Map) {
+      return null;
+    }
+    final trigger = triggerRaw.cast<String, dynamic>();
+    final action = actionRaw.cast<String, dynamic>();
+    final urlFilter = trigger['url-filter'];
+    if (urlFilter is! String || urlFilter.isEmpty) {
+      return null;
+    }
+    final actionType = _parseActionType(action['type'] as String?);
+    if (actionType == null) {
+      return null;
+    }
+
+    List<ContentBlockerTriggerResourceType>? resourceTypes;
+    final rawResources = trigger['resource-type'];
+    if (rawResources is List) {
+      final parsed = <ContentBlockerTriggerResourceType>[];
+      for (final entry in rawResources) {
+        final type = _parseResourceType(entry);
+        if (type != null) {
+          parsed.add(type);
+        }
+      }
+      if (parsed.isNotEmpty) {
+        resourceTypes = parsed;
+      }
+    }
+
+    return ContentBlocker(
+      trigger: ContentBlockerTrigger(
+        urlFilter: urlFilter,
+        resourceType: resourceTypes,
+      ),
+      action: ContentBlockerAction(type: actionType),
+    );
+  }
+
+  static Future<List<ContentBlocker>?> _loadContentBlockersFromAsset(
+    String assetPath,
+  ) async {
+    try {
+      final jsonString = await rootBundle.loadString(assetPath);
+      final dynamic decoded = jsonDecode(jsonString);
+      if (decoded is! List) {
+        return null;
+      }
+      final result = <ContentBlocker>[];
+      for (final entry in decoded) {
+        if (entry is Map<String, dynamic>) {
+          final blocker = _contentBlockerFromMap(entry);
+          if (blocker != null) {
+            result.add(blocker);
+          }
+        } else if (entry is Map) {
+          final blocker = _contentBlockerFromMap(
+            entry.map((key, value) => MapEntry(key.toString(), value)),
+          );
+          if (blocker != null) {
+            result.add(blocker);
+          }
+        }
+      }
+      if (result.isEmpty) {
+        return null;
+      }
+      return result;
+    } catch (err, stack) {
+      debugPrint('Failed to load ad blocker rules from $assetPath: $err');
+      debugPrint('$stack');
+      return null;
+    }
+  }
+
+  Future<void> _initAdBlockerRules() async {
+    final assetRules = await _loadContentBlockersFromAsset(
+      'assets/adblock/blockers.json',
+    );
+    final rules =
+        assetRules != null
+            ? <ContentBlocker>[...assetRules, _buildCssDisplayNoneRule()]
+            : _buildLegacyAdBlockerRules();
+    if (!mounted) {
+      _adBlockerRules = rules;
+      return;
+    }
+    setState(() {
+      _adBlockerRules = rules;
+    });
+    if (repo.adBlockEnabled.value) {
+      unawaited(_applyAdBlockerSetting());
+    }
   }
 
   // Global key used to control the Scaffold (e.g. open the end drawer) from
@@ -1996,6 +2135,7 @@ class _BrowserPageState extends State<BrowserPage> {
   @override
   void initState() {
     super.initState();
+    unawaited(_initAdBlockerRules());
     uaNotifier.addListener(_onUaChanged);
     repo.ytOptions.addListener(_onYtOptionsChanged);
     repo.pendingNewTab.addListener(_onPendingNewTab);

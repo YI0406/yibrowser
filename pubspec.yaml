@@ -42,6 +42,7 @@ dependencies:
   material_design_icons_flutter: ^7.0.7296
   dio: ^5.6.0
   path_provider: ^2.1.4
+  
   open_filex: ^4.7.0
   share_plus: ^10.0.2
   download: ^1.0.1
@@ -93,6 +94,8 @@ flutter_launcher_icons:
 
 # The following section is specific to Flutter packages.
 flutter:
+  assets:
+    - assets/adblock/blockers.json
 
   # The following line ensures that the Material Icons font is
   # included with your application, so that you can use the icons in
