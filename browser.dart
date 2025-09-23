@@ -3677,7 +3677,7 @@ class _BrowserPageState extends State<BrowserPage> {
                         contextMenu: ContextMenu(
                           // ignore: deprecated_member_use
                           options: ContextMenuOptions(
-                            hideDefaultSystemContextMenuItems: true,
+                            hideDefaultSystemContextMenuItems: false,
                           ),
                         ),
                         initialSettings: InAppWebViewSettings(
