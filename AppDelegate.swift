@@ -1,6 +1,7 @@
 import Flutter
 import UIKit
 import AVFoundation
+import receive_sharing_intent
 
 
 @main
