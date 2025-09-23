@@ -167,7 +167,7 @@ class _BrowserPageState extends State<BrowserPage> {
   static final List<ContentBlocker> _adBlockerRules = _buildAdBlockerRules();
 
   static List<ContentBlocker> _buildAdBlockerRules() {
-      final selectors = <String>[
+    final selectors = <String>[
       '.adsbygoogle',
       '.ad',
       '.ads',
@@ -181,16 +181,16 @@ class _BrowserPageState extends State<BrowserPage> {
       // "download" that contain the substring "ad".
       '[class^="ad-"]',
       '[class^="ads-"]',
-      '[class$="-ad"]',
-      '[class$="-ads"]',
+      r'[class$="-ad"]',
+      r'[class$="-ads"]',
       '[class*=" ad-"]',
       '[class*=" ads-"]',
       '[class*=" ad_"]',
       '[class*=" ads_"]',
       '[id^="ad_"]',
       '[id^="ads_"]',
-      '[id$="_ad"]',
-      '[id$="_ads"]',
+      r'[id$="_ad"]',
+      r'[id$="_ads"]',
       '[data-ad-client]',
       '[data-ad-name]',
     ].join(', ');
