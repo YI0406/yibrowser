@@ -122,7 +122,7 @@ class BrowserPage extends StatefulWidget {
 enum _ToolbarMenuAction {
   toggleSniffer,
   openResources,
-  openDownloads,
+
   openFavorites,
   openHistory,
   toggleBlockPopup,
@@ -1870,6 +1870,7 @@ class _BrowserPageState extends State<BrowserPage> {
     super.initState();
     uaNotifier.addListener(_onUaChanged);
     repo.ytOptions.addListener(_onYtOptionsChanged);
+    repo.pendingNewTab.addListener(_onPendingNewTab);
     // Listen to focus changes to handle paste button
     _urlFocus.addListener(() {
       if (_urlFocus.hasFocus) {
@@ -1936,6 +1937,8 @@ class _BrowserPageState extends State<BrowserPage> {
     // created from saved state. This ensures that any default blank tab
     // also gets persisted.
     _updateOpenTabs();
+    // Handle any pending new-tab request issued before the browser was ready.
+    _onPendingNewTab();
     // Restore last active tab index (default 0), clamp to valid range.
     () async {
       final sp = await SharedPreferences.getInstance();
@@ -3192,6 +3195,7 @@ class _BrowserPageState extends State<BrowserPage> {
     }
     uaNotifier.removeListener(_onUaChanged);
     repo.ytOptions.removeListener(_onYtOptionsChanged);
+    repo.pendingNewTab.removeListener(_onPendingNewTab);
     _urlFocus.dispose();
     super.dispose();
   }
@@ -4224,7 +4228,7 @@ class _BrowserPageState extends State<BrowserPage> {
 
     final repo = AppRepo.I;
     final detected = repo.hits.value.length;
-    final downloadCount = repo.downloads.value.length;
+
     final favoriteCount = repo.favorites.value.length;
     final historyCount = repo.history.value.length;
     final blockPopupOn = repo.blockPopup.value;
@@ -4274,11 +4278,7 @@ class _BrowserPageState extends State<BrowserPage> {
         Icons.search,
         detected > 0 ? '資源（$detected）' : '資源',
       ),
-      buildItem(
-        _ToolbarMenuAction.openDownloads,
-        Icons.file_download,
-        downloadCount > 0 ? '下載清單（$downloadCount）' : '下載清單',
-      ),
+
       const PopupMenuDivider(),
       buildItem(
         _ToolbarMenuAction.openFavorites,
@@ -4331,9 +4331,7 @@ class _BrowserPageState extends State<BrowserPage> {
       case _ToolbarMenuAction.openResources:
         await _openDetectedSheet();
         break;
-      case _ToolbarMenuAction.openDownloads:
-        _openDownloadsSheet();
-        break;
+
       case _ToolbarMenuAction.openFavorites:
         await _openFavoritesPage();
         break;

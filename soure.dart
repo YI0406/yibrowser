@@ -17,6 +17,7 @@ import 'package:local_auth/local_auth.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'dart:math' as math;
 import 'package:video_player/video_player.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 import 'package:flutter_hls_parser/flutter_hls_parser.dart';
@@ -992,6 +993,10 @@ class AppRepo extends ChangeNotifier {
   Future<void> _saveState() async {
     try {
       final file = File(_stateFilePath);
+      final dir = file.parent;
+      if (!await dir.exists()) {
+        await dir.create(recursive: true);
+      }
       final data = <String, dynamic>{
         // Persist download tasks so they survive restarts. Tasks are stored
         // along with their metadata (name, state, thumbnail etc.).
@@ -1017,27 +1022,85 @@ class AppRepo extends ChangeNotifier {
         'openTabs': openTabs.value,
         'openTabsV2': tabSessions.value.map((e) => e.toJson()).toList(),
       };
-      await file.writeAsString(jsonEncode(data));
+
+      final jsonString = jsonEncode(data);
+      final tmpPath =
+          '$_stateFilePath.tmp.${DateTime.now().microsecondsSinceEpoch}';
+      final tmpFile = File(tmpPath);
+      await tmpFile.writeAsString(jsonString, flush: true);
+      if (await file.exists()) {
+        final backup = File('$_stateFilePath.bak');
+        try {
+          await file.copy(backup.path);
+        } catch (_) {}
+      }
+      try {
+        await tmpFile.rename(_stateFilePath);
+      } on FileSystemException {
+        try {
+          await tmpFile.copy(_stateFilePath);
+        } finally {
+          try {
+            await tmpFile.delete();
+          } catch (_) {}
+        }
+      }
     } catch (e) {
       if (kDebugMode) print('Failed to save state: $e');
     }
+  }
+
+  void _resetStateToDefaults() {
+    downloads.value = [];
+    favorites.value = [];
+    history.value = [];
+    blockPopup.value = false;
+    autoSave.value = true;
+    homeItems.value = [];
+    openTabs.value = [];
+    tabSessions.value = [];
+    _resumePositionsMs.clear();
   }
 
   /// Load persisted state from disk. Missing fields fall back to defaults.
   Future<void> _loadState() async {
     final file = File(_stateFilePath);
     if (!file.existsSync()) {
-      downloads.value = [];
-      favorites.value = [];
-      autoSave.value = true;
-      openTabs.value = [];
-      tabSessions.value = [];
-      _resumePositionsMs.clear();
+      _resetStateToDefaults();
+
       return;
     }
+    Future<Map<String, dynamic>> decode(File f) async {
+      final jsonString = await f.readAsString();
+      final dynamic raw = jsonDecode(jsonString);
+      if (raw is! Map) {
+        throw const FormatException('State file is not a JSON object');
+      }
+      return Map<String, dynamic>.from(raw as Map);
+    }
+
+    Map<String, dynamic>? data;
+    var loadedFromBackup = false;
     try {
-      final jsonString = await file.readAsString();
-      final Map<String, dynamic> data = jsonDecode(jsonString);
+      data = await decode(file);
+    } catch (e) {
+      if (kDebugMode) print('Failed to load state: $e');
+      final backupFile = File('$_stateFilePath.bak');
+      if (backupFile.existsSync()) {
+        try {
+          data = await decode(backupFile);
+          loadedFromBackup = true;
+        } catch (backupError) {
+          if (kDebugMode) print('Failed to load state backup: $backupError');
+        }
+      }
+      if (data == null) {
+        _resetStateToDefaults();
+        return;
+      }
+    }
+
+    try {
       final List<dynamic> dl = data['downloads'] as List<dynamic>? ?? [];
       final tasks =
           dl
@@ -1117,14 +1180,12 @@ class AppRepo extends ChangeNotifier {
                 )
                 .toList();
       }
+      if (loadedFromBackup) {
+        unawaited(_saveState());
+      }
     } catch (e) {
       if (kDebugMode) print('Failed to load state: $e');
-      downloads.value = [];
-      favorites.value = [];
-      autoSave.value = true;
-      openTabs.value = [];
-      tabSessions.value = [];
-      _resumePositionsMs.clear();
+      _resetStateToDefaults();
     }
   }
 
@@ -1919,8 +1980,20 @@ class AppRepo extends ChangeNotifier {
     if (t.type != 'video') return;
     try {
       final tmpDir = await getTemporaryDirectory();
-      final thumbPath =
-          '${tmpDir.path}/thumb_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      final baseName = p.basenameWithoutExtension(t.savePath);
+      var sanitized = baseName.replaceAll(RegExp(r'[^A-Za-z0-9]+'), '_');
+      if (sanitized.length > 24) {
+        sanitized = sanitized.substring(0, 24);
+      }
+      if (sanitized.isEmpty) {
+        sanitized = 'item';
+      }
+      final uniqueSuffix =
+          '${DateTime.now().microsecondsSinceEpoch}_${math.Random().nextInt(1 << 32)}';
+      final thumbPath = p.join(
+        tmpDir.path,
+        'thumb_${sanitized}_$uniqueSuffix.jpg',
+      );
       // Extract a single frame at 1 second into the file. Suppress output.
       final cmd =
           "-y -ss 1 -i '${t.savePath}' -vframes 1 -update 1 -q:v 3 '$thumbPath'";

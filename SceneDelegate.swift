@@ -101,7 +101,7 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
       options[.annotation] = annotation
     }
     options[.openInPlace] = context.options.openInPlace
-    _ = appDelegate.application?(
+      _ = appDelegate.application(
       UIApplication.shared,
       open: context.url,
       options: options
