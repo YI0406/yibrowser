@@ -167,12 +167,33 @@ class _BrowserPageState extends State<BrowserPage> {
   static final List<ContentBlocker> _adBlockerRules = _buildAdBlockerRules();
 
   static List<ContentBlocker> _buildAdBlockerRules() {
-    final selectors =
-        '.adsbygoogle, .ad, .ads, .adsbox, .ad-banner, .adslot, '
-        '.advertisement, .sponsored, .promoted, '
-        '[class*="-ad"], [class*="ad-"], [class*="_ad"], '
-        '[id^="ad_"], [id^="ads"], [id*="-ad"], '
-        '[data-ad-client], [data-ad-name]';
+      final selectors = <String>[
+      '.adsbygoogle',
+      '.ad',
+      '.ads',
+      '.adsbox',
+      '.ad-banner',
+      '.adslot',
+      '.advertisement',
+      '.sponsored',
+      '.promoted',
+      // Match common ad containers without catching words like "thread" or
+      // "download" that contain the substring "ad".
+      '[class^="ad-"]',
+      '[class^="ads-"]',
+      '[class$="-ad"]',
+      '[class$="-ads"]',
+      '[class*=" ad-"]',
+      '[class*=" ads-"]',
+      '[class*=" ad_"]',
+      '[class*=" ads_"]',
+      '[id^="ad_"]',
+      '[id^="ads_"]',
+      '[id$="_ad"]',
+      '[id$="_ads"]',
+      '[data-ad-client]',
+      '[data-ad-name]',
+    ].join(', ');
     final List<ContentBlocker> rules = [];
     for (final host in _adBlockHostPatterns) {
       rules.add(
