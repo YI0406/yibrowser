@@ -4112,6 +4112,17 @@ class _BrowserPageState extends State<BrowserPage> {
                 },
               ),
             ),
+            // Add to home shortcut
+            pad(
+              IconButton(
+                tooltip: '加入主頁',
+                onPressed: () {
+                  unawaited(_showAddToHomeDialog());
+                },
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.add),
+              ),
+            ),
             // Downloads with live badge (only count real download tasks)
             pad(
               ValueListenableBuilder<List<DownloadTask>>(
