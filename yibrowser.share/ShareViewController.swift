@@ -27,7 +27,7 @@ private struct PendingShareItem: Codable {
 class ShareViewController: RSIShareViewController {
       
     private var hasProcessedShare = false
-       private var didCompleteRequest = false
+    private var didCompleteRequest = false
     override func shouldAutoRedirect() -> Bool {
         return false
     }
@@ -157,7 +157,7 @@ class ShareViewController: RSIShareViewController {
                    NSLog("[ShareExt] persistAndRedirect called after completion; ignoring")
                    return
                }
-               didCompleteRequest = true
+               
                if !items.isEmpty {
                    let defaults = UserDefaults(suiteName: groupId)
                    var queue = defaults?.array(forKey: ShareConstants.queueKey) as? [[String: Any]] ?? []
@@ -169,21 +169,42 @@ class ShareViewController: RSIShareViewController {
                } else {
                    NSLog("[ShareExt] No items were saved to shared container")
                }
-               DispatchQueue.main.async { [weak self] in
-                   guard let self else { return }
-                   self.openHostApp(using: groupId)
-                   self.completeRequest()
-               }
+               completeRequest(redirectAfter: { [weak self] in
+                                 self?.openHostApp(using: groupId)
+                             })
            }
 
-           private func completeRequest() {
+    private func completeRequest(redirectAfter completion: (() -> Void)? = nil) {
+                   let performCompletion: () -> Void = {
+                       guard let completion else { return }
+                       DispatchQueue.main.async(execute: completion)
+                   }
+
+                   if didCompleteRequest {
+                       performCompletion()
+                       return
+                   }
+
+                   didCompleteRequest = true
+
+                   let finishRequest: () -> Void = { [weak self] in
+                       guard let self else {
+                           performCompletion()
+                           return
+                       }
+                       if let context = self.extensionContext {
+                           context.completeRequest(returningItems: nil) { _ in
+                               performCompletion()
+                           }
+                       } else {
+                           performCompletion()
+                       }
+                   }
                if Thread.isMainThread {
-                                extensionContext?.completeRequest(returningItems: nil, completionHandler: nil)
-                            } else {
-                                DispatchQueue.main.async { [weak self] in
-                                    self?.extensionContext?.completeRequest(returningItems: nil, completionHandler: nil)
-                                }
-                            }
+                   finishRequest()
+                                 } else {
+                                     DispatchQueue.main.async(execute: finishRequest)
+                                 }
            }
 
            private func preferredTypeIdentifier(for provider: NSItemProvider) -> String? {

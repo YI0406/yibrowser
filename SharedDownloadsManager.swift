@@ -155,11 +155,22 @@ final class SharedDownloadsManager {
     }
 
     func expectedURLScheme() -> String? {
-        guard let bundleId = Bundle.main.object(forInfoDictionaryKey: "CFBundleIdentifier") as? String,
-              !bundleId.isEmpty else {
-            return nil
+        if let bundleId = Bundle.main.bundleIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !bundleId.isEmpty {
+                   return "ShareMedia-\(bundleId)"
+               }
+               if let raw = Bundle.main.object(forInfoDictionaryKey: "CFBundleIdentifier") as? String {
+                   let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                   if trimmed.isEmpty {
+                       return nil
+                   }
+                   if trimmed.contains("$(") {
+                       NSLog("[ShareBridge] CFBundleIdentifier placeholder detected: %@", trimmed)
+                       return nil
+                   }
+                   return "ShareMedia-\(trimmed)"
         }
-        return "ShareMedia-\(bundleId)"
+        return nil
     }
 
     func canHandle(url: URL) -> Bool {
