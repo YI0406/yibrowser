@@ -367,6 +367,13 @@ class _BrowserPageState extends State<BrowserPage> {
         assetRules != null
             ? <ContentBlocker>[...assetRules, _buildCssDisplayNoneRule()]
             : _buildLegacyAdBlockerRules();
+    if (assetRules != null) {
+      debugPrint(
+        '[AdBlocker] Loaded ${assetRules.length} rules from assets/adblocker/blockers.json',
+      );
+    } else {
+      debugPrint('[AdBlocker] Loaded ${rules.length} built-in legacy rules');
+    }
     if (!mounted) {
       _adBlockerRules = rules;
       return;
@@ -3889,11 +3896,10 @@ class _BrowserPageState extends State<BrowserPage> {
                             return true;
                           }
                           if (uri != null && repo.blockPopup.value) {
-                            await _openLinkInNewTab(
-                              uri.toString(),
-                              makeActive: false,
+                            debugPrint(
+                              '[Popup] Blocked window.open for ${uri.toString()}',
                             );
-                            _showSnackBar('已在新分頁開啟');
+                            _showSnackBar('已阻擋彈出視窗');
                             return true;
                           }
                           return false;
