@@ -479,6 +479,10 @@ class DownloadTask {
   /// Whether this task is marked as a favourite by the user.
   bool favorite;
 
+  /// Identifier of the custom folder this task belongs to. When null the task
+  /// appears in the default "我的下載" section.
+  String? folderId;
+
   /// Local path to a thumbnail image extracted from the downloaded file.
   String? thumbnailPath;
 
@@ -505,6 +509,7 @@ class DownloadTask {
     this.name,
     required this.type,
     this.favorite = false,
+    this.folderId,
     this.thumbnailPath,
     this.duration,
     this.paused = false,
@@ -527,6 +532,7 @@ class DownloadTask {
       name: json['name'] as String?,
       type: json['type'] as String? ?? 'file',
       favorite: json['favorite'] as bool? ?? false,
+      folderId: json['folderId'] as String?,
       thumbnailPath: json['thumbnailPath'] as String?,
       duration:
           json['duration'] != null
@@ -549,12 +555,37 @@ class DownloadTask {
     'name': name,
     'type': type,
     'favorite': favorite,
+    'folderId': folderId,
     'thumbnailPath': thumbnailPath,
     // store duration in milliseconds for portability
     'duration': duration?.inMilliseconds,
     'paused': paused,
     'progressUnit': progressUnit,
   };
+}
+
+/// Represents a user-defined folder that groups download tasks on the media
+/// page. The order of folders in [AppRepo.mediaFolders] determines their
+/// display order.
+class MediaFolder {
+  final String id;
+  final String name;
+
+  const MediaFolder({required this.id, required this.name});
+
+  MediaFolder copyWith({String? name}) {
+    return MediaFolder(id: id, name: name ?? this.name);
+  }
+
+  factory MediaFolder.fromJson(Map<String, dynamic> json) {
+    final rawName = (json['name'] as String?)?.trim();
+    return MediaFolder(
+      id: json['id'] as String,
+      name: rawName == null || rawName.isEmpty ? '未命名資料夾' : rawName,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {'id': id, 'name': name};
 }
 
 /// Represents a downloadable YouTube stream option (video or audio).
@@ -988,6 +1019,7 @@ class AppRepo extends ChangeNotifier {
         if ((t.name ?? '').isNotEmpty) s += 1;
         if (t.favorite) s += 1;
         if (t.total != null && t.total! > 0) s += 1;
+        if (t.folderId != null && t.folderId!.isNotEmpty) s += 1;
         return s;
       }
 
@@ -995,7 +1027,14 @@ class AppRepo extends ChangeNotifier {
         final key = _canonicalPath(t.savePath);
         final existingTask = byPath[key];
         if (existingTask == null || score(t) >= score(existingTask)) {
+          if (existingTask != null &&
+              t.folderId == null &&
+              existingTask.folderId != null) {
+            t.folderId = existingTask.folderId;
+          }
           byPath[key] = t;
+        } else if (existingTask.folderId == null && t.folderId != null) {
+          existingTask.folderId = t.folderId;
         }
       }
       final deduped =
@@ -1024,6 +1063,7 @@ class AppRepo extends ChangeNotifier {
         // Persist download tasks so they survive restarts. Tasks are stored
         // along with their metadata (name, state, thumbnail etc.).
         'downloads': downloads.value.map((t) => t.toJson()).toList(),
+        'mediaFolders': mediaFolders.value.map((f) => f.toJson()).toList(),
         // Persist favourited page URLs.
         'favorites': favorites.value,
         // Persist the list of browsing history entries.
@@ -1083,6 +1123,7 @@ class AppRepo extends ChangeNotifier {
     adBlockEnabled.value = false;
     autoSave.value = true;
     homeItems.value = [];
+    mediaFolders.value = [];
     openTabs.value = [];
     tabSessions.value = [];
     _resumePositionsMs.clear();
@@ -1135,13 +1176,27 @@ class AppRepo extends ChangeNotifier {
                     DownloadTask.fromJson(Map<String, dynamic>.from(e as Map)),
               )
               .toList();
+      final List<dynamic> folderRaw =
+          data['mediaFolders'] as List<dynamic>? ?? const [];
+      final folders =
+          folderRaw
+              .map(
+                (e) =>
+                    MediaFolder.fromJson(Map<String, dynamic>.from(e as Map)),
+              )
+              .toList();
+      final allowedFolderIds = folders.map((f) => f.id).toSet();
       for (final t in tasks) {
         t.savePath = _canonicalPath(t.savePath);
         _normalizeTaskType(t);
+        if (t.folderId != null && !allowedFolderIds.contains(t.folderId)) {
+          t.folderId = null;
+        }
       }
       // Do not remove tasks even if their files are missing. Users may wish
       // to reattempt downloads or view history of previous downloads.
       downloads.value = tasks;
+      mediaFolders.value = folders;
       favorites.value =
           (data['favorites'] as List<dynamic>? ?? [])
               .map((e) => e.toString())
@@ -2062,6 +2117,76 @@ class AppRepo extends ChangeNotifier {
     _saveState();
   }
 
+  /// Assign one or more tasks to a custom media folder. When [folderId] is
+  /// null the tasks are moved back to the default section.
+  void setTasksFolder(List<DownloadTask> tasks, String? folderId) {
+    final availableFolders = mediaFolders.value;
+    final String? target =
+        (folderId != null &&
+                availableFolders.any((folder) => folder.id == folderId))
+            ? folderId
+            : null;
+    var changed = false;
+    for (final task in tasks) {
+      if (task.folderId != target) {
+        task.folderId = target;
+        changed = true;
+      }
+    }
+    if (!changed) return;
+    downloads.value = [...downloads.value];
+    unawaited(_saveState());
+  }
+
+  /// Create a new folder used to organise downloads on the media page.
+  MediaFolder createMediaFolder(String name) {
+    final trimmed = name.trim();
+    final folderName = trimmed.isEmpty ? '新資料夾' : trimmed;
+    final folder = MediaFolder(
+      id: 'folder_${DateTime.now().microsecondsSinceEpoch}',
+      name: folderName,
+    );
+    mediaFolders.value = [...mediaFolders.value, folder];
+    unawaited(_saveState());
+    return folder;
+  }
+
+  /// Rename an existing custom media folder.
+  void renameMediaFolder(String id, String newName) {
+    final trimmed = newName.trim();
+    if (trimmed.isEmpty) return;
+    final list = [...mediaFolders.value];
+    final idx = list.indexWhere((f) => f.id == id);
+    if (idx < 0) return;
+    list[idx] = list[idx].copyWith(name: trimmed);
+    mediaFolders.value = list;
+    unawaited(_saveState());
+  }
+
+  /// Delete a folder and move any contained tasks back to the default section.
+  void deleteMediaFolder(String id) {
+    final list = mediaFolders.value;
+    if (!list.any((f) => f.id == id)) return;
+    mediaFolders.value = list.where((f) => f.id != id).toList();
+    var touched = false;
+    for (final task in downloads.value) {
+      if (task.folderId == id) {
+        task.folderId = null;
+        touched = true;
+      }
+    }
+    if (touched) {
+      downloads.value = [...downloads.value];
+    }
+    unawaited(_saveState());
+  }
+
+  /// Persist a new ordering of custom folders.
+  void reorderMediaFolders(List<MediaFolder> folders) {
+    mediaFolders.value = [...folders];
+    unawaited(_saveState());
+  }
+
   /// Mark or unmark a task as favourite.
   void setFavorite(DownloadTask t, bool value) {
     t.favorite = value;
@@ -2416,6 +2541,10 @@ class AppRepo extends ChangeNotifier {
 
   /// All download tasks tracked by the app. Persisted across restarts.
   final ValueNotifier<List<DownloadTask>> downloads = ValueNotifier([]);
+
+  /// Custom folders used to organise download tasks on the media page.
+  final ValueNotifier<List<MediaFolder>> mediaFolders =
+      ValueNotifier<List<MediaFolder>>([]);
 
   /// List of favourited page URLs. Persisted across restarts.
   final ValueNotifier<List<String>> favorites = ValueNotifier([]);

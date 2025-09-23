@@ -4400,6 +4400,7 @@ class _BrowserPageState extends State<BrowserPage> {
             GestureDetector(
               onTap: _openTabManager,
               onLongPress: () async {
+                await HapticFeedback.mediumImpact();
                 final confirm = await showDialog<bool>(
                   context: context,
                   builder: (context) {
