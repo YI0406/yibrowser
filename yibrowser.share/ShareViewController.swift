@@ -167,12 +167,21 @@ class ShareViewController: RSIShareViewController {
                } else {
                    NSLog("[ShareExt] No items were saved to shared container")
                }
-               openHostApp()
-               completeRequest()
+               DispatchQueue.main.async { [weak self] in
+                                 guard let self else { return }
+                                 self.openHostApp()
+                                 self.completeRequest()
+                             }
            }
 
            private func completeRequest() {
-               extensionContext?.completeRequest(returningItems: nil, completionHandler: nil)
+               if Thread.isMainThread {
+                                extensionContext?.completeRequest(returningItems: nil, completionHandler: nil)
+                            } else {
+                                DispatchQueue.main.async { [weak self] in
+                                    self?.extensionContext?.completeRequest(returningItems: nil, completionHandler: nil)
+                                }
+                            }
            }
 
            private func preferredTypeIdentifier(for provider: NSItemProvider) -> String? {
