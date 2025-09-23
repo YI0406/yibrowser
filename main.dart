@@ -124,6 +124,9 @@ class _RootNavState extends State<RootNav> {
   static const MethodChannel _iosQuickActionChannel = MethodChannel(
     'app.quick_actions_bridge',
   );
+  static const MethodChannel _iosShareChannel = MethodChannel(
+    'com.yibrowser/share',
+  );
   final QuickActions _quickActions = const QuickActions();
   ReceiveSharingIntent get _receiveSharingIntent =>
       ReceiveSharingIntent.instance;
@@ -131,6 +134,7 @@ class _RootNavState extends State<RootNav> {
   DateTime? _lastQuickActionAt;
   String? _lastQuickActionType;
   StreamSubscription<List<SharedMediaFile>>? _sharedMediaSubscription;
+  bool _iosShareHandlerRegistered = false;
   String? _lastShareEventKey;
   DateTime? _lastShareEventAt;
   @override
@@ -247,7 +251,22 @@ class _RootNavState extends State<RootNav> {
   }
 
   void _initShareHandling() {
-    if (!(Platform.isIOS || Platform.isAndroid)) {
+    if (Platform.isIOS) {
+      debugPrint('[Share] Initializing iOS share bridge');
+      if (!_iosShareHandlerRegistered) {
+        _iosShareChannel.setMethodCallHandler((call) async {
+          if (call.method == 'onShareTriggered') {
+            await _consumeIosSharedDownloads();
+            return;
+          }
+          debugPrint('[Share] Unknown iOS share callback: ${call.method}');
+        });
+        _iosShareHandlerRegistered = true;
+      }
+      unawaited(_consumeIosSharedDownloads());
+      return;
+    }
+    if (!Platform.isAndroid) {
       return;
     }
     debugPrint('[Share] Initializing share handling listeners');
@@ -256,7 +275,10 @@ class _RootNavState extends State<RootNav> {
         debugPrint(
           '[Share] Stream event received with ${mediaFiles.length} item(s)',
         );
-        _importAndPresentSharedMedia(mediaFiles);
+        final incoming = mediaFiles
+            .map(_incomingShareFromPlugin)
+            .toList(growable: false);
+        _importAndPresentSharedMedia(incoming);
       },
       onError: (Object err) {
         debugPrint('Share stream error: $err');
@@ -272,15 +294,85 @@ class _RootNavState extends State<RootNav> {
           if (mediaFiles.isEmpty) {
             return;
           }
-          _importAndPresentSharedMedia(mediaFiles);
+          final incoming = mediaFiles
+              .map(_incomingShareFromPlugin)
+              .toList(growable: false);
+          _importAndPresentSharedMedia(incoming);
         })
         .catchError((Object err) {
           debugPrint('Initial media error: $err');
         });
   }
 
+  Future<void> _consumeIosSharedDownloads() async {
+    List<dynamic>? rawItems;
+    try {
+      rawItems = await _iosShareChannel.invokeMethod<List<dynamic>>(
+        'consumeSharedDownloads',
+      );
+    } catch (err) {
+      debugPrint('[Share] Failed to consume iOS shared downloads: $err');
+      return;
+    }
+    if (rawItems == null || rawItems.isEmpty) {
+      return;
+    }
+    final entries = rawItems
+        .whereType<Map<dynamic, dynamic>>()
+        .map(_incomingShareFromIosMap)
+        .whereType<_IncomingShare>()
+        .toList(growable: false);
+    if (entries.isEmpty) {
+      debugPrint('[Share] consumeIosSharedDownloads yielded no valid items');
+      return;
+    }
+    await _importAndPresentSharedMedia(entries);
+    final cleanupPaths = entries
+        .map((e) => e.relativePath)
+        .whereType<String>()
+        .toList(growable: false);
+    if (cleanupPaths.isNotEmpty) {
+      try {
+        await _iosShareChannel.invokeMethod(
+          'cleanupSharedDownloads',
+          cleanupPaths,
+        );
+      } catch (err) {
+        debugPrint('[Share] Cleanup for iOS shared downloads failed: $err');
+      }
+    }
+  }
+
+  _IncomingShare? _incomingShareFromIosMap(Map<dynamic, dynamic> map) {
+    final pathValue = map['path'];
+    if (pathValue is! String || pathValue.isEmpty) {
+      return null;
+    }
+    final typeValue = map['type'];
+    String? type;
+    if (typeValue is String && typeValue.isNotEmpty) {
+      type = typeValue;
+    }
+    final relative = map['relativePath'];
+    final relativePath =
+        relative is String && relative.isNotEmpty ? relative : null;
+    return _IncomingShare(
+      path: pathValue,
+      typeHint: type,
+      relativePath: relativePath,
+    );
+  }
+
+  _IncomingShare _incomingShareFromPlugin(SharedMediaFile file) {
+    return _IncomingShare(
+      path: file.path,
+      typeHint: _normalizedShareType(file.type),
+      relativePath: null,
+    );
+  }
+
   Future<void> _importAndPresentSharedMedia(
-    List<SharedMediaFile> mediaFiles,
+    List<_IncomingShare> mediaFiles,
   ) async {
     if (mediaFiles.isEmpty) {
       debugPrint('[Share] Import requested with 0 items; ignoring');
@@ -288,7 +380,7 @@ class _RootNavState extends State<RootNav> {
     }
     debugPrint(
       '[Share] Incoming media files: '
-      '${mediaFiles.map((f) => '${f.path} (type: ${f.type})').join(', ')}',
+      '${mediaFiles.map((f) => '${f.path} (type: ${f.typeHint})').join(', ')}',
     );
     final signature = mediaFiles.map((f) => f.path).join('|');
     final now = DateTime.now();
@@ -326,7 +418,7 @@ class _RootNavState extends State<RootNav> {
       final task = await AppRepo.I.importSharedMediaFile(
         sourcePath: resolvedPath,
         displayName: p.basename(resolvedPath),
-        typeHint: _shareTypeHint(media),
+        typeHint: media.typeHint,
       );
       if (task != null) {
         imported.add(task);
@@ -339,9 +431,11 @@ class _RootNavState extends State<RootNav> {
       return;
     }
 
-    try {
-      await _receiveSharingIntent.reset();
-    } catch (_) {}
+    if (Platform.isAndroid) {
+      try {
+        await _receiveSharingIntent.reset();
+      } catch (_) {}
+    }
 
     if (!mounted) {
       return;
@@ -356,21 +450,21 @@ class _RootNavState extends State<RootNav> {
     });
   }
 
-  String? _shareTypeHint(SharedMediaFile file) {
-    final dynamic rawType = file.type;
+  String? _normalizedShareType(dynamic rawType) {
+    if (rawType == null) {
+      return null;
+    }
     if (rawType is SharedMediaType) {
-      final name = rawType.toString().toLowerCase();
-      if (name.contains('video')) {
-        return 'video';
-      }
-      if (name.contains('audio')) {
-        return 'audio';
-      }
-      if (name.contains('image')) {
-        return 'image';
-      }
-      if (rawType == SharedMediaType.file) {
-        return null;
+      switch (rawType) {
+        case SharedMediaType.video:
+          return 'video';
+
+        case SharedMediaType.image:
+          return 'image';
+        case SharedMediaType.file:
+          return 'file';
+        default:
+          return null;
       }
     }
     if (rawType is String) {
@@ -378,8 +472,15 @@ class _RootNavState extends State<RootNav> {
       if (lower.contains('video')) return 'video';
       if (lower.contains('audio')) return 'audio';
       if (lower.contains('image')) return 'image';
+      if (lower.contains('file')) return 'file';
+      return lower;
     }
-    return null;
+    final description = rawType.toString().toLowerCase();
+    if (description.contains('video')) return 'video';
+    if (description.contains('audio')) return 'audio';
+    if (description.contains('image')) return 'image';
+    if (description.contains('file')) return 'file';
+    return description.isEmpty ? null : description;
   }
 
   void _presentSharedMedia(List<DownloadTask> tasks, {int attempt = 0}) {
@@ -439,6 +540,10 @@ class _RootNavState extends State<RootNav> {
   @override
   void dispose() {
     _sharedMediaSubscription?.cancel();
+    if (_iosShareHandlerRegistered) {
+      _iosShareChannel.setMethodCallHandler(null);
+      _iosShareHandlerRegistered = false;
+    }
     super.dispose();
   }
 
@@ -548,6 +653,14 @@ class _RootNavState extends State<RootNav> {
       ),
     );
   }
+}
+
+class _IncomingShare {
+  const _IncomingShare({required this.path, this.typeHint, this.relativePath});
+
+  final String path;
+  final String? typeHint;
+  final String? relativePath;
 }
 
 /// A floating mini player overlay shown above the root content. When active,

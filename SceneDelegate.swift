@@ -20,7 +20,9 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     let window = UIWindow(windowScene: windowScene)
     let flutterVC = FlutterViewController(project: nil, nibName: nil, bundle: nil)
     GeneratedPluginRegistrant.register(with: flutterVC)
-
+      if let appDelegate = UIApplication.shared.delegate as? AppDelegate {
+            appDelegate.registerShareChannel(with: flutterVC)
+          }
     if let registrar = flutterVC.registrar(forPlugin: "NativePlayerViewFactory") {
       let messenger = registrar.messenger()
       PlayerEngine.shared.configureChannels(messenger: messenger)
