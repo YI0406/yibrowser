@@ -362,14 +362,29 @@ class TabSessionState {
   final int currentIndex;
   final String urlText;
 
-  TabSessionState({List<String>? history, int? currentIndex, String? urlText})
-    : this._internal(_cleanHistory(history), currentIndex, urlText);
+  final String? thumbnailBase64;
 
-  TabSessionState._internal(List<String> history, int? index, String? text)
-    : history = List<String>.from(history),
+  TabSessionState({
+    List<String>? history,
+    int? currentIndex,
+    String? urlText,
+    String? thumbnailBase64,
+  }) : this._internal(
+         _cleanHistory(history),
+         currentIndex,
+         urlText,
+         thumbnailBase64,
+       );
+  TabSessionState._internal(
+    List<String> history,
+    int? index,
+    String? text,
+    String? thumbnail,
+  ) : history = List<String>.from(history),
       currentIndex = _normalizeIndex(history, index),
-      urlText = text?.trim() ?? '';
-
+      urlText = text?.trim() ?? '',
+      thumbnailBase64 =
+          (thumbnail != null && thumbnail.isNotEmpty) ? thumbnail : null;
   static List<String> _cleanHistory(List<String>? values) {
     if (values == null) return <String>[];
     return values
@@ -397,18 +412,26 @@ class TabSessionState {
             .toList();
     final idx = (json['index'] as num?)?.toInt();
     final text = json['urlText'] as String? ?? '';
+    final thumb = json['thumbnail'] as String?;
     return TabSessionState(
       history: rawHistory,
       currentIndex: idx,
       urlText: text,
+      thumbnailBase64: thumb,
     );
   }
 
-  Map<String, dynamic> toJson() => {
-    'history': history,
-    'index': currentIndex,
-    'urlText': urlText,
-  };
+  Map<String, dynamic> toJson() {
+    final map = <String, dynamic>{
+      'history': history,
+      'index': currentIndex,
+      'urlText': urlText,
+    };
+    if (thumbnailBase64 != null && thumbnailBase64!.isNotEmpty) {
+      map['thumbnail'] = thumbnailBase64;
+    }
+    return map;
+  }
 
   String? get currentUrl {
     if (currentIndex < 0 || currentIndex >= history.length) return null;

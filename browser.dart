@@ -45,6 +45,7 @@ class _TabData {
   String? currentUrl;
   InAppWebViewController? controller;
   Uint8List? cachedThumbnail;
+  String? cachedThumbnailBase64;
   final Set<String> allowedAppLinkHosts = <String>{};
   final List<String> history = <String>[];
   int historyIndex = -1;
@@ -952,10 +953,17 @@ class _BrowserPageState extends State<BrowserPage> {
         index = history.length - 1;
       }
     }
+    String? thumbBase64 = tab.cachedThumbnailBase64;
+    final bytes = tab.cachedThumbnail;
+    if (thumbBase64 == null && bytes != null && bytes.isNotEmpty) {
+      thumbBase64 = base64Encode(bytes);
+      tab.cachedThumbnailBase64 = thumbBase64;
+    }
     return TabSessionState(
       history: history,
       currentIndex: index,
       urlText: urlText,
+      thumbnailBase64: thumbBase64,
     );
   }
 
@@ -1500,7 +1508,13 @@ class _BrowserPageState extends State<BrowserPage> {
     try {
       final shot = await controller.takeScreenshot();
       if (shot != null && shot.isNotEmpty) {
+        final previous = tab.cachedThumbnailBase64;
+        final encoded = base64Encode(shot);
         tab.cachedThumbnail = shot;
+        tab.cachedThumbnailBase64 = encoded;
+        if (previous != encoded) {
+          _updateOpenTabs();
+        }
       }
     } catch (err, stack) {
       if (kDebugMode) {
@@ -1933,6 +1947,17 @@ class _BrowserPageState extends State<BrowserPage> {
         }
         tab.skipNextHistorySync = true;
         tab.restoringInitialHistory = true;
+        final thumb = session.thumbnailBase64;
+        if (thumb != null && thumb.isNotEmpty) {
+          try {
+            final bytes = base64Decode(thumb);
+            tab.cachedThumbnail = bytes;
+            tab.cachedThumbnailBase64 = thumb;
+          } catch (_) {
+            tab.cachedThumbnail = null;
+            tab.cachedThumbnailBase64 = null;
+          }
+        }
         _tabs.add(tab);
       }
       if (_tabs.isEmpty) {
