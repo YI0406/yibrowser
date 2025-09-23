@@ -256,7 +256,7 @@
 			<string>Editor</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>ShareMedia-$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+				<string>ShareMedia-com.yibrowser</string>
 			</array>
 		</dict>
 	</array>
