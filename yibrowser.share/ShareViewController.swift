@@ -373,17 +373,88 @@ class ShareViewController: RSIShareViewController {
            }
 
            private func openHostApp() {
-               guard let bundleId = Bundle.main.object(forInfoDictionaryKey: "CFBundleIdentifier") as? String else {
-                   NSLog("[ShareExt] Unable to resolve bundle identifier for redirect")
+               let timestamp = Date().timeIntervalSince1970
+                            let candidates = hostBundleIdentifierCandidates()
+                            guard !candidates.isEmpty else {
+                                NSLog("[ShareExt] No bundle identifier candidates available for redirect")
                    return
                }
+               attemptOpenHostApp(using: candidates, index: 0, timestamp: timestamp)
+                         }
+
+                         private func hostBundleIdentifierCandidates() -> [String] {
+                             var ordered: [String] = []
+                             var seen = Set<String>()
+
+                             func appendCandidate(_ value: String?) {
+                                 guard let raw = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+                                       !raw.isEmpty,
+                                       !seen.contains(raw) else {
+                                     return
+                                 }
+                                 seen.insert(raw)
+                                 ordered.append(raw)
+                             }
+
+                             // Allow an explicit override via Info.plist if provided.
+                             appendCandidate(
+                                 Bundle.main.object(forInfoDictionaryKey: "HostBundleIdentifier") as? String
+                             )
+
+                             guard let extBundleId = Bundle.main.bundleIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines),
+                                   !extBundleId.isEmpty else {
+                                 return ordered
+                             }
+
+                             // Common naming pattern: host bundle identifier followed by a share suffix.
+                             let suffixes = [
+                                 ".share",
+                                 ".Share",
+                                 ".ShareExtension",
+                                 ".shareextension",
+                                 ".ShareExt",
+                                 ".Extension",
+                             ]
+                             for suffix in suffixes {
+                                 if extBundleId.hasSuffix(suffix) {
+                                     let trimmed = String(extBundleId.dropLast(suffix.count))
+                                     appendCandidate(trimmed)
+                                 }
+                             }
+
+                             // Fallback: remove the last path component if no known suffix matched.
+                             if let lastDot = extBundleId.lastIndex(of: ".") {
+                                 let trimmed = String(extBundleId[..<lastDot])
+                                 appendCandidate(trimmed)
+                             }
+
+                             // Finally include the extension bundle identifier itself as a last resort.
+                             appendCandidate(extBundleId)
+
+                             return ordered
+                         }
+
+                         private func attemptOpenHostApp(using candidates: [String], index: Int, timestamp: TimeInterval) {
+                             guard index < candidates.count else {
+                                 NSLog("[ShareExt] Redirect to host app failed for all candidates")
+                                 return
+                             }
+
+                             let bundleId = candidates[index]
                let scheme = "ShareMedia-\(bundleId)"
-               guard let url = URL(string: "\(scheme)://shared?ts=\(Date().timeIntervalSince1970)") else {
-                   NSLog("[ShareExt] Failed to build redirect URL")
+                             
+                             guard let url = URL(string: "\(scheme)://shared?ts=\(timestamp)") else {
+                                               NSLog("[ShareExt] Invalid redirect URL for bundle id %@", bundleId)
+                                               attemptOpenHostApp(using: candidates, index: index + 1, timestamp: timestamp)
                    return
                }
-               extensionContext?.open(url, completionHandler: { success in
-                   NSLog("[ShareExt] Redirect to host app: %@", success ? "success" : "failed")
+                             extensionContext?.open(url, completionHandler: { [weak self] success in
+                                                if success {
+                                                    NSLog("[ShareExt] Redirect to host app succeeded via bundle id %@", bundleId)
+                                                } else {
+                                                    NSLog("[ShareExt] Redirect failed for bundle id %@; trying next candidate", bundleId)
+                                                    self?.attemptOpenHostApp(using: candidates, index: index + 1, timestamp: timestamp)
+                                                }
                })
            }
 }
