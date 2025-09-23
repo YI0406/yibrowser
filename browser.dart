@@ -4400,36 +4400,26 @@ class _BrowserPageState extends State<BrowserPage> {
             GestureDetector(
               onTap: _openTabManager,
               onLongPress: () async {
-                final overlay =
-                    Overlay.of(context).context.findRenderObject() as RenderBox;
-                final box =
-                    _tabButtonKey.currentContext?.findRenderObject()
-                        as RenderBox?;
-                if (box == null) return;
-                final position = RelativeRect.fromRect(
-                  Rect.fromPoints(
-                    box.localToGlobal(Offset.zero, ancestor: overlay),
-                    box.localToGlobal(
-                      box.size.bottomRight(Offset.zero),
-                      ancestor: overlay,
-                    ),
-                  ),
-                  Offset.zero & overlay.size,
-                );
-                final action = await showMenu<String>(
+                final confirm = await showDialog<bool>(
                   context: context,
-                  position: position,
-                  items: const [
-                    PopupMenuItem<String>(
-                      value: 'clear',
-                      child: ListTile(
-                        leading: Icon(Icons.delete_sweep),
-                        title: Text('清除全部分頁'),
-                      ),
-                    ),
-                  ],
+                  builder: (context) {
+                    return AlertDialog(
+                      title: const Text('關閉所有分頁'),
+                      content: const Text('是否確定要關閉所有分頁？'),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.of(context).pop(false),
+                          child: const Text('取消'),
+                        ),
+                        FilledButton(
+                          onPressed: () => Navigator.of(context).pop(true),
+                          child: const Text('關閉'),
+                        ),
+                      ],
+                    );
+                  },
                 );
-                if (action == 'clear') {
+                if (confirm == true) {
                   _clearAllTabs();
                   if (mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
@@ -5970,14 +5960,40 @@ class FavoritesPage extends StatelessWidget {
   }
 }
 
-/// A dedicated page that shows the browsing history in a scrollable list. Each
-/// entry displays its title (or URL if no title), timestamp and URL. Tapping
-/// an entry will invoke [onOpen] to load the URL in the caller's context.
-/// A delete icon is shown to remove individual entries and a trash icon in
-/// the app bar clears the entire history.
-class HistoryPage extends StatelessWidget {
+/// A dedicated page that shows the browsing history in a scrollable list with
+/// a search field and friendly time grouping. Each entry displays its title
+/// (or URL if no title), timestamp and URL. Tapping an entry invokes [onOpen]
+/// to load the URL in the caller's context. Individual entries can be removed
+/// and the entire list can be cleared from the app bar.
+class HistoryPage extends StatefulWidget {
   final void Function(String url) onOpen;
   const HistoryPage({super.key, required this.onOpen});
+  @override
+  State<HistoryPage> createState() => _HistoryPageState();
+}
+
+class _HistoryPageState extends State<HistoryPage> {
+  final TextEditingController _searchController = TextEditingController();
+  String _query = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _searchController.addListener(_onSearchChanged);
+  }
+
+  @override
+  void dispose() {
+    _searchController.removeListener(_onSearchChanged);
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  void _onSearchChanged() {
+    setState(() {
+      _query = _searchController.text.trim();
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -5992,10 +6008,7 @@ class HistoryPage extends StatelessWidget {
               if (hist.isEmpty) return const SizedBox.shrink();
               return IconButton(
                 icon: const Icon(Icons.delete_sweep),
-                tooltip: '清除全部',
-                onPressed: () {
-                  repo.clearHistory();
-                },
+                onPressed: repo.clearHistory,
               );
             },
           ),
@@ -6004,57 +6017,258 @@ class HistoryPage extends StatelessWidget {
       body: ValueListenableBuilder<List<HistoryEntry>>(
         valueListenable: repo.history,
         builder: (context, hist, _) {
-          if (hist.isEmpty) {
-            return const Center(child: Text('尚無瀏覽記錄'));
-          }
-          // Show most recent first.
           final items = [...hist]
             ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
-          return ListView.separated(
-            itemCount: items.length,
-            separatorBuilder: (_, __) => const Divider(height: 1),
-            itemBuilder: (_, i) {
-              final e = items[i];
-              final title = e.title.isNotEmpty ? e.title : e.url;
-              return ListTile(
-                title: Text(
-                  title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                subtitle: Column(
+          final filtered = items.where(_matchesQuery).toList();
+          final hasHistory = items.isNotEmpty;
+
+          return Column(
+            children: [
+              _buildSearchField(context),
+              Expanded(
+                child:
+                    !hasHistory
+                        ? const _HistoryEmptyState(message: '尚無瀏覽記錄')
+                        : filtered.isEmpty
+                        ? const _HistoryEmptyState(message: '沒有符合的紀錄')
+                        : _buildHistoryList(filtered, repo),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildSearchField(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+      child: TextField(
+        controller: _searchController,
+        textInputAction: TextInputAction.search,
+        decoration: InputDecoration(
+          prefixIcon: const Icon(Icons.search),
+          suffixIcon:
+              _query.isEmpty
+                  ? null
+                  : IconButton(
+                    tooltip: '清除',
+                    icon: const Icon(Icons.close),
+                    onPressed: () {
+                      _searchController.clear();
+                      FocusScope.of(context).unfocus();
+                    },
+                  ),
+          hintText: '搜尋標題或網址',
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(32)),
+          isDense: true,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHistoryList(List<HistoryEntry> entries, AppRepo repo) {
+    final now = DateTime.now();
+    return ListView.separated(
+      padding: const EdgeInsets.only(bottom: 24),
+      itemCount: entries.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 12),
+      itemBuilder: (context, index) {
+        final entry = entries[index];
+        final entryDate = entry.timestamp.toLocal();
+        final showHeader =
+            index == 0 ||
+            !_isSameDay(entryDate, entries[index - 1].timestamp.toLocal());
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (showHeader) _buildSectionHeader(context, entryDate, now),
+            _buildHistoryTile(context, entry, repo),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildSectionHeader(
+    BuildContext context,
+    DateTime date,
+    DateTime now,
+  ) {
+    final theme = Theme.of(context);
+    final relative = _relativeLabel(date, now);
+    final calendar = _formatCalendarLabel(date);
+
+    Widget buildTag(Color background, Color foreground, String text) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: background,
+          borderRadius: BorderRadius.circular(999),
+        ),
+        child: Text(
+          text,
+          style: theme.textTheme.bodyMedium?.copyWith(
+            color: foreground,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 4,
+        children: [
+          buildTag(
+            theme.colorScheme.primaryContainer,
+            theme.colorScheme.onPrimaryContainer,
+            relative,
+          ),
+          buildTag(
+            theme.colorScheme.surfaceVariant,
+            theme.colorScheme.onSurfaceVariant,
+            calendar,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHistoryTile(
+    BuildContext context,
+    HistoryEntry entry,
+    AppRepo repo,
+  ) {
+    final theme = Theme.of(context);
+    final localTs = entry.timestamp.toLocal();
+    final title = entry.title.isNotEmpty ? entry.title : entry.url;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Material(
+        color: theme.colorScheme.surfaceVariant,
+        borderRadius: BorderRadius.circular(12),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: () {
+            FocusScope.of(context).unfocus();
+            Navigator.of(context).pop();
+            widget.onOpen(entry.url);
+          },
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      e.timestamp.toLocal().toString().split('.').first,
-                      style: const TextStyle(fontSize: 12, color: Colors.grey),
+                    CircleAvatar(
+                      radius: 18,
+                      backgroundColor: theme.colorScheme.primaryContainer,
+                      child: Icon(
+                        Icons.public,
+                        color: theme.colorScheme.onPrimaryContainer,
+                      ),
                     ),
-                    Text(
-                      e.url,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 12, color: Colors.grey),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            title,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            entry.url,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.delete_outline),
+                      tooltip: '刪除',
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () => repo.removeHistoryEntry(entry),
                     ),
                   ],
                 ),
-                trailing: IconButton(
-                  icon: const Icon(Icons.delete),
-                  tooltip: '刪除',
-                  onPressed: () {
-                    repo.removeHistoryEntry(e);
-                  },
+                const SizedBox(height: 12),
+                Text(
+                  '瀏覽於 ${_formatTime(localTs)}',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
                 ),
-                onTap: () {
-                  // Close the history page before navigating. Do not pop
-                  // twice; the drawer was already dismissed when the history
-                  // page was presented.
-                  Navigator.of(context).pop();
-                  onOpen(e.url);
-                },
-              );
-            },
-          );
-        },
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  bool _matchesQuery(HistoryEntry entry) {
+    if (_query.isEmpty) return true;
+    final needle = _query.toLowerCase();
+    return entry.title.toLowerCase().contains(needle) ||
+        entry.url.toLowerCase().contains(needle);
+  }
+
+  bool _isSameDay(DateTime a, DateTime b) {
+    return a.year == b.year && a.month == b.month && a.day == b.day;
+  }
+
+  String _relativeLabel(DateTime date, DateTime now) {
+    final today = DateTime(now.year, now.month, now.day);
+    final entryDay = DateTime(date.year, date.month, date.day);
+    final diff = today.difference(entryDay).inDays;
+    if (diff <= 0) return '今天';
+    if (diff == 1) return '昨天';
+    if (diff == 2) return '前天';
+    return '$diff 天前';
+  }
+
+  String _formatCalendarLabel(DateTime date) {
+    const weekdays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+    final weekday = weekdays[(date.weekday - 1) % weekdays.length];
+    return '${date.year}-${_twoDigits(date.month)}-${_twoDigits(date.day)} $weekday';
+  }
+
+  String _formatTime(DateTime date) {
+    return '${_twoDigits(date.hour)}:${_twoDigits(date.minute)}';
+  }
+
+  String _twoDigits(int value) => value.toString().padLeft(2, '0');
+}
+
+class _HistoryEmptyState extends StatelessWidget {
+  final String message;
+  const _HistoryEmptyState({required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Center(
+      child: Text(
+        message,
+        style: theme.textTheme.bodyMedium?.copyWith(
+          color: theme.colorScheme.onSurfaceVariant,
+        ),
       ),
     );
   }
