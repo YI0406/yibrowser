@@ -122,9 +122,6 @@ class BrowserPage extends StatefulWidget {
 }
 
 enum _ToolbarMenuAction {
-  toggleSniffer,
-  openResources,
-
   openFavorites,
   openHistory,
   toggleBlockPopup,
@@ -4281,12 +4278,10 @@ class _BrowserPageState extends State<BrowserPage> {
     if (overlayBox is! RenderBox) return;
 
     final repo = AppRepo.I;
-    final detected = repo.hits.value.length;
 
     final favoriteCount = repo.favorites.value.length;
     final historyCount = repo.history.value.length;
     final blockPopupOn = repo.blockPopup.value;
-    final snifferOn = repo.snifferEnabled.value;
 
     PopupMenuItem<_ToolbarMenuAction> buildItem(
       _ToolbarMenuAction action,
@@ -4321,19 +4316,6 @@ class _BrowserPageState extends State<BrowserPage> {
     ).shift(const Offset(0, 8));
 
     final entries = <PopupMenuEntry<_ToolbarMenuAction>>[
-      buildItem(
-        _ToolbarMenuAction.toggleSniffer,
-        snifferOn ? Icons.toggle_on : Icons.toggle_off,
-        '嗅探',
-        iconColor: snifferOn ? Colors.green : null,
-      ),
-      buildItem(
-        _ToolbarMenuAction.openResources,
-        Icons.search,
-        detected > 0 ? '資源（$detected）' : '資源',
-      ),
-
-      const PopupMenuDivider(),
       buildItem(
         _ToolbarMenuAction.openFavorites,
         Icons.favorite,
@@ -4374,18 +4356,10 @@ class _BrowserPageState extends State<BrowserPage> {
     }
 
     final keepOpen =
-        selected == _ToolbarMenuAction.toggleSniffer ||
         selected == _ToolbarMenuAction.toggleBlockPopup ||
         selected == _ToolbarMenuAction.blockExternalApp;
 
     switch (selected) {
-      case _ToolbarMenuAction.toggleSniffer:
-        await _toggleSniffer();
-        break;
-      case _ToolbarMenuAction.openResources:
-        await _openDetectedSheet();
-        break;
-
       case _ToolbarMenuAction.openFavorites:
         await _openFavoritesPage();
         break;
