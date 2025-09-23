@@ -44,6 +44,7 @@ class _TabData {
   String? pageTitle;
   String? currentUrl;
   InAppWebViewController? controller;
+  Uint8List? cachedThumbnail;
   final Set<String> allowedAppLinkHosts = <String>{};
   final List<String> history = <String>[];
   int historyIndex = -1;
@@ -1338,6 +1339,7 @@ class _BrowserPageState extends State<BrowserPage> {
         (_currentTabIndex >= 0 && _currentTabIndex < _tabs.length)
             ? _currentTabIndex
             : 0;
+    _rememberCurrentTabThumbnail();
     setState(() {
       _tabs.add(tab);
       _currentTabIndex = makeActive ? _tabs.length - 1 : previousIndex;
@@ -1393,6 +1395,7 @@ class _BrowserPageState extends State<BrowserPage> {
                   children: [
                     InkWell(
                       onTap: () {
+                        _rememberCurrentTabThumbnail();
                         setState(() {
                           _currentTabIndex = i;
                         });
@@ -1411,6 +1414,7 @@ class _BrowserPageState extends State<BrowserPage> {
                     if (_tabs.length > 1)
                       GestureDetector(
                         onTap: () {
+                          _rememberCurrentTabThumbnail();
                           setState(() {
                             final removed = _tabs.removeAt(i);
                             removed.urlCtrl.dispose();
@@ -1488,6 +1492,32 @@ class _BrowserPageState extends State<BrowserPage> {
     }
   }
 
+  Future<Uint8List?> _captureTabThumbnail(_TabData tab) async {
+    final controller = tab.controller;
+    if (controller == null) {
+      return tab.cachedThumbnail;
+    }
+    try {
+      final shot = await controller.takeScreenshot();
+      if (shot != null && shot.isNotEmpty) {
+        tab.cachedThumbnail = shot;
+      }
+    } catch (err, stack) {
+      if (kDebugMode) {
+        debugPrint('Failed to capture tab thumbnail: $err\n$stack');
+      }
+    }
+    return tab.cachedThumbnail;
+  }
+
+  void _rememberCurrentTabThumbnail() {
+    if (_currentTabIndex < 0 || _currentTabIndex >= _tabs.length) {
+      return;
+    }
+    final tab = _tabs[_currentTabIndex];
+    unawaited(_captureTabThumbnail(tab));
+  }
+
   /// Navigate to the tab management view. This view displays all open tabs
   /// in a grid and allows adding, selecting and closing tabs. When the
   /// manager is closed the browser state is updated accordingly.
@@ -1508,12 +1538,7 @@ class _BrowserPageState extends State<BrowserPage> {
         return '新分頁';
       }();
 
-      Uint8List? shot;
-      try {
-        if (t.controller != null) {
-          shot = await t.controller!.takeScreenshot();
-        }
-      } catch (_) {}
+      final shot = await _captureTabThumbnail(t);
 
       infos.add(_TabInfo(title: name, thumbnail: shot));
     }
@@ -1525,6 +1550,7 @@ class _BrowserPageState extends State<BrowserPage> {
             (_) => _TabManagerPage(
               tabs: List<_TabInfo>.from(infos),
               onAdd: () {
+                _rememberCurrentTabThumbnail();
                 setState(() {
                   _tabs.add(_createTab());
                   _currentTabIndex = _tabs.length - 1;
@@ -1533,6 +1559,7 @@ class _BrowserPageState extends State<BrowserPage> {
                 _persistCurrentTabIndex();
               },
               onSelect: (int index) {
+                _rememberCurrentTabThumbnail();
                 setState(() {
                   _currentTabIndex = index;
                 });
@@ -1591,6 +1618,7 @@ class _BrowserPageState extends State<BrowserPage> {
     // handling when the notifier updates.
     repo.pendingNewTab.value = null;
     final tab = _createTab();
+    _rememberCurrentTabThumbnail();
     if (mounted) {
       setState(() {
         _tabs.add(tab);
@@ -3537,6 +3565,7 @@ class _BrowserPageState extends State<BrowserPage> {
 
                             // about:blank 不寫入歷史；復原的第一筆載入也跳過
                             if (!isBlank) {
+                              unawaited(_captureTabThumbnail(tab));
                               if (tab.restoringInitialHistory) {
                                 tab.restoringInitialHistory = false;
                               }
