@@ -63,7 +63,7 @@ class MediaPage extends StatefulWidget {
 
 class _MediaPageState extends State<MediaPage>
     with SingleTickerProviderStateMixin {
-  late final TabController _tab = TabController(length: 2, vsync: this);
+  late final TabController _tab = TabController(length: 3, vsync: this);
   static const String _kFolderSheetDefaultKey = '__default_media_folder__';
 
   Timer? _convertTicker;
@@ -73,20 +73,19 @@ class _MediaPageState extends State<MediaPage>
 
   bool _metaRefreshQueued = false;
   final Set<DownloadTask> _selected = <DownloadTask>{};
+  final Set<DownloadTask> _hiddenSelected = <DownloadTask>{};
   bool _isEditing = false;
+  bool _hiddenEditing = false;
+  bool _hiddenUnlocked = false;
+  bool _authenticatingHidden = false;
+  int _lastTabIndex = 0;
   final Map<String, bool> _folderExpanded = <String, bool>{};
 
   @override
   void initState() {
     super.initState();
-    _tab.addListener(() {
-      if (_tab.index == 1 && _isEditing) {
-        setState(() {
-          _isEditing = false;
-          _selected.clear();
-        });
-      }
-    });
+    _lastTabIndex = _tab.index;
+    _tab.addListener(_handleTabChange);
     // Previously performed biometric authentication here. The app no longer
     // locks the media section behind Face ID/Touch ID.
     Future.microtask(() async {
@@ -104,6 +103,9 @@ class _MediaPageState extends State<MediaPage>
     _searchDebounce?.cancel();
     _searchDebounce = null;
     try {
+      _tab.removeListener(_handleTabChange);
+    } catch (_) {}
+    try {
       _tab.dispose();
     } catch (_) {}
     try {
@@ -112,16 +114,58 @@ class _MediaPageState extends State<MediaPage>
     super.dispose();
   }
 
+  Future<void> _attemptUnlockHidden({bool revertOnFail = true}) async {
+    if (_authenticatingHidden) return;
+    _authenticatingHidden = true;
+    final previousIndex = _lastTabIndex;
+    final ok = await Locker.unlock(reason: '解鎖以查看隱藏媒體');
+    if (!mounted) {
+      _authenticatingHidden = false;
+      return;
+    }
+    _authenticatingHidden = false;
+    if (ok) {
+      setState(() {
+        _hiddenUnlocked = true;
+      });
+      _lastTabIndex = _tab.index;
+    } else if (revertOnFail) {
+      _tab.animateTo(previousIndex);
+      _lastTabIndex = previousIndex;
+    }
+  }
+
+  void _handleTabChange() {
+    final index = _tab.index;
+    if (index == 2 && !_hiddenUnlocked) {
+      unawaited(_attemptUnlockHidden());
+      return;
+    }
+    if (index != 0 && _isEditing) {
+      setState(() {
+        _isEditing = false;
+        _selected.clear();
+      });
+    }
+    if (index != 2 && _hiddenEditing) {
+      setState(() {
+        _hiddenEditing = false;
+        _hiddenSelected.clear();
+      });
+    }
+    _lastTabIndex = index;
+  }
+
   @override
   Widget build(BuildContext context) {
     final repo = AppRepo.I;
     return ValueListenableBuilder<List<DownloadTask>>(
       valueListenable: repo.downloads,
       builder: (context, list, _) {
-        var tasks = [...list]
+        final allTasks = [...list]
           ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
         final Map<String, DownloadTask> byPath = {};
-        for (final task in tasks) {
+        for (final task in allTasks) {
           final key = path.normalize(task.savePath);
           final existing = byPath[key];
           if (existing == null) {
@@ -138,25 +182,30 @@ class _MediaPageState extends State<MediaPage>
             if ((t.name ?? '').isNotEmpty) s += 1;
             if (t.favorite) s += 1;
             if (t.total != null && t.total! > 0) s += 1;
+            if (t.hidden) s += 50;
             return s;
           }
 
           byPath[key] = score(task) >= score(existing) ? task : existing;
         }
-        tasks =
+        final List<DownloadTask> sortedTasks =
             byPath.values.toList()
               ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+        final List<DownloadTask> hiddenTasks =
+            sortedTasks.where((t) => t.hidden).toList();
+        List<DownloadTask> visibleTasks =
+            sortedTasks.where((t) => !t.hidden).toList();
         if (_search.isNotEmpty) {
           final q = _search.toLowerCase();
-          tasks =
-              tasks.where((t) {
+          visibleTasks =
+              visibleTasks.where((t) {
                 final name = (t.name ?? '').toLowerCase();
                 final url = t.url.toLowerCase();
                 final file = path.basename(t.savePath).toLowerCase();
                 return name.contains(q) || url.contains(q) || file.contains(q);
               }).toList();
         }
-        final hasActiveConversion = tasks.any(
+        final hasActiveConversion = sortedTasks.any(
           (t) =>
               t.kind == 'hls' &&
               t.state == 'downloading' &&
@@ -164,7 +213,7 @@ class _MediaPageState extends State<MediaPage>
               t.received >= (t.total ?? 0),
         );
         _ensureConvertTicker(hasActiveConversion);
-        final hasMissingMeta = tasks.any(_needsMeta);
+        final hasMissingMeta = sortedTasks.any(_needsMeta);
         if (hasMissingMeta && !_metaRefreshQueued) {
           _metaRefreshQueued = true;
           Future(() async {
@@ -178,7 +227,8 @@ class _MediaPageState extends State<MediaPage>
             }
           });
         }
-        _selected.removeWhere((task) => !tasks.contains(task));
+        _selected.removeWhere((task) => !visibleTasks.contains(task));
+        _hiddenSelected.removeWhere((task) => !hiddenTasks.contains(task));
 
         return SafeArea(
           top: true,
@@ -192,7 +242,14 @@ class _MediaPageState extends State<MediaPage>
                   child: TabBar(
                     controller: _tab,
                     isScrollable: true,
-                    tabs: const [Tab(text: '媒體'), Tab(text: '收藏')],
+                    tabs: const [
+                      Tab(text: '媒體'),
+                      Tab(text: '收藏'),
+                      Tab(
+                        icon: Icon(Icons.visibility_off_outlined),
+                        text: '已隱藏',
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -208,13 +265,16 @@ class _MediaPageState extends State<MediaPage>
                             horizontal: 12,
                             vertical: 8,
                           ),
-                          child: _buildTopControls(context, tasks),
+                          child: _buildTopControls(context, visibleTasks),
                         ),
                         Expanded(
                           child: ValueListenableBuilder<List<MediaFolder>>(
                             valueListenable: repo.mediaFolders,
                             builder: (context, folders, __) {
-                              final sections = _buildSections(tasks, folders);
+                              final sections = _buildSections(
+                                visibleTasks,
+                                folders,
+                              );
                               _syncFolderExpansion(sections.map((s) => s.id));
                               return ListView.builder(
                                 padding: const EdgeInsets.only(bottom: 16),
@@ -264,13 +324,18 @@ class _MediaPageState extends State<MediaPage>
                                               children:
                                                   section.tasks
                                                       .map(
-                                                        (task) =>
-                                                            _buildTaskTile(
-                                                              context: context,
-                                                              task: task,
-                                                              sectionTasks:
-                                                                  section.tasks,
-                                                            ),
+                                                        (
+                                                          task,
+                                                        ) => _buildTaskTile(
+                                                          context: context,
+                                                          task: task,
+                                                          sectionTasks:
+                                                              section.tasks,
+                                                          isEditing: _isEditing,
+                                                          selection: _selected,
+                                                          onToggleSelect:
+                                                              _toggleSelect,
+                                                        ),
                                                       )
                                                       .toList(),
                                             ),
@@ -285,6 +350,7 @@ class _MediaPageState extends State<MediaPage>
                       ],
                     ),
                     const _MyFavorites(),
+                    _buildHiddenTab(context, hiddenTasks),
                   ],
                 ),
               ),
@@ -372,6 +438,11 @@ class _MediaPageState extends State<MediaPage>
                     _selected.isEmpty ? null : () => _exportSelected(context),
                 child: const Text('匯出...'),
               ),
+              OutlinedButton(
+                onPressed:
+                    _selected.isEmpty ? null : () => _hideSelected(context),
+                child: const Text('隱藏'),
+              ),
               if (_selected.isNotEmpty) Text('已選取 ${_selected.length} 項'),
             ],
           ),
@@ -417,6 +488,136 @@ class _MediaPageState extends State<MediaPage>
               ),
             ),
           ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildHiddenTopControls(
+    BuildContext context,
+    List<DownloadTask> hiddenTasks,
+  ) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            TextButton(
+              onPressed: () {
+                setState(() {
+                  if (_hiddenEditing) {
+                    _hiddenEditing = false;
+                    _hiddenSelected.clear();
+                  } else {
+                    _hiddenEditing = true;
+                  }
+                });
+              },
+              child: Text(_hiddenEditing ? '完成' : '編輯'),
+            ),
+            const SizedBox(width: 8),
+            TextButton(
+              onPressed: () async {
+                await AppRepo.I.rescanDownloadsFolder(
+                  regenerateThumbnails: true,
+                );
+                if (mounted) setState(() {});
+              },
+              child: const Text('重新掃描'),
+            ),
+          ],
+        ),
+        if (_hiddenEditing) ...[
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              OutlinedButton(
+                onPressed:
+                    hiddenTasks.isEmpty
+                        ? null
+                        : () => _selectAllHidden(hiddenTasks),
+                child: const Text('全選'),
+              ),
+              OutlinedButton(
+                onPressed:
+                    _hiddenSelected.isEmpty
+                        ? null
+                        : () => _exportHiddenSelected(context),
+                child: const Text('匯出...'),
+              ),
+              OutlinedButton(
+                onPressed:
+                    _hiddenSelected.isEmpty
+                        ? null
+                        : () => _deleteHiddenSelected(),
+                child: const Text('刪除'),
+              ),
+              OutlinedButton(
+                onPressed:
+                    _hiddenSelected.isEmpty
+                        ? null
+                        : () => _unhideSelected(context),
+                child: const Text('取消隱藏'),
+              ),
+              if (_hiddenSelected.isNotEmpty)
+                Text('已選取 ${_hiddenSelected.length} 項'),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildHiddenTab(BuildContext context, List<DownloadTask> hiddenTasks) {
+    if (!_hiddenUnlocked) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.lock_outline, size: 48),
+            const SizedBox(height: 12),
+            const Text('請使用 Face ID 或 Touch ID 解鎖'),
+            const SizedBox(height: 16),
+            ElevatedButton(
+              onPressed: () {
+                unawaited(_attemptUnlockHidden(revertOnFail: false));
+              },
+              child: const Text('解鎖'),
+            ),
+          ],
+        ),
+      );
+    }
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: _buildHiddenTopControls(context, hiddenTasks),
+        ),
+        Expanded(
+          child:
+              hiddenTasks.isEmpty
+                  ? const Center(child: Text('尚無隱藏媒體'))
+                  : ListView.separated(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    itemCount: hiddenTasks.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    itemBuilder: (context, index) {
+                      final task = hiddenTasks[index];
+                      return _buildTaskTile(
+                        context: context,
+                        task: task,
+                        sectionTasks: hiddenTasks,
+                        isEditing: _hiddenEditing,
+                        selection: _hiddenSelected,
+                        onToggleSelect: _toggleHiddenSelect,
+                        hiddenContext: true,
+                      );
+                    },
+                  ),
         ),
       ],
     );
@@ -486,11 +687,16 @@ class _MediaPageState extends State<MediaPage>
     required BuildContext context,
     required DownloadTask task,
     required List<DownloadTask> sectionTasks,
+    required bool isEditing,
+    required Set<DownloadTask> selection,
+    required void Function(DownloadTask) onToggleSelect,
+    bool hiddenContext = false,
   }) {
     final resolvedType = AppRepo.I.resolvedTaskType(task);
     final fileName = task.name ?? path.basename(task.savePath);
     final status = _stateLabel(task);
-    final selected = _selected.contains(task);
+
+    final selected = selection.contains(task);
     int displayBytes = task.total ?? 0;
     if (displayBytes <= 0) {
       try {
@@ -547,15 +753,15 @@ class _MediaPageState extends State<MediaPage>
         ],
       ),
       onTap: () {
-        if (_isEditing) {
-          _toggleSelect(task);
+        if (isEditing) {
+          onToggleSelect(task);
         } else {
           _openTask(context, task, candidates: sectionTasks);
         }
       },
       onLongPress: () async {
-        if (_isEditing) {
-          _toggleSelect(task);
+        if (isEditing) {
+          onToggleSelect(task);
           return;
         }
         final action = await showModalBottomSheet<String>(
@@ -570,11 +776,12 @@ class _MediaPageState extends State<MediaPage>
                       title: const Text('編輯名稱'),
                       onTap: () => Navigator.pop(context, 'rename'),
                     ),
-                    ListTile(
-                      leading: const Icon(Icons.folder_open),
-                      title: const Text('移動到...'),
-                      onTap: () => Navigator.pop(context, 'move'),
-                    ),
+                    if (!hiddenContext)
+                      ListTile(
+                        leading: const Icon(Icons.folder_open),
+                        title: const Text('移動到...'),
+                        onTap: () => Navigator.pop(context, 'move'),
+                      ),
                     ListTile(
                       leading: const Icon(Icons.content_cut),
                       title: const Text('編輯導出...'),
@@ -585,6 +792,18 @@ class _MediaPageState extends State<MediaPage>
                       title: const Text('匯出...'),
                       onTap: () => Navigator.pop(context, 'share'),
                     ),
+                    if (hiddenContext)
+                      ListTile(
+                        leading: const Icon(Icons.visibility),
+                        title: const Text('取消隱藏'),
+                        onTap: () => Navigator.pop(context, 'unhide'),
+                      )
+                    else
+                      ListTile(
+                        leading: const Icon(Icons.visibility_off),
+                        title: const Text('隱藏'),
+                        onTap: () => Navigator.pop(context, 'hide'),
+                      ),
                     ListTile(
                       leading: const Icon(Icons.delete),
                       title: const Text('刪除'),
@@ -636,13 +855,20 @@ class _MediaPageState extends State<MediaPage>
               context,
             ).showSnackBar(const SnackBar(content: Text('檔案已不存在')));
           }
+        } else if (action == 'hide') {
+          _hideTasks(context, [task]);
+        } else if (action == 'unhide') {
+          _unhideTasks(context, [task]);
         } else if (action == 'delete') {
           await AppRepo.I.removeTasks([task]);
         }
       },
       trailing:
-          _isEditing
-              ? Checkbox(value: selected, onChanged: (_) => _toggleSelect(task))
+          isEditing
+              ? Checkbox(
+                value: selected,
+                onChanged: (_) => onToggleSelect(task),
+              )
               : IconButton(
                 icon: Icon(
                   task.favorite ? Icons.favorite : Icons.favorite_border,
@@ -735,9 +961,27 @@ class _MediaPageState extends State<MediaPage>
     });
   }
 
+  void _toggleHiddenSelect(DownloadTask task) {
+    setState(() {
+      if (_hiddenSelected.contains(task)) {
+        _hiddenSelected.remove(task);
+      } else {
+        _hiddenSelected.add(task);
+      }
+    });
+  }
+
   void _selectAll(List<DownloadTask> tasks) {
     setState(() {
       _selected
+        ..clear()
+        ..addAll(tasks);
+    });
+  }
+
+  void _selectAllHidden(List<DownloadTask> tasks) {
+    setState(() {
+      _hiddenSelected
         ..clear()
         ..addAll(tasks);
     });
@@ -849,40 +1093,132 @@ class _MediaPageState extends State<MediaPage>
     });
   }
 
-  Future<void> _exportSelected(BuildContext context) async {
-    if (_selected.isEmpty) return;
+  Future<void> _deleteHiddenSelected() async {
+    if (_hiddenSelected.isEmpty) return;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('刪除已選取的檔案'),
+          content: Text('確定要刪除 ${_hiddenSelected.length} 項嗎？'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('取消'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('刪除'),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirm != true) return;
+    final tasks = _hiddenSelected.toList();
+    await AppRepo.I.removeTasks(tasks);
+    if (!mounted) return;
+    setState(() {
+      _hiddenSelected.clear();
+      _hiddenEditing = false;
+    });
+  }
+
+  Future<bool> _exportTasks(
+    BuildContext context,
+    Iterable<DownloadTask> tasks,
+  ) async {
     final ok = await PurchaseService().ensurePremium(
       context: context,
       featureName: '匯出',
     );
-    if (!ok) return;
+    if (!ok) return false;
     final files = <XFile>[];
-    for (final task in _selected) {
+    for (final task in tasks) {
       if (File(task.savePath).existsSync()) {
         files.add(XFile(task.savePath));
       }
     }
     if (files.isEmpty) {
-      if (!mounted) return;
+      if (!mounted) return false;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           duration: Duration(seconds: 1),
           content: Text('沒有可匯出的檔案'),
         ),
       );
-      return;
+      return false;
     }
     await Share.shareXFiles(files);
-    if (!mounted) return;
+    return true;
+  }
+
+  Future<void> _exportSelected(BuildContext context) async {
+    if (_selected.isEmpty) return;
+    final exported = await _exportTasks(context, _selected);
+    if (!mounted || !exported) return;
     setState(() {
       _selected.clear();
       _isEditing = false;
     });
   }
 
+  Future<void> _exportHiddenSelected(BuildContext context) async {
+    if (_hiddenSelected.isEmpty) return;
+    final exported = await _exportTasks(context, _hiddenSelected);
+    if (!mounted || !exported) return;
+    setState(() {
+      _hiddenSelected.clear();
+      _hiddenEditing = false;
+    });
+  }
+
   void _toggleFavorite(DownloadTask task) {
     AppRepo.I.setFavorite(task, !task.favorite);
     setState(() {});
+  }
+
+  void _hideTasks(BuildContext context, List<DownloadTask> tasks) {
+    if (tasks.isEmpty) return;
+    AppRepo.I.setTasksHidden(tasks, true);
+    if (!mounted) return;
+    setState(() {
+      _selected.removeAll(tasks);
+      _hiddenSelected.removeAll(tasks);
+      _isEditing = false;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 1),
+        content: Text('已隱藏 ${tasks.length} 項'),
+      ),
+    );
+  }
+
+  void _unhideTasks(BuildContext context, List<DownloadTask> tasks) {
+    if (tasks.isEmpty) return;
+    AppRepo.I.setTasksHidden(tasks, false);
+    if (!mounted) return;
+    setState(() {
+      _hiddenSelected.removeAll(tasks);
+      _hiddenEditing = false;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 1),
+        content: Text('已取消隱藏 ${tasks.length} 項'),
+      ),
+    );
+  }
+
+  void _hideSelected(BuildContext context) {
+    if (_selected.isEmpty) return;
+    _hideTasks(context, _selected.toList());
+  }
+
+  void _unhideSelected(BuildContext context) {
+    if (_hiddenSelected.isEmpty) return;
+    _unhideTasks(context, _hiddenSelected.toList());
   }
 
   void _renameTask(BuildContext context, DownloadTask task) {
@@ -1258,7 +1594,7 @@ class _MyFavorites extends StatelessWidget {
       valueListenable: repo.downloads,
       builder: (context, tasks, _) {
         final favs =
-            tasks.where((t) => t.favorite).toList()
+            tasks.where((t) => t.favorite && !t.hidden).toList()
               ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
         if (favs.isEmpty) {
           return const Center(child: Text('尚無收藏'));
@@ -1356,6 +1692,11 @@ class _MyFavorites extends StatelessWidget {
                               onTap: () => Navigator.pop(context, 'share'),
                             ),
                             ListTile(
+                              leading: const Icon(Icons.visibility_off),
+                              title: const Text('隱藏'),
+                              onTap: () => Navigator.pop(context, 'hide'),
+                            ),
+                            ListTile(
                               leading: const Icon(Icons.delete),
                               title: const Text('刪除'),
                               onTap: () => Navigator.pop(context, 'delete'),
@@ -1429,6 +1770,14 @@ class _MyFavorites extends StatelessWidget {
                   );
                   if (!ok) return;
                   await _handleShare(context, task);
+                } else if (action == 'hide') {
+                  AppRepo.I.setTaskHidden(task, true);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      duration: Duration(seconds: 1),
+                      content: Text('已隱藏 1 項'),
+                    ),
+                  );
                 } else if (action == 'delete') {
                   await AppRepo.I.removeTasks([task]);
                 }

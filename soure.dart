@@ -484,6 +484,9 @@ class DownloadTask {
   /// appears in the default "我的下載" section.
   String? folderId;
 
+  /// Whether this task has been moved to the hidden media tab.
+  bool hidden;
+
   /// Local path to a thumbnail image extracted from the downloaded file.
   String? thumbnailPath;
 
@@ -511,6 +514,7 @@ class DownloadTask {
     required this.type,
     this.favorite = false,
     this.folderId,
+    this.hidden = false,
     this.thumbnailPath,
     this.duration,
     this.paused = false,
@@ -534,6 +538,7 @@ class DownloadTask {
       type: json['type'] as String? ?? 'file',
       favorite: json['favorite'] as bool? ?? false,
       folderId: json['folderId'] as String?,
+      hidden: json['hidden'] as bool? ?? false,
       thumbnailPath: json['thumbnailPath'] as String?,
       duration:
           json['duration'] != null
@@ -557,6 +562,7 @@ class DownloadTask {
     'type': type,
     'favorite': favorite,
     'folderId': folderId,
+    'hidden': hidden,
     'thumbnailPath': thumbnailPath,
     // store duration in milliseconds for portability
     'duration': duration?.inMilliseconds,
@@ -1077,6 +1083,7 @@ class AppRepo extends ChangeNotifier {
         if (t.favorite) s += 1;
         if (t.total != null && t.total! > 0) s += 1;
         if (t.folderId != null && t.folderId!.isNotEmpty) s += 1;
+        if (t.hidden) s += 50;
         return s;
       }
 
@@ -2214,6 +2221,26 @@ class AppRepo extends ChangeNotifier {
     if (!changed) return;
     downloads.value = [...downloads.value];
     unawaited(_saveState());
+  }
+
+  /// Update the hidden status for a collection of tasks. Hidden tasks are
+  /// removed from the main media list and displayed in the hidden tab only.
+  void setTasksHidden(List<DownloadTask> tasks, bool hidden) {
+    var changed = false;
+    for (final task in tasks) {
+      if (task.hidden != hidden) {
+        task.hidden = hidden;
+        changed = true;
+      }
+    }
+    if (!changed) return;
+    downloads.value = [...downloads.value];
+    unawaited(_saveState());
+  }
+
+  /// Convenience helper for toggling the hidden state of a single task.
+  void setTaskHidden(DownloadTask task, bool hidden) {
+    setTasksHidden([task], hidden);
   }
 
   /// Create a new folder used to organise downloads on the media page.
