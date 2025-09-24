@@ -482,17 +482,79 @@ class _HomePageState extends State<HomePage>
       fallbackText = String.fromCharCode(firstCodeUnit).toUpperCase();
     }
 
+    double _clamp(double value, double min, double max) {
+      if (value < min) return min;
+      if (value > max) return max;
+      return value;
+    }
+
+    List<Color> _randomizedGradientFor(String seed) {
+      if (seed.isEmpty) {
+        return isDark
+            ? [
+              theme.colorScheme.primary.withOpacity(0.42),
+              theme.colorScheme.primary.withOpacity(0.16),
+            ]
+            : [
+              theme.colorScheme.primary.withOpacity(0.72),
+              theme.colorScheme.primary.withOpacity(0.45),
+            ];
+      }
+
+      int hash = 0x811C9DC5;
+      for (final codeUnit in seed.codeUnits) {
+        hash ^= codeUnit;
+        hash = (hash * 0x01000193) & 0xFFFFFFFF;
+      }
+
+      final hue = (hash & 0xFFFF) % 360;
+      final satComponent = ((hash >> 16) & 0xFF) / 255.0;
+      final saturation = _clamp(0.55 + satComponent * 0.35, 0.35, 0.95);
+      final baseValue = isDark ? 0.58 : 0.88;
+      final baseColor = HSVColor.fromAHSV(
+        1.0,
+        hue.toDouble(),
+        saturation,
+        baseValue,
+      );
+
+      final lighter =
+          baseColor
+              .withValue(
+                _clamp(baseColor.value * (isDark ? 1.08 : 0.92), 0.25, 1.0),
+              )
+              .withSaturation(
+                _clamp(
+                  baseColor.saturation * (isDark ? 0.92 : 1.04),
+                  0.3,
+                  0.95,
+                ),
+              )
+              .toColor();
+      final darker =
+          baseColor
+              .withValue(
+                _clamp(baseColor.value * (isDark ? 0.72 : 1.06), 0.2, 1.0),
+              )
+              .withSaturation(
+                _clamp(baseColor.saturation * (isDark ? 1.05 : 0.9), 0.3, 0.95),
+              )
+              .toColor();
+
+      return [lighter, darker];
+    }
+
+    Color _fallbackLetterColor(List<Color> gradient) {
+      final blended = Color.lerp(gradient.first, gradient.last, 0.5)!;
+      final luminance = blended.computeLuminance();
+      final lightText = Colors.white.withOpacity(isDark ? 0.92 : 0.95);
+      final darkText = Colors.black.withOpacity(isDark ? 0.85 : 0.9);
+      return luminance > 0.55 ? darkText : lightText;
+    }
+
     Widget buildFallbackIcon() {
-      final fallbackGradientColors =
-          isDark
-              ? [
-                theme.colorScheme.primary.withOpacity(0.42),
-                theme.colorScheme.primary.withOpacity(0.16),
-              ]
-              : [
-                theme.colorScheme.primary.withOpacity(0.72),
-                theme.colorScheme.primary.withOpacity(0.45),
-              ];
+      final fallbackGradientColors = _randomizedGradientFor(fallbackSource);
+      final fallbackLetterColor = _fallbackLetterColor(fallbackGradientColors);
       return DecoratedBox(
         decoration: BoxDecoration(
           gradient: LinearGradient(
@@ -508,10 +570,7 @@ class _HomePageState extends State<HomePage>
               fontSize: 20,
               fontWeight: FontWeight.w700,
               letterSpacing: 0.2,
-              color:
-                  isDark
-                      ? theme.colorScheme.onPrimary.withOpacity(0.9)
-                      : theme.colorScheme.onPrimaryContainer,
+              color: fallbackLetterColor,
             ),
           ),
         ),

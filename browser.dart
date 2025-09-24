@@ -154,6 +154,10 @@ class _BrowserPageState extends State<BrowserPage> {
     r'''https?:\/\/[^\s'"<>]+''',
     caseSensitive: false,
   );
+  static final RegExp _kDirectDownloadPattern = RegExp(
+    r'\.(?:m3u8|mpd|mp4|mov|m4v|webm|mkv|avi|flv|ts|mp3|m4a|aac|ogg|wav|flac)(?:$|[\/?#&])',
+    caseSensitive: false,
+  );
   static const List<String> _kLegacyAdBlockHostPatterns = [
     'doubleclick.net',
     'googlesyndication.com',
@@ -4838,6 +4842,13 @@ class _BrowserPageState extends State<BrowserPage> {
     _ensureActiveTab();
     if (_tabs.isEmpty) return;
     final tab = _tabs[_currentTabIndex];
+    if (_looksLikeDirectDownloadUrl(dest)) {
+      final handled = await _offerDownloadForDirectUrl(dest);
+      if (handled) {
+        _updateOpenTabs();
+        return;
+      }
+    }
     tab.urlCtrl.text = dest;
     tab.currentUrl = dest;
     await tab.controller?.loadUrl(urlRequest: URLRequest(url: WebUri(dest)));
@@ -5333,11 +5344,90 @@ class _BrowserPageState extends State<BrowserPage> {
     await AppRepo.I.enqueueDownload(url);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        duration: Duration(seconds: 1),
-        content: Text('已加入佇列，完成後會存入相簿'),
-      ),
+      const SnackBar(duration: Duration(seconds: 1), content: Text('已加入佇列')),
     );
+  }
+
+  bool _looksLikeDirectDownloadUrl(String url) {
+    final normalized = _normalizeHttpUrl(url) ?? url.trim();
+    if (normalized.isEmpty) {
+      return false;
+    }
+    final lower = normalized.toLowerCase();
+    if (!lower.startsWith('http://') && !lower.startsWith('https://')) {
+      return false;
+    }
+    final uri = Uri.tryParse(lower);
+    if (uri == null) {
+      return false;
+    }
+
+    String buildSearchTarget(Uri u) {
+      final buffer = StringBuffer();
+      buffer.write(u.path.toLowerCase());
+      if (u.query.isNotEmpty) {
+        buffer.write('?');
+        buffer.write(u.query.toLowerCase());
+      }
+      return buffer.toString();
+    }
+
+    final primary = buildSearchTarget(uri);
+    if (_kDirectDownloadPattern.hasMatch(primary)) {
+      return true;
+    }
+    try {
+      final decoded = Uri.decodeFull(primary);
+      if (decoded != primary && _kDirectDownloadPattern.hasMatch(decoded)) {
+        return true;
+      }
+    } catch (_) {
+      // ignore decode errors
+    }
+    return false;
+  }
+
+  Future<bool> _offerDownloadForDirectUrl(String url) async {
+    if (!mounted) {
+      return false;
+    }
+    final shouldDownload = await showDialog<bool>(
+      context: context,
+      builder: (_) {
+        return AlertDialog(
+          title: const Text('偵測到可下載連結'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('偵測到此網址為可下載的媒體，是否直接下載？'),
+              const SizedBox(height: 12),
+              Text(
+                url,
+                maxLines: 4,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('下載'),
+            ),
+          ],
+        );
+      },
+    );
+    if (shouldDownload == true) {
+      await _confirmDownload(url, skipPrompt: true);
+      return true;
+    }
+    return false;
   }
 
   Future<String?> _ensureVideoThumb(String url) async {
