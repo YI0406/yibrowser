@@ -1115,17 +1115,69 @@ class _BrowserPageState extends State<BrowserPage> {
   /// Whether this entry represents a real download task (either ongoing or completed).
   /// Excludes local/imported/library items from the downloads UI entirely.
   bool _isDownloadTaskEntry(DownloadTask t) {
-    final state = (t.state).toString().toLowerCase();
-    if (state == 'done') {
-      return true;
+    final rawUrl = (t.url).toString().trim();
+    if (rawUrl.isEmpty) {
+      return false;
     }
-    final isLocalUrl =
-        t.url.startsWith('file://') ||
-        t.url.startsWith('/') ||
-        t.url.startsWith('asset://');
+
+    if (rawUrl.startsWith('asset://')) {
+      return false;
+    }
+    String _normalizeLocalUrl(String value) {
+      if (value.startsWith('file://')) {
+        final uri = Uri.tryParse(value);
+        if (uri != null && uri.scheme == 'file') {
+          try {
+            return path.normalize(uri.toFilePath());
+          } catch (_) {
+            // Fall back to stripping the scheme if toFilePath fails.
+            value = value.replaceFirst('file://', '');
+          }
+        }
+      }
+      return path.normalize(value);
+    }
+
+    final uri = Uri.tryParse(rawUrl);
+    final scheme = uri?.scheme.toLowerCase() ?? '';
+    final bool isBlob = rawUrl.startsWith('blob:');
+    final bool isHttpLike =
+        scheme == 'http' ||
+        scheme == 'https' ||
+        scheme == 'ftp' ||
+        scheme == 'ftps';
+    final bool isRemote = isBlob || isHttpLike;
+
+    final bool isFileScheme = scheme == 'file';
+    final bool isAbsolutePath = scheme.isEmpty && path.isAbsolute(rawUrl);
     final fromLibrary =
         (t.kind == 'library' || t.kind == 'local' || t.kind == 'import');
-    return !isLocalUrl && !fromLibrary;
+    if (fromLibrary) {
+      return false;
+    }
+
+    if (isFileScheme || isAbsolutePath) {
+      final normalizedSave = path.normalize(t.savePath);
+      final normalizedUrl = _normalizeLocalUrl(rawUrl);
+      if (normalizedSave == normalizedUrl) {
+        // Imported/hand-added media: hide from download list.
+        return false;
+      }
+    }
+
+    if (isRemote) {
+      return true;
+    }
+
+    if (isFileScheme || isAbsolutePath) {
+      // Local paths that do not map to the current savePath are also treated as
+      // manual entries (e.g. moved in from Files app), so hide them.
+      return false;
+    }
+
+    // For uncommon schemes (custom download handlers) keep showing while active.
+    final state = (t.state).toString().toLowerCase();
+    return state != 'done';
   }
 
   /// Whether the download task should be counted as "active" for the badge.

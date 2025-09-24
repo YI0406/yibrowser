@@ -239,13 +239,14 @@ class _HomePageState extends State<HomePage>
             builder: (context, constraints) {
               final width = constraints.maxWidth;
               // Fixed responsive logic:
-              // - Target tile size: 108px (content) + spacing accounted below
+              // - Target tile size: 100px (content) + spacing accounted below
               // - Horizontal padding on GridView: 8 * 2
               // - Spacing between tiles: 8
               // This makes phones常見為 3~4 格、平板 5~8 格，並保持方形比例
               const double gridPadding = 8; // same as GridView padding
               const double spacing = 8; // crossAxisSpacing/mainAxisSpacing
-              const double targetTileExtent = 108; // desired square tile width
+              // Slightly smaller target so 大型螢幕（例如 Pro Max）可以擺下 4 欄。
+              const double targetTileExtent = 100; // desired square tile width
               final double usable = width - gridPadding * 2;
               // columns = floor((usable + spacing) / (target + spacing))
               int columns =
@@ -603,7 +604,7 @@ class _HomePageState extends State<HomePage>
               width: double.infinity,
               child: Text(
                 displayName,
-                maxLines: 2,
+                maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 textAlign: TextAlign.center,
                 style: titleStyle,
