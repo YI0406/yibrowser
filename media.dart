@@ -70,6 +70,9 @@ class _MediaPageState extends State<MediaPage>
   final TextEditingController _searchCtl = TextEditingController();
   String _search = '';
   Timer? _searchDebounce;
+  final TextEditingController _hiddenSearchCtl = TextEditingController();
+  String _hiddenSearch = '';
+  Timer? _hiddenSearchDebounce;
 
   bool _metaRefreshQueued = false;
   final Set<DownloadTask> _selected = <DownloadTask>{};
@@ -102,6 +105,8 @@ class _MediaPageState extends State<MediaPage>
     _convertTicker = null;
     _searchDebounce?.cancel();
     _searchDebounce = null;
+    _hiddenSearchDebounce?.cancel();
+    _hiddenSearchDebounce = null;
     try {
       _tab.removeListener(_handleTabChange);
     } catch (_) {}
@@ -111,6 +116,9 @@ class _MediaPageState extends State<MediaPage>
     try {
       _searchCtl.dispose();
     } catch (_) {}
+    try {
+      _hiddenSearchCtl.dispose();
+    } catch (_) {}
     super.dispose();
   }
 
@@ -118,41 +126,67 @@ class _MediaPageState extends State<MediaPage>
     if (_authenticatingHidden) return;
     _authenticatingHidden = true;
     final previousIndex = _lastTabIndex;
-    final ok = await Locker.unlock(reason: '解鎖以查看隱藏媒體');
-    if (!mounted) {
+    try {
+      if (!AppRepo.I.isPremiumUnlocked) {
+        final ok = await PurchaseService().ensurePremium(
+          context: context,
+          featureName: '隱藏功能',
+        );
+        if (!mounted) return;
+        if (!ok) {
+          if (revertOnFail) {
+            _tab.animateTo(previousIndex);
+            _lastTabIndex = previousIndex;
+          }
+          return;
+        }
+      }
+
+      final ok = await Locker.unlock(reason: '解鎖以查看隱藏媒體');
+      if (!mounted) return;
+      if (ok) {
+        setState(() {
+          _hiddenUnlocked = true;
+        });
+        _lastTabIndex = _tab.index;
+      } else if (revertOnFail) {
+        _tab.animateTo(previousIndex);
+        _lastTabIndex = previousIndex;
+      }
+    } finally {
       _authenticatingHidden = false;
-      return;
-    }
-    _authenticatingHidden = false;
-    if (ok) {
-      setState(() {
-        _hiddenUnlocked = true;
-      });
-      _lastTabIndex = _tab.index;
-    } else if (revertOnFail) {
-      _tab.animateTo(previousIndex);
-      _lastTabIndex = previousIndex;
     }
   }
 
   void _handleTabChange() {
     final index = _tab.index;
+    final previous = _tab.previousIndex;
+    if (previous == 2 && index != 2 && _hiddenUnlocked) {
+      setState(() {
+        _hiddenUnlocked = false;
+        if (_hiddenEditing) {
+          _hiddenEditing = false;
+          _hiddenSelected.clear();
+        }
+      });
+    } else if (index != 2 && _hiddenEditing) {
+      setState(() {
+        _hiddenEditing = false;
+        _hiddenSelected.clear();
+      });
+    }
     if (index == 2 && !_hiddenUnlocked) {
       unawaited(_attemptUnlockHidden());
       return;
     }
+
     if (index != 0 && _isEditing) {
       setState(() {
         _isEditing = false;
         _selected.clear();
       });
     }
-    if (index != 2 && _hiddenEditing) {
-      setState(() {
-        _hiddenEditing = false;
-        _hiddenSelected.clear();
-      });
-    }
+
     _lastTabIndex = index;
   }
 
@@ -191,7 +225,7 @@ class _MediaPageState extends State<MediaPage>
         final List<DownloadTask> sortedTasks =
             byPath.values.toList()
               ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
-        final List<DownloadTask> hiddenTasks =
+        List<DownloadTask> hiddenTasks =
             sortedTasks.where((t) => t.hidden).toList();
         List<DownloadTask> visibleTasks =
             sortedTasks.where((t) => !t.hidden).toList();
@@ -199,6 +233,16 @@ class _MediaPageState extends State<MediaPage>
           final q = _search.toLowerCase();
           visibleTasks =
               visibleTasks.where((t) {
+                final name = (t.name ?? '').toLowerCase();
+                final url = t.url.toLowerCase();
+                final file = path.basename(t.savePath).toLowerCase();
+                return name.contains(q) || url.contains(q) || file.contains(q);
+              }).toList();
+        }
+        if (_hiddenSearch.isNotEmpty) {
+          final q = _hiddenSearch.toLowerCase();
+          hiddenTasks =
+              hiddenTasks.where((t) {
                 final name = (t.name ?? '').toLowerCase();
                 final url = t.url.toLowerCase();
                 final file = path.basename(t.savePath).toLowerCase();
@@ -242,12 +286,16 @@ class _MediaPageState extends State<MediaPage>
                   child: TabBar(
                     controller: _tab,
                     isScrollable: true,
-                    tabs: const [
-                      Tab(text: '媒體'),
-                      Tab(text: '收藏'),
+                    tabs: [
+                      const Tab(text: '媒體'),
+                      const Tab(text: '收藏'),
                       Tab(
-                        icon: Icon(Icons.visibility_off_outlined),
-                        text: '已隱藏',
+                        icon: Icon(
+                          _hiddenUnlocked
+                              ? Icons.visibility
+                              : Icons.visibility_off_outlined,
+                          semanticLabel: '已隱藏',
+                        ),
                       ),
                     ],
                   ),
@@ -410,40 +458,58 @@ class _MediaPageState extends State<MediaPage>
         ),
         if (_isEditing) ...[
           const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            crossAxisAlignment: WrapCrossAlignment.center,
+          Row(
             children: [
-              OutlinedButton(
-                onPressed:
-                    visibleTasks.isEmpty
-                        ? null
-                        : () => _selectAll(visibleTasks),
-                child: const Text('全選'),
+              Expanded(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      OutlinedButton(
+                        onPressed:
+                            visibleTasks.isEmpty
+                                ? null
+                                : () => _selectAll(visibleTasks),
+                        child: const Text('全選'),
+                      ),
+                      const SizedBox(width: 8),
+                      OutlinedButton(
+                        onPressed:
+                            _selected.isEmpty
+                                ? null
+                                : () => _moveSelectedToFolder(context),
+                        child: const Text('移動到...'),
+                      ),
+                      const SizedBox(width: 8),
+                      OutlinedButton(
+                        onPressed:
+                            _selected.isEmpty ? null : () => _deleteSelected(),
+                        child: const Text('刪除'),
+                      ),
+                      const SizedBox(width: 8),
+                      OutlinedButton(
+                        onPressed:
+                            _selected.isEmpty
+                                ? null
+                                : () => _exportSelected(context),
+                        child: const Text('匯出...'),
+                      ),
+                      const SizedBox(width: 8),
+                      OutlinedButton(
+                        onPressed:
+                            _selected.isEmpty
+                                ? null
+                                : () => _hideSelected(context),
+                        child: const Text('隱藏'),
+                      ),
+                    ],
+                  ),
+                ),
               ),
-              OutlinedButton(
-                onPressed:
-                    _selected.isEmpty
-                        ? null
-                        : () => _moveSelectedToFolder(context),
-                child: const Text('移動到...'),
-              ),
-              OutlinedButton(
-                onPressed: _selected.isEmpty ? null : () => _deleteSelected(),
-                child: const Text('刪除'),
-              ),
-              OutlinedButton(
-                onPressed:
-                    _selected.isEmpty ? null : () => _exportSelected(context),
-                child: const Text('匯出...'),
-              ),
-              OutlinedButton(
-                onPressed:
-                    _selected.isEmpty ? null : () => _hideSelected(context),
-                child: const Text('隱藏'),
-              ),
-              if (_selected.isNotEmpty) Text('已選取 ${_selected.length} 項'),
+              if (_selected.isNotEmpty) ...[
+                const SizedBox(width: 12),
+                Text('已選取 ${_selected.length} 項'),
+              ],
             ],
           ),
         ],
@@ -529,44 +595,97 @@ class _MediaPageState extends State<MediaPage>
         ),
         if (_hiddenEditing) ...[
           const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            crossAxisAlignment: WrapCrossAlignment.center,
+          Row(
             children: [
-              OutlinedButton(
-                onPressed:
-                    hiddenTasks.isEmpty
-                        ? null
-                        : () => _selectAllHidden(hiddenTasks),
-                child: const Text('全選'),
+              Expanded(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      OutlinedButton(
+                        onPressed:
+                            hiddenTasks.isEmpty
+                                ? null
+                                : () => _selectAllHidden(hiddenTasks),
+                        child: const Text('全選'),
+                      ),
+                      const SizedBox(width: 8),
+                      OutlinedButton(
+                        onPressed:
+                            _hiddenSelected.isEmpty
+                                ? null
+                                : () => _exportHiddenSelected(context),
+                        child: const Text('匯出...'),
+                      ),
+                      const SizedBox(width: 8),
+                      OutlinedButton(
+                        onPressed:
+                            _hiddenSelected.isEmpty
+                                ? null
+                                : () => _deleteHiddenSelected(),
+                        child: const Text('刪除'),
+                      ),
+                      const SizedBox(width: 8),
+                      OutlinedButton(
+                        onPressed:
+                            _hiddenSelected.isEmpty
+                                ? null
+                                : () => _unhideSelected(context),
+                        child: const Text('取消隱藏'),
+                      ),
+                    ],
+                  ),
+                ),
               ),
-              OutlinedButton(
-                onPressed:
-                    _hiddenSelected.isEmpty
-                        ? null
-                        : () => _exportHiddenSelected(context),
-                child: const Text('匯出...'),
-              ),
-              OutlinedButton(
-                onPressed:
-                    _hiddenSelected.isEmpty
-                        ? null
-                        : () => _deleteHiddenSelected(),
-                child: const Text('刪除'),
-              ),
-              OutlinedButton(
-                onPressed:
-                    _hiddenSelected.isEmpty
-                        ? null
-                        : () => _unhideSelected(context),
-                child: const Text('取消隱藏'),
-              ),
-              if (_hiddenSelected.isNotEmpty)
+              if (_hiddenSelected.isNotEmpty) ...[
+                const SizedBox(width: 12),
                 Text('已選取 ${_hiddenSelected.length} 項'),
+              ],
             ],
           ),
         ],
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: SizedBox(
+                height: 36,
+                child: TextField(
+                  controller: _hiddenSearchCtl,
+                  textInputAction: TextInputAction.search,
+                  onChanged: (value) {
+                    _hiddenSearchDebounce?.cancel();
+                    _hiddenSearchDebounce = Timer(
+                      const Duration(milliseconds: 250),
+                      () {
+                        if (!mounted) return;
+                        setState(() => _hiddenSearch = value.trim());
+                      },
+                    );
+                  },
+                  decoration: InputDecoration(
+                    isDense: true,
+                    hintText: '搜尋名稱/檔名',
+                    prefixIcon: const Icon(Icons.search, size: 18),
+                    suffixIcon:
+                        _hiddenSearch.isNotEmpty
+                            ? IconButton(
+                              icon: const Icon(Icons.clear, size: 18),
+                              onPressed: () {
+                                _hiddenSearchCtl.clear();
+                                setState(() => _hiddenSearch = '');
+                              },
+                            )
+                            : null,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       ],
     );
   }
