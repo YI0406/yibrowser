@@ -259,7 +259,7 @@ class _HomePageState extends State<HomePage>
                   crossAxisCount: crossAxisCount,
                   crossAxisSpacing: 8,
                   mainAxisSpacing: 8,
-                  childAspectRatio: 0.9,
+                  childAspectRatio: 0.75,
                 ),
                 itemCount: items.length,
                 itemBuilder: (context, index) {
@@ -565,6 +565,7 @@ class _HomePageState extends State<HomePage>
           letterSpacing: 0.3,
           color: theme.colorScheme.onSurfaceVariant.withOpacity(0.9),
         );
+    final showLabels = !dragging;
     Widget content = Padding(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 12),
       child: Column(
@@ -596,34 +597,39 @@ class _HomePageState extends State<HomePage>
               ),
             ),
           ),
-          const SizedBox(height: 12),
-          SizedBox(
-            width: double.infinity,
-            child: Text(
-              displayName,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-              style: titleStyle,
-            ),
-          ),
-          if (host.isNotEmpty) ...[
-            const SizedBox(height: 6),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-              decoration: BoxDecoration(
-                color: theme.colorScheme.surfaceVariant.withOpacity(
-                  isDark ? 0.45 : 0.7,
-                ),
-                borderRadius: BorderRadius.circular(999),
-              ),
+          if (showLabels) ...[
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
               child: Text(
-                host,
-                maxLines: 1,
+                displayName,
+                maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style: hostStyle,
+                textAlign: TextAlign.center,
+                style: titleStyle,
               ),
             ),
+            if (host.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.surfaceVariant.withOpacity(
+                    isDark ? 0.45 : 0.7,
+                  ),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  host,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: hostStyle,
+                ),
+              ),
+            ],
           ],
         ],
       ),

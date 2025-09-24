@@ -1,8 +1,9 @@
 import 'dart:io';
-
+import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 import 'package:video_player/video_player.dart';
+import 'package:open_filex/open_filex.dart';
 
 class IncomingShare {
   const IncomingShare({
@@ -60,13 +61,19 @@ class ShareReviewPage extends StatefulWidget {
 
 class _ShareReviewPageState extends State<ShareReviewPage> {
   late final PageController _pageController;
+  final List<IncomingShare> _items = [];
+  final List<IncomingShare> _removedItems = [];
   int _currentIndex = 0;
   _ShareReviewAction? _processing;
+  static const MethodChannel _iosShareChannel = MethodChannel(
+    'com.yibrowser/share',
+  );
 
   @override
   void initState() {
     super.initState();
     _pageController = PageController();
+    _items.addAll(widget.items);
   }
 
   @override
@@ -75,14 +82,48 @@ class _ShareReviewPageState extends State<ShareReviewPage> {
     super.dispose();
   }
 
+  Future<void> _cleanupItems(List<IncomingShare> items) async {
+    if (items.isEmpty) return;
+    for (final item in items) {
+      final file = File(item.path);
+      if (await file.exists()) {
+        try {
+          await file.delete();
+        } catch (err) {
+          debugPrint('[ShareReview] Failed to delete ${item.path}: $err');
+        }
+      }
+    }
+    if (!Platform.isIOS) {
+      return;
+    }
+    final cleanupPaths = items
+        .map((e) => e.relativePath)
+        .whereType<String>()
+        .map((path) => path.trim())
+        .where((path) => path.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    if (cleanupPaths.isEmpty) {
+      return;
+    }
+    try {
+      await _iosShareChannel.invokeMethod(
+        'cleanupSharedDownloads',
+        cleanupPaths,
+      );
+    } catch (err) {
+      debugPrint('[ShareReview] iOS cleanup failed: $err');
+    }
+  }
+
   Future<void> _handleConfirm() async {
     if (_processing != null) return;
     setState(() => _processing = _ShareReviewAction.confirm);
     ShareReviewResult? result;
     try {
-      result = await widget.onConfirm(
-        List<IncomingShare>.unmodifiable(widget.items),
-      );
+      await _cleanupItems(List<IncomingShare>.unmodifiable(_removedItems));
+      result = await widget.onConfirm(List<IncomingShare>.unmodifiable(_items));
     } catch (err) {
       if (!mounted) return;
       setState(() => _processing = null);
@@ -100,9 +141,11 @@ class _ShareReviewPageState extends State<ShareReviewPage> {
     setState(() => _processing = _ShareReviewAction.discard);
     ShareReviewResult? result;
     try {
-      result = await widget.onDiscard(
-        List<IncomingShare>.unmodifiable(widget.items),
-      );
+      final allItems = List<IncomingShare>.unmodifiable([
+        ..._items,
+        ..._removedItems,
+      ]);
+      result = await widget.onDiscard(allItems);
     } catch (err) {
       if (!mounted) return;
       setState(() => _processing = null);
@@ -115,10 +158,43 @@ class _ShareReviewPageState extends State<ShareReviewPage> {
     Navigator.of(context).pop(result);
   }
 
+  Future<void> _discardCurrentItem() async {
+    if (_processing != null) return;
+    if (_items.isEmpty) return;
+    final removeIndex = _currentIndex.clamp(0, _items.length - 1);
+    final removed = _items.removeAt(removeIndex);
+    _removedItems.add(removed);
+    if (!mounted) return;
+    if (_items.isEmpty) {
+      setState(() {
+        _currentIndex = 0;
+      });
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('所有項目已丟棄')));
+      await _handleCancel();
+      return;
+    }
+    final newIndex = _currentIndex.clamp(0, _items.length - 1);
+    if (_pageController.hasClients) {
+      _pageController.animateToPage(
+        newIndex,
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeInOut,
+      );
+    }
+    setState(() {
+      _currentIndex = newIndex;
+    });
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('已丟棄 ${removed.effectiveName}')));
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final items = widget.items;
+    final items = _items;
     final hasItems = items.isNotEmpty;
     final clampedIndex =
         hasItems ? _currentIndex.clamp(0, items.length - 1) : 0;
@@ -140,7 +216,7 @@ class _ShareReviewPageState extends State<ShareReviewPage> {
           actions: [
             TextButton(
               onPressed: _processing == null ? _handleConfirm : null,
-              child: const Text('完成'),
+              child: const Text('匯入'),
             ),
           ],
         ),
@@ -152,21 +228,24 @@ class _ShareReviewPageState extends State<ShareReviewPage> {
                   Expanded(
                     child: Stack(
                       children: [
-                        PageView.builder(
-                          controller: _pageController,
-                          physics:
-                              items.length > 1
-                                  ? const PageScrollPhysics()
-                                  : const NeverScrollableScrollPhysics(),
-                          itemCount: items.length,
-                          onPageChanged: (value) {
-                            setState(() => _currentIndex = value);
-                          },
-                          itemBuilder: (context, index) {
-                            final item = items[index];
-                            return _SharePreviewItemView(item: item);
-                          },
-                        ),
+                        if (items.isEmpty)
+                          const _EmptySharePreview()
+                        else
+                          PageView.builder(
+                            controller: _pageController,
+                            physics:
+                                items.length > 1
+                                    ? const PageScrollPhysics()
+                                    : const NeverScrollableScrollPhysics(),
+                            itemCount: items.length,
+                            onPageChanged: (value) {
+                              setState(() => _currentIndex = value);
+                            },
+                            itemBuilder: (context, index) {
+                              final item = items[index];
+                              return _SharePreviewItemView(item: item);
+                            },
+                          ),
                         if (items.isNotEmpty)
                           Positioned(
                             top: 16,
@@ -204,6 +283,8 @@ class _ShareReviewPageState extends State<ShareReviewPage> {
                       child: Text(
                         currentItem.effectiveName,
                         textAlign: TextAlign.center,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                         style:
                             theme.textTheme.titleMedium?.copyWith(
                               fontWeight: FontWeight.w600,
@@ -226,6 +307,16 @@ class _ShareReviewPageState extends State<ShareReviewPage> {
                   ],
                 ],
               ),
+              if (hasItems)
+                Positioned(
+                  top: 16,
+                  left: 16,
+                  child: IconButton.filled(
+                    onPressed: _processing == null ? _discardCurrentItem : null,
+                    icon: const Icon(Icons.delete_outline),
+                    tooltip: '丟棄此項目',
+                  ),
+                ),
               if (_processing != null)
                 Positioned.fill(
                   child: Container(
@@ -302,6 +393,27 @@ class _SharePreviewItemView extends StatelessWidget {
         lower.endsWith('.wav');
   }
 
+  bool get _isDocument {
+    final type = item.typeHint?.toLowerCase() ?? '';
+    if (type.contains('pdf') ||
+        type.contains('word') ||
+        type.contains('presentation') ||
+        type.contains('spreadsheet') ||
+        type.contains('text')) {
+      return true;
+    }
+    final lower = item.path.toLowerCase();
+    return lower.endsWith('.pdf') ||
+        lower.endsWith('.doc') ||
+        lower.endsWith('.docx') ||
+        lower.endsWith('.ppt') ||
+        lower.endsWith('.pptx') ||
+        lower.endsWith('.xls') ||
+        lower.endsWith('.xlsx') ||
+        lower.endsWith('.txt') ||
+        lower.endsWith('.rtf');
+  }
+
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.of(context).size;
@@ -346,17 +458,289 @@ class _SharePreviewItemView extends StatelessWidget {
     }
 
     if (_isAudio) {
-      return _GenericPreview(
-        icon: Icons.audiotrack,
-        name: item.effectiveName,
-        color: theme.colorScheme.primary,
-      );
+      return _AudioPreview(path: item.path);
+    }
+
+    if (_isDocument) {
+      return _DocumentPreview(item: item);
     }
 
     return _GenericPreview(
       icon: Icons.insert_drive_file,
       name: item.effectiveName,
       color: theme.colorScheme.secondary,
+    );
+  }
+}
+
+class _EmptySharePreview extends StatelessWidget {
+  const _EmptySharePreview();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.inbox_outlined,
+            size: 72,
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+          const SizedBox(height: 16),
+          Text(
+            '沒有可匯入的項目',
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '請返回並重新選擇分享的內容。',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AudioPreview extends StatefulWidget {
+  const _AudioPreview({required this.path});
+
+  final String path;
+
+  @override
+  State<_AudioPreview> createState() => _AudioPreviewState();
+}
+
+class _AudioPreviewState extends State<_AudioPreview> {
+  late final VideoPlayerController _controller;
+  bool _initialized = false;
+  Object? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = VideoPlayerController.file(File(widget.path))
+      ..setLooping(false);
+    _controller.addListener(_onControllerUpdated);
+    _controller
+        .initialize()
+        .then((_) {
+          if (!mounted) return;
+          setState(() => _initialized = true);
+        })
+        .catchError((err) {
+          if (!mounted) return;
+          setState(() => _error = err);
+        });
+  }
+
+  void _onControllerUpdated() {
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.removeListener(_onControllerUpdated);
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _togglePlay() {
+    if (!_initialized) return;
+    if (_controller.value.isPlaying) {
+      _controller.pause();
+    } else {
+      _controller.play();
+    }
+  }
+
+  String _formatDuration(Duration duration) {
+    final totalSeconds = duration.inSeconds;
+    final hours = totalSeconds ~/ 3600;
+    final minutes = (totalSeconds % 3600) ~/ 60;
+    final seconds = totalSeconds % 60;
+    final minutesStr = minutes.toString().padLeft(2, '0');
+    final secondsStr = seconds.toString().padLeft(2, '0');
+    if (hours > 0) {
+      final hoursStr = hours.toString().padLeft(2, '0');
+      return '$hoursStr:$minutesStr:$secondsStr';
+    }
+    return '$minutesStr:$secondsStr';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    if (_error != null) {
+      return DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(20),
+          color: theme.colorScheme.surfaceVariant.withOpacity(0.6),
+        ),
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.error_outline,
+                  size: 64,
+                  color: theme.colorScheme.error,
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  '音訊載入失敗',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    if (!_initialized) {
+      return DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(20),
+          color: theme.colorScheme.surfaceVariant.withOpacity(0.6),
+        ),
+        child: const Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    final value = _controller.value;
+    final duration = value.duration;
+    final position = value.position;
+    final maxMillis =
+        duration.inMilliseconds <= 0 ? 1.0 : duration.inMilliseconds.toDouble();
+    final sliderValue = position.inMilliseconds.toDouble().clamp(
+      0.0,
+      maxMillis,
+    );
+    final isPlaying = value.isPlaying;
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(20),
+        color: theme.colorScheme.surfaceVariant.withOpacity(0.6),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.audiotrack, size: 72, color: theme.colorScheme.primary),
+            const SizedBox(height: 16),
+            Slider(
+              value: sliderValue,
+              min: 0.0,
+              max: maxMillis,
+              onChanged: (value) {
+                final clamped = value.clamp(0.0, maxMillis);
+                final target = Duration(milliseconds: clamped.round());
+                _controller.seekTo(target);
+              },
+            ),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(_formatDuration(position)),
+                Text(_formatDuration(duration)),
+              ],
+            ),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              onPressed: _togglePlay,
+              icon: Icon(isPlaying ? Icons.pause : Icons.play_arrow),
+              label: Text(isPlaying ? '暫停' : '播放'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DocumentPreview extends StatelessWidget {
+  const _DocumentPreview({required this.item});
+
+  final IncomingShare item;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final extension =
+        p.extension(item.path).replaceFirst('.', '').toUpperCase();
+    final label = extension.isNotEmpty ? extension : null;
+    final messenger = ScaffoldMessenger.of(context);
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(20),
+        color: theme.colorScheme.surfaceVariant.withOpacity(0.6),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.description,
+              size: 72,
+              color: theme.colorScheme.secondary,
+            ),
+            if (label != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                label,
+                style: theme.textTheme.labelMedium?.copyWith(
+                  letterSpacing: 0.8,
+                  fontWeight: FontWeight.w600,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+            const SizedBox(height: 12),
+            Text(
+              item.effectiveName,
+              textAlign: TextAlign.center,
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              onPressed: () async {
+                final result = await OpenFilex.open(item.path);
+                if (result.type != ResultType.done) {
+                  messenger.showSnackBar(
+                    SnackBar(
+                      content: Text('無法開啟檔案：${result.message ?? '未知錯誤'}'),
+                    ),
+                  );
+                }
+              },
+              icon: const Icon(Icons.open_in_new),
+              label: const Text('打開'),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -391,6 +775,8 @@ class _GenericPreview extends StatelessWidget {
               child: Text(
                 name,
                 textAlign: TextAlign.center,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
                 style: theme.textTheme.titleMedium?.copyWith(
                   fontWeight: FontWeight.w600,
                 ),
