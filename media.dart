@@ -482,6 +482,10 @@ class _MediaPageState extends State<MediaPage>
               },
               child: const Text('重新掃描'),
             ),
+            if (_isEditing && _selected.isNotEmpty) ...[
+              const SizedBox(width: 12),
+              Text('已選取 ${_selected.length} 項'),
+            ],
             const Spacer(),
             if (_isEditing)
               TextButton(
@@ -497,59 +501,9 @@ class _MediaPageState extends State<MediaPage>
         ),
         if (_isEditing) ...[
           const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
-                      OutlinedButton(
-                        onPressed:
-                            visibleTasks.isEmpty
-                                ? null
-                                : () => _selectAll(visibleTasks),
-                        child: const Text('全選'),
-                      ),
-                      const SizedBox(width: 8),
-                      OutlinedButton(
-                        onPressed:
-                            _selected.isEmpty
-                                ? null
-                                : () => _moveSelectedToFolder(context),
-                        child: const Text('移動到...'),
-                      ),
-                      const SizedBox(width: 8),
-                      OutlinedButton(
-                        onPressed:
-                            _selected.isEmpty ? null : () => _deleteSelected(),
-                        child: const Text('刪除'),
-                      ),
-                      const SizedBox(width: 8),
-                      OutlinedButton(
-                        onPressed:
-                            _selected.isEmpty
-                                ? null
-                                : () => _exportSelected(context),
-                        child: const Text('匯出...'),
-                      ),
-                      const SizedBox(width: 8),
-                      OutlinedButton(
-                        onPressed:
-                            _selected.isEmpty
-                                ? null
-                                : () => _hideSelected(context),
-                        child: const Text('隱藏'),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              if (_selected.isNotEmpty) ...[
-                const SizedBox(width: 12),
-                Text('已選取 ${_selected.length} 項'),
-              ],
-            ],
+          SizedBox(
+            width: double.infinity,
+            child: _buildSelectionActionButtons(context, visibleTasks),
           ),
         ],
         const SizedBox(height: 8),
@@ -630,57 +584,17 @@ class _MediaPageState extends State<MediaPage>
               },
               child: const Text('重新掃描'),
             ),
+            if (_hiddenEditing && _hiddenSelected.isNotEmpty) ...[
+              const SizedBox(width: 12),
+              Text('已選取 ${_hiddenSelected.length} 項'),
+            ],
           ],
         ),
         if (_hiddenEditing) ...[
           const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
-                      OutlinedButton(
-                        onPressed:
-                            hiddenTasks.isEmpty
-                                ? null
-                                : () => _selectAllHidden(hiddenTasks),
-                        child: const Text('全選'),
-                      ),
-                      const SizedBox(width: 8),
-                      OutlinedButton(
-                        onPressed:
-                            _hiddenSelected.isEmpty
-                                ? null
-                                : () => _exportHiddenSelected(context),
-                        child: const Text('匯出...'),
-                      ),
-                      const SizedBox(width: 8),
-                      OutlinedButton(
-                        onPressed:
-                            _hiddenSelected.isEmpty
-                                ? null
-                                : () => _deleteHiddenSelected(),
-                        child: const Text('刪除'),
-                      ),
-                      const SizedBox(width: 8),
-                      OutlinedButton(
-                        onPressed:
-                            _hiddenSelected.isEmpty
-                                ? null
-                                : () => _unhideSelected(context),
-                        child: const Text('取消隱藏'),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              if (_hiddenSelected.isNotEmpty) ...[
-                const SizedBox(width: 12),
-                Text('已選取 ${_hiddenSelected.length} 項'),
-              ],
-            ],
+          SizedBox(
+            width: double.infinity,
+            child: _buildHiddenSelectionActionButtons(context, hiddenTasks),
           ),
         ],
         const SizedBox(height: 8),
@@ -1280,6 +1194,112 @@ class _MediaPageState extends State<MediaPage>
       _hiddenSelected.clear();
       _hiddenEditing = false;
     });
+  }
+
+  Widget _buildSelectionActionButtons(
+    BuildContext context,
+    List<DownloadTask> visibleTasks,
+  ) {
+    OutlinedButton buildSelectAllButton() => OutlinedButton(
+      onPressed: visibleTasks.isEmpty ? null : () => _selectAll(visibleTasks),
+      child: const Text('全選'),
+    );
+    OutlinedButton buildDeleteButton() => OutlinedButton(
+      onPressed: _selected.isEmpty ? null : () => _deleteSelected(),
+      child: const Text('刪除'),
+    );
+    OutlinedButton buildHideButton() => OutlinedButton(
+      onPressed: _selected.isEmpty ? null : () => _hideSelected(context),
+      child: const Text('隱藏'),
+    );
+    OutlinedButton buildMoveButton() => OutlinedButton(
+      onPressed:
+          _selected.isEmpty ? null : () => _moveSelectedToFolder(context),
+      child: const Text('移動到...'),
+    );
+    OutlinedButton buildExportButton() => OutlinedButton(
+      onPressed: _selected.isEmpty ? null : () => _exportSelected(context),
+      child: const Text('匯出...'),
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isWide = constraints.maxWidth >= 520;
+        final topRow = [
+          buildSelectAllButton(),
+          buildDeleteButton(),
+          buildHideButton(),
+        ];
+        final bottomRow = [buildMoveButton(), buildExportButton()];
+        if (isWide) {
+          return Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [...topRow, ...bottomRow],
+          );
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Wrap(spacing: 8, runSpacing: 8, children: topRow),
+            const SizedBox(height: 8),
+            Wrap(spacing: 8, runSpacing: 8, children: bottomRow),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildHiddenSelectionActionButtons(
+    BuildContext context,
+    List<DownloadTask> hiddenTasks,
+  ) {
+    OutlinedButton buildSelectAllButton() => OutlinedButton(
+      onPressed:
+          hiddenTasks.isEmpty ? null : () => _selectAllHidden(hiddenTasks),
+      child: const Text('全選'),
+    );
+    OutlinedButton buildDeleteButton() => OutlinedButton(
+      onPressed: _hiddenSelected.isEmpty ? null : () => _deleteHiddenSelected(),
+      child: const Text('刪除'),
+    );
+    OutlinedButton buildUnhideButton() => OutlinedButton(
+      onPressed:
+          _hiddenSelected.isEmpty ? null : () => _unhideSelected(context),
+      child: const Text('取消隱藏'),
+    );
+    OutlinedButton buildExportButton() => OutlinedButton(
+      onPressed:
+          _hiddenSelected.isEmpty ? null : () => _exportHiddenSelected(context),
+      child: const Text('匯出...'),
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isWide = constraints.maxWidth >= 520;
+        final firstRow = [
+          buildSelectAllButton(),
+          buildDeleteButton(),
+          buildUnhideButton(),
+        ];
+        final secondRow = [buildExportButton()];
+        if (isWide) {
+          return Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [...firstRow, ...secondRow],
+          );
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Wrap(spacing: 8, runSpacing: 8, children: firstRow),
+            const SizedBox(height: 8),
+            Wrap(spacing: 8, runSpacing: 8, children: secondRow),
+          ],
+        );
+      },
+    );
   }
 
   Future<bool> _exportTasks(

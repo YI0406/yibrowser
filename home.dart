@@ -245,14 +245,25 @@ class _HomePageState extends State<HomePage>
               // This makes phones常見為 3~4 格、平板 5~8 格，並保持方形比例
               const double gridPadding = 8; // same as GridView padding
               const double spacing = 8; // crossAxisSpacing/mainAxisSpacing
-              // Slightly smaller target so 大型螢幕（例如 Pro Max）可以擺下 4 欄。
-              const double targetTileExtent = 100; // desired square tile width
-              final double usable = width - gridPadding * 2;
-              // columns = floor((usable + spacing) / (target + spacing))
+              // Target tile width tuned so手機寬度可擺下 4 欄，平板仍可拉大欄數。
+              const double targetTileExtent = 96; // desired square tile width
+              final double usable = math.max(0, width - gridPadding * 2);
+              // columns ≈ round((usable + spacing) / (target + spacing))
               int columns =
-                  ((usable + spacing) / (targetTileExtent + spacing)).floor();
-              // Clamp to sane limits
-              columns = columns.clamp(2, 8);
+                  ((usable + spacing) / (targetTileExtent + spacing)).round();
+              if (columns < 1) {
+                columns = 1;
+              }
+              columns = columns.clamp(1, 8);
+              final double tileWidth =
+                  (usable - spacing * (columns - 1)) / columns;
+              const double extraHeight = 56;
+              double childAspectRatio =
+                  tileWidth <= 0 ? 0.7 : tileWidth / (tileWidth + extraHeight);
+              childAspectRatio = math.max(
+                0.62,
+                math.min(childAspectRatio, 0.82),
+              );
               final int crossAxisCount = columns;
               return GridView.builder(
                 padding: const EdgeInsets.all(8),
@@ -260,7 +271,7 @@ class _HomePageState extends State<HomePage>
                   crossAxisCount: crossAxisCount,
                   crossAxisSpacing: 8,
                   mainAxisSpacing: 8,
-                  childAspectRatio: 0.75,
+                  childAspectRatio: childAspectRatio,
                 ),
                 itemCount: items.length,
                 itemBuilder: (context, index) {
