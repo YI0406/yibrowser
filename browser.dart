@@ -5104,7 +5104,7 @@ class _BrowserPageState extends State<BrowserPage> {
         bullet('2. 有些網站不能使用 Adblock 否則無法播放影片，或改用其他過濾規則。'),
         bullet('3. 推特等已安裝的應用程式網站可長按以新分頁開啟正常瀏覽，並視需求開啟阻擋轉跳外部 App 功能。'),
         bullet('4. 請尊重智慧財產權，切勿違法盜取他人資源，用戶行為與本應用無關。'),
-        bullet('5. Yi Apps 保留修改與解釋一切權利。'),
+        bullet('5. Yi Apps© 保留修改與解釋一切權利。'),
         bullet('6. 按下「我知道了」即代表同意及明白上述條款與說明使用本應用程式。'),
       ],
     );
