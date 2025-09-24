@@ -513,66 +513,49 @@ class _HomePageState extends State<HomePage>
 
     final cardShadowColor =
         isDark
-            ? Colors.black.withOpacity(dragging ? 0.55 : 0.35)
-            : theme.colorScheme.primary.withOpacity(dragging ? 0.22 : 0.12);
-    final iconBorderColor =
-        isDark ? Colors.white.withOpacity(0.25) : Colors.white.withOpacity(0.7);
+            ? Colors.black.withOpacity(dragging ? 0.4 : 0.28)
+            : Colors.black.withOpacity(dragging ? 0.14 : 0.08);
+    final cardBackgroundColor =
+        isDark
+            ? theme.colorScheme.surfaceVariant.withOpacity(0.6)
+            : theme.colorScheme.surfaceVariant.withOpacity(0.95);
+    final iconBorderColor = theme.colorScheme.outline.withOpacity(
+      isDark ? 0.45 : 0.2,
+    );
 
     Widget content = Container(
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            theme.colorScheme.surfaceVariant.withOpacity(isDark ? 0.7 : 0.95),
-            theme.colorScheme.surface.withOpacity(isDark ? 0.6 : 1.0),
-          ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(20),
+        color: cardBackgroundColor,
+        borderRadius: BorderRadius.circular(18),
         border: Border.all(
-          color: theme.colorScheme.outline.withOpacity(isDark ? 0.3 : 0.12),
+          color: theme.colorScheme.outline.withOpacity(isDark ? 0.35 : 0.16),
         ),
         boxShadow: [
           BoxShadow(
             color: cardShadowColor,
-            blurRadius: dragging ? 24 : 16,
-            offset: Offset(0, dragging ? 12 : 6),
+            blurRadius: dragging ? 20 : 12,
+            spreadRadius: 0,
+            offset: Offset(0, dragging ? 10 : 5),
           ),
         ],
       ),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
       child: Column(
         mainAxisSize: MainAxisSize.max,
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Container(
-            width: 56,
-            height: 56,
+            width: 52,
+            height: 52,
             decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [
-                  theme.colorScheme.primary.withOpacity(isDark ? 0.6 : 0.3),
-                  theme.colorScheme.secondary.withOpacity(isDark ? 0.45 : 0.18),
-                ],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
+              color: theme.colorScheme.surface.withOpacity(isDark ? 0.85 : 1.0),
               shape: BoxShape.circle,
-              border: Border.all(color: iconBorderColor, width: 1.5),
-              boxShadow: [
-                BoxShadow(
-                  color: theme.colorScheme.primary.withOpacity(
-                    isDark ? 0.4 : 0.15,
-                  ),
-                  blurRadius: 14,
-                  offset: const Offset(0, 6),
-                ),
-              ],
+              border: Border.all(color: iconBorderColor, width: 1.2),
             ),
             padding: const EdgeInsets.all(6),
             child: ClipOval(child: iconChild),
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 10),
           Flexible(
             child: Text(
               displayName,
@@ -581,23 +564,23 @@ class _HomePageState extends State<HomePage>
               textAlign: TextAlign.center,
               style:
                   theme.textTheme.titleMedium?.copyWith(
-                    fontSize: 15,
+                    fontSize: 14,
                     fontWeight: FontWeight.w600,
                   ) ??
                   TextStyle(
-                    fontSize: 15,
+                    fontSize: 14,
                     fontWeight: FontWeight.w600,
                     color: theme.colorScheme.onSurface,
                   ),
             ),
           ),
           if (host.isNotEmpty) ...[
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
               decoration: BoxDecoration(
                 color: theme.colorScheme.primary.withOpacity(
-                  isDark ? 0.24 : 0.12,
+                  isDark ? 0.2 : 0.1,
                 ),
                 borderRadius: BorderRadius.circular(999),
               ),
@@ -609,7 +592,7 @@ class _HomePageState extends State<HomePage>
                     theme.textTheme.labelSmall?.copyWith(
                       fontWeight: FontWeight.w600,
                       color: theme.colorScheme.onPrimary.withOpacity(
-                        isDark ? 0.9 : 0.85,
+                        isDark ? 0.85 : 0.8,
                       ),
                       letterSpacing: 0.2,
                     ) ??
@@ -617,7 +600,7 @@ class _HomePageState extends State<HomePage>
                       fontSize: 11,
                       fontWeight: FontWeight.w600,
                       color: theme.colorScheme.onPrimary.withOpacity(
-                        isDark ? 0.9 : 0.85,
+                        isDark ? 0.85 : 0.8,
                       ),
                     ),
               ),

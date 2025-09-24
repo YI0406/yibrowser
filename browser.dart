@@ -3719,6 +3719,9 @@ class _BrowserPageState extends State<BrowserPage> {
                           useOnLoadResource: true,
                           useShouldOverrideUrlLoading: true,
                           javaScriptEnabled: true,
+
+                          supportMultipleWindows: true,
+                          javaScriptCanOpenWindowsAutomatically: true,
                           allowsBackForwardNavigationGestures: true,
                           contentBlockers:
                               repo.adBlockEnabled.value
@@ -3932,6 +3935,10 @@ class _BrowserPageState extends State<BrowserPage> {
                               '[Popup] Blocked window.open for ${uri.toString()}',
                             );
                             _showSnackBar('已阻擋彈出視窗');
+                            return true;
+                          }
+                          if (req != null) {
+                            await ctl.loadUrl(urlRequest: req);
                             return true;
                           }
                           return true;
