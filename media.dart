@@ -64,12 +64,41 @@ class MediaPage extends StatefulWidget {
 class _MediaPageState extends State<MediaPage>
     with SingleTickerProviderStateMixin {
   late final TabController _tab = TabController(length: 2, vsync: this);
+  static const String _kFolderSheetDefaultKey = '__default_media_folder__';
+
+  Timer? _convertTicker;
+  final TextEditingController _searchCtl = TextEditingController();
+  String _search = '';
+  Timer? _searchDebounce;
+
+  bool _metaRefreshQueued = false;
+  final Set<DownloadTask> _selected = <DownloadTask>{};
+  bool _isEditing = false;
+  final Map<String, bool> _folderExpanded = <String, bool>{};
 
   @override
   void initState() {
     super.initState();
     // Previously performed biometric authentication here. The app no longer
     // locks the media section behind Face ID/Touch ID.
+    Future.microtask(() async {
+      try {
+        await AppRepo.I.rescanDownloadsFolder();
+      } catch (_) {}
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _convertTicker?.cancel();
+    _convertTicker = null;
+    _searchDebounce?.cancel();
+    _searchDebounce = null;
+    try {
+      _searchCtl.dispose();
+    } catch (_) {}
+    super.dispose();
   }
 
   @override
@@ -602,6 +631,471 @@ class _MediaPageState extends State<MediaPage>
     }
     return sections;
   }
+
+  String _fmtSize(int bytes) => formatFileSize(bytes);
+
+  String _stateLabel(DownloadTask t) {
+    final isHls = t.kind == 'hls';
+    if (t.state == 'paused' || t.paused) return '已暫停';
+    if (t.state == 'error') return '失敗';
+    if (t.state == 'done') return '已完成';
+    if (isHls) {
+      final total = t.total ?? 0;
+      if (t.state == 'downloading') {
+        if (total > 0 && t.received >= total) {
+          return '轉換中';
+        }
+        return '下載中';
+      }
+      return '排隊中';
+    }
+    if (t.state == 'downloading') return '下載中';
+    if (t.state == 'queued') return '排隊中';
+    return t.state;
+  }
+
+  void _ensureConvertTicker(bool active) {
+    if (active) {
+      if (_convertTicker == null) {
+        _convertTicker = Timer.periodic(const Duration(milliseconds: 700), (_) {
+          if (mounted) setState(() {});
+        });
+      }
+    } else {
+      _convertTicker?.cancel();
+      _convertTicker = null;
+    }
+  }
+
+  bool _needsMeta(DownloadTask t) {
+    if (t.state != 'done') return false;
+    final hasThumb =
+        (t.thumbnailPath != null && File(t.thumbnailPath!).existsSync());
+    final hasDuration = t.duration != null && t.duration! > Duration.zero;
+    return !(hasThumb && hasDuration);
+  }
+
+  void _toggleSelect(DownloadTask task) {
+    setState(() {
+      if (_selected.contains(task)) {
+        _selected.remove(task);
+      } else {
+        _selected.add(task);
+      }
+    });
+  }
+
+  void _selectAll(List<DownloadTask> tasks) {
+    setState(() {
+      _selected
+        ..clear()
+        ..addAll(tasks);
+    });
+  }
+
+  Future<void> _moveSelectedToFolder(BuildContext context) async {
+    if (_selected.isEmpty) return;
+    await _moveTasksToFolder(context, _selected.toList());
+  }
+
+  Future<void> _moveTasksToFolder(
+    BuildContext context,
+    List<DownloadTask> tasks,
+  ) async {
+    if (tasks.isEmpty) return;
+    final repo = AppRepo.I;
+    final folders = repo.mediaFolders.value;
+    String? currentId;
+    if (tasks.isNotEmpty) {
+      final first = tasks.first.folderId;
+      final sameFolder = tasks.every((task) => task.folderId == first);
+      if (sameFolder) currentId = first;
+    }
+    final ids = <String?>[null, ...folders.map((f) => f.id)];
+    final names = <String>[_kDefaultFolderName, ...folders.map((f) => f.name)];
+    final currentKey = currentId ?? _kFolderSheetDefaultKey;
+    final result = await showModalBottomSheet<String>(
+      context: context,
+      builder: (context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const ListTile(title: Text('選擇資料夾')),
+              for (var i = 0; i < ids.length; i++)
+                ListTile(
+                  leading: const Icon(Icons.folder),
+                  title: Text(names[i]),
+                  trailing:
+                      (ids[i] ?? _kFolderSheetDefaultKey) == currentKey
+                          ? const Icon(Icons.check, color: Colors.green)
+                          : null,
+                  onTap: () {
+                    final key = ids[i] ?? _kFolderSheetDefaultKey;
+                    Navigator.of(context).pop(key);
+                  },
+                ),
+              const SizedBox(height: 12),
+            ],
+          ),
+        );
+      },
+    );
+    if (result == null) return;
+    final String? folderId = result == _kFolderSheetDefaultKey ? null : result;
+    repo.setTasksFolder(tasks, folderId);
+    if (!mounted) return;
+    setState(() {
+      _selected.clear();
+      _isEditing = false;
+    });
+    final folderName = _folderNameForId(folderId, folders: folders);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 1),
+        content: Text('已移動到 $folderName'),
+      ),
+    );
+  }
+
+  Future<void> _deleteSelected() async {
+    if (_selected.isEmpty) return;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('刪除已選取的檔案'),
+          content: Text('確定要刪除 ${_selected.length} 項嗎？'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('取消'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('刪除'),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirm != true) return;
+    final tasks = _selected.toList();
+    await AppRepo.I.removeTasks(tasks);
+    if (!mounted) return;
+    setState(() {
+      _selected.clear();
+      _isEditing = false;
+    });
+  }
+
+  Future<void> _exportSelected(BuildContext context) async {
+    if (_selected.isEmpty) return;
+    final ok = await PurchaseService().ensurePremium(
+      context: context,
+      featureName: '匯出',
+    );
+    if (!ok) return;
+    final files = <XFile>[];
+    for (final task in _selected) {
+      if (File(task.savePath).existsSync()) {
+        files.add(XFile(task.savePath));
+      }
+    }
+    if (files.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          duration: Duration(seconds: 1),
+          content: Text('沒有可匯出的檔案'),
+        ),
+      );
+      return;
+    }
+    await Share.shareXFiles(files);
+    if (!mounted) return;
+    setState(() {
+      _selected.clear();
+      _isEditing = false;
+    });
+  }
+
+  void _toggleFavorite(DownloadTask task) {
+    AppRepo.I.setFavorite(task, !task.favorite);
+    setState(() {});
+  }
+
+  void _renameTask(BuildContext context, DownloadTask task) {
+    final controller = TextEditingController(text: task.name ?? '');
+    showDialog(
+      context: context,
+      builder: (_) {
+        return AlertDialog(
+          title: const Text('重新命名'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            decoration: const InputDecoration(hintText: '輸入新的名稱'),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('取消'),
+            ),
+            TextButton(
+              onPressed: () {
+                final value = controller.text.trim();
+                if (value.isNotEmpty) {
+                  AppRepo.I.renameTask(task, value);
+                }
+                Navigator.pop(context);
+              },
+              child: const Text('儲存'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _handleShare(BuildContext context, DownloadTask task) async {
+    final ok = await PurchaseService().ensurePremium(
+      context: context,
+      featureName: '匯出',
+    );
+    if (!ok) return;
+    if (!File(task.savePath).existsSync()) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(duration: Duration(seconds: 1), content: Text('檔案已不存在')),
+      );
+      return;
+    }
+    await Share.shareXFiles([XFile(task.savePath)]);
+  }
+
+  Future<void> _openTask(
+    BuildContext context,
+    DownloadTask task, {
+    List<DownloadTask>? candidates,
+  }) async {
+    if (!File(task.savePath).existsSync()) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(duration: Duration(seconds: 1), content: Text('檔案已不存在')),
+      );
+      return;
+    }
+    final resolvedType = AppRepo.I.resolvedTaskType(task);
+    if (resolvedType == 'video' || resolvedType == 'audio') {
+      List<DownloadTask>? playlist;
+      int? initialIndex;
+      if (candidates != null) {
+        final filtered = <DownloadTask>[];
+        for (final item in candidates) {
+          final type = AppRepo.I.resolvedTaskType(item);
+          final exists = File(item.savePath).existsSync();
+          if (exists && (type == 'video' || type == 'audio')) {
+            filtered.add(item);
+          }
+        }
+        if (filtered.isNotEmpty) {
+          final idx = filtered.indexWhere(
+            (item) => item.savePath == task.savePath,
+          );
+          if (idx >= 0) {
+            playlist = filtered;
+            initialIndex = idx;
+          }
+        }
+      }
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder:
+              (_) => VideoPlayerPage(
+                path: task.savePath,
+                title: task.name ?? path.basename(task.savePath),
+                playlist: playlist,
+                initialIndex: initialIndex,
+              ),
+        ),
+      );
+    } else if (resolvedType == 'image') {
+      if (!_fileHasContent(task.savePath)) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            duration: Duration(seconds: 1),
+            content: Text('檔案尚未完成或已損毀'),
+          ),
+        );
+        return;
+      }
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder:
+              (_) => ImagePreviewPage(
+                filePath: task.savePath,
+                title: task.name ?? path.basename(task.savePath),
+              ),
+        ),
+      );
+    } else {
+      await _handleShare(context, task);
+    }
+  }
+
+  String _folderKey(String? id) => 'folder:${id ?? '__default__'}';
+
+  void _syncFolderExpansion(Iterable<String?> ids) {
+    final keys = ids.map(_folderKey).toSet();
+    _folderExpanded.removeWhere((key, _) => !keys.contains(key));
+    for (final key in keys) {
+      _folderExpanded.putIfAbsent(key, () => true);
+    }
+  }
+
+  bool _canMoveFolder(String id, int delta) {
+    final list = AppRepo.I.mediaFolders.value;
+    final idx = list.indexWhere((f) => f.id == id);
+    if (idx < 0) return false;
+    final target = idx + delta;
+    return target >= 0 && target < list.length;
+  }
+
+  void _moveFolder(String id, int delta) {
+    final list = [...AppRepo.I.mediaFolders.value];
+    final idx = list.indexWhere((f) => f.id == id);
+    if (idx < 0) return;
+    final target = idx + delta;
+    if (target < 0 || target >= list.length) return;
+    final item = list.removeAt(idx);
+    list.insert(target, item);
+    AppRepo.I.reorderMediaFolders(list);
+    setState(() {});
+  }
+
+  void _promptRenameFolder(BuildContext context, MediaFolder folder) {
+    final controller = TextEditingController(text: folder.name);
+    showDialog(
+      context: context,
+      builder: (_) {
+        return AlertDialog(
+          title: const Text('重新命名資料夾'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            decoration: const InputDecoration(hintText: '輸入新的名稱'),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('取消'),
+            ),
+            TextButton(
+              onPressed: () {
+                final value = controller.text.trim();
+                if (value.isNotEmpty) {
+                  AppRepo.I.renameMediaFolder(folder.id, value);
+                }
+                Navigator.pop(context);
+              },
+              child: const Text('儲存'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _confirmDeleteFolder(
+    BuildContext context,
+    MediaFolder folder,
+  ) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (_) {
+        return AlertDialog(
+          title: const Text('刪除資料夾'),
+          content: Text(
+            '確定要刪除「${folder.name}」嗎？其中的檔案會移至${_kDefaultFolderName}。',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('取消'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('刪除'),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirm == true) {
+      AppRepo.I.deleteMediaFolder(folder.id);
+      if (mounted) {
+        setState(() {});
+      }
+    }
+  }
+
+  Future<void> _promptCreateFolder(BuildContext context) async {
+    final controller = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder: (_) {
+        return AlertDialog(
+          title: const Text('新增資料夾'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            decoration: const InputDecoration(hintText: '輸入資料夾名稱'),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('取消'),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context, controller.text.trim());
+              },
+              child: const Text('建立'),
+            ),
+          ],
+        );
+      },
+    );
+    if (name == null) return;
+    final folder = AppRepo.I.createMediaFolder(name);
+    if (!mounted) return;
+    setState(() {
+      _folderExpanded[_folderKey(folder.id)] = true;
+    });
+  }
+
+  String _folderNameForId(String? id, {List<MediaFolder>? folders}) {
+    final list = folders ?? AppRepo.I.mediaFolders.value;
+    if (id == null) return _kDefaultFolderName;
+    for (final folder in list) {
+      if (folder.id == id) return folder.name;
+    }
+    return _kDefaultFolderName;
+  }
+}
+
+class _FolderSection {
+  final String? id;
+  final String name;
+  final List<DownloadTask> tasks;
+
+  const _FolderSection({
+    required this.id,
+    required this.name,
+    required this.tasks,
+  });
 }
 
 /// Displays favourited download tasks.
