@@ -1,23 +1,21 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
+import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
+import 'package:ffmpeg_kit_flutter_new/log.dart';
+import 'package:ffmpeg_kit_flutter_new/session.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
-import 'package:flutter/foundation.dart';
-import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
-import 'package:ffmpeg_kit_flutter_new/log.dart';
-import 'package:ffmpeg_kit_flutter_new/session.dart';
-import 'soure.dart';
-import 'iap.dart';
 import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
-import 'dart:convert';
-import 'dart:typed_data';
-import 'package:video_player/video_player.dart';
-import 'dart:io';
-import 'package:path_provider/path_provider.dart';
-import 'package:path/path.dart' as path;
-import 'dart:async';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:video_player/video_player.dart';
+import 'iap.dart';
+import 'soure.dart';
 // Import the media page to allow launching the built‑in video player when
 // playing remote videos from the browser. This also brings in the
 // VideoPlayerPage class used in the play callbacks.
@@ -191,6 +189,8 @@ class _BrowserPageState extends State<BrowserPage> {
     '[data-ad-client]',
     '[data-ad-name]',
   ];
+  static const String _kDefaultFolderName = '我的下載';
+  static const String _kFolderSheetDefaultKey = '__default_media_folder__';
 
   List<ContentBlocker> _adBlockerRules = const <ContentBlocker>[];
 
@@ -5461,6 +5461,75 @@ class _BrowserPageState extends State<BrowserPage> {
   /// both HLS (m3u8) and direct file downloads. It ensures that the UI
   /// reflects real-time updates via [_currentReceived] and by observing
   /// AppRepo notifications.
+  String _folderNameForId(String? folderId) {
+    if (folderId == null) return _kDefaultFolderName;
+    for (final folder in repo.mediaFolders.value) {
+      if (folder.id == folderId) {
+        return folder.name;
+      }
+    }
+    return _kDefaultFolderName;
+  }
+
+  Future<String?> _pickFolderForTask({
+    required BuildContext context,
+    required String? currentId,
+  }) async {
+    final folders = repo.mediaFolders.value;
+    final ids = <String?>[null, ...folders.map((f) => f.id)];
+    final names = <String>[_kDefaultFolderName, ...folders.map((f) => f.name)];
+    final currentKey = currentId ?? _kFolderSheetDefaultKey;
+
+    final result = await showModalBottomSheet<String>(
+      context: context,
+      builder: (context) {
+        return SafeArea(
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const ListTile(title: Text('選擇資料夾')),
+                for (var i = 0; i < ids.length; i++)
+                  ListTile(
+                    leading: const Icon(Icons.folder),
+                    title: Text(names[i]),
+                    trailing:
+                        (ids[i] ?? _kFolderSheetDefaultKey) == currentKey
+                            ? const Icon(Icons.check, color: Colors.green)
+                            : null,
+                    onTap: () {
+                      final key = ids[i] ?? _kFolderSheetDefaultKey;
+                      Navigator.of(context).pop(key);
+                    },
+                  ),
+                const SizedBox(height: 12),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    return result;
+  }
+
+  Future<void> _moveTaskToFolder(DownloadTask task) async {
+    final key = await _pickFolderForTask(
+      context: context,
+      currentId: task.folderId,
+    );
+    if (key == null) return;
+    final String? folderId = key == _kFolderSheetDefaultKey ? null : key;
+    repo.setTasksFolder([task], folderId);
+    if (!mounted) return;
+    final targetName = _folderNameForId(folderId);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 1),
+        content: Text('已移動到 $targetName'),
+      ),
+    );
+  }
+
   Widget _buildDownloadTile(DownloadTask t) {
     // Determine if this task is an HLS playlist. HLS tasks use the segment
     // count to track progress rather than bytes until conversion begins.
@@ -5807,6 +5876,13 @@ class _BrowserPageState extends State<BrowserPage> {
                   AppRepo.I.resumeTask(t);
                 },
               ),
+            IconButton(
+              icon: const Icon(Icons.folder_open),
+              tooltip: '移動到資料夾',
+              onPressed: () {
+                _moveTaskToFolder(t);
+              },
+            ),
             IconButton(
               icon: const Icon(Icons.delete_outline),
               tooltip: '刪除',
