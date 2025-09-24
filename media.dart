@@ -501,17 +501,17 @@ class _MediaPageState extends State<MediaPage>
       } catch (_) {}
     }
     Widget? leadingThumb;
-    if (task.state == 'done' &&
-        resolvedType == 'video' &&
-        File(task.savePath).existsSync()) {
+    final isDone = task.state.toLowerCase() == 'done';
+    if (resolvedType == 'image' && isDone && _fileHasContent(task.savePath)) {
+      final file = File(task.savePath);
       leadingThumb = ClipRRect(
         borderRadius: BorderRadius.circular(4),
         child: Image.file(
-          File(task.savePath),
+          file,
           width: 52,
           height: 52,
           fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => const Icon(Icons.movie),
+          errorBuilder: (_, __, ___) => const Icon(Icons.image),
         ),
       );
     } else if (task.thumbnailPath != null &&
@@ -761,8 +761,18 @@ class _MediaPageState extends State<MediaPage>
       final sameFolder = tasks.every((task) => task.folderId == first);
       if (sameFolder) currentId = first;
     }
+    final counts = <String?, int>{};
+    for (final item in repo.downloads.value) {
+      final key = item.folderId;
+      counts[key] = (counts[key] ?? 0) + 1;
+    }
+    counts.putIfAbsent(null, () => 0);
+    String formatName(String? id, String name) => '$name（${counts[id] ?? 0}）';
     final ids = <String?>[null, ...folders.map((f) => f.id)];
-    final names = <String>[_kDefaultFolderName, ...folders.map((f) => f.name)];
+    final names = <String>[
+      formatName(null, _kDefaultFolderName),
+      ...folders.map((f) => formatName(f.id, f.name)),
+    ];
     final currentKey = currentId ?? _kFolderSheetDefaultKey;
     final result = await showModalBottomSheet<String>(
       context: context,

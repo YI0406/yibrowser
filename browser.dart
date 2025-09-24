@@ -5476,8 +5476,18 @@ class _BrowserPageState extends State<BrowserPage> {
     required String? currentId,
   }) async {
     final folders = repo.mediaFolders.value;
+    final counts = <String?, int>{};
+    for (final task in repo.downloads.value) {
+      final key = task.folderId;
+      counts[key] = (counts[key] ?? 0) + 1;
+    }
+    counts.putIfAbsent(null, () => 0);
+    String formatName(String? id, String name) => '$name（${counts[id] ?? 0}）';
     final ids = <String?>[null, ...folders.map((f) => f.id)];
-    final names = <String>[_kDefaultFolderName, ...folders.map((f) => f.name)];
+    final names = <String>[
+      formatName(null, _kDefaultFolderName),
+      ...folders.map((f) => formatName(f.id, f.name)),
+    ];
     final currentKey = currentId ?? _kFolderSheetDefaultKey;
 
     final result = await showModalBottomSheet<String>(
