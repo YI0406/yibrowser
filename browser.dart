@@ -119,6 +119,16 @@ class BrowserPage extends StatefulWidget {
   State<BrowserPage> createState() => _BrowserPageState();
 }
 
+class _AdBlockerDialogResult {
+  final bool enabled;
+  final Set<String> selectedProfiles;
+
+  const _AdBlockerDialogResult({
+    required this.enabled,
+    required this.selectedProfiles,
+  });
+}
+
 enum _ToolbarMenuAction {
   openFavorites,
   openHistory,
@@ -128,6 +138,7 @@ enum _ToolbarMenuAction {
   blockExternalApp,
   addHome,
   goHome,
+  help,
 }
 
 enum _LinkContextMenuAction {
@@ -161,6 +172,12 @@ class _BrowserPageState extends State<BrowserPage> {
     'rubiconproject.com',
     'criteo.net',
   ];
+  static const Map<String, String> _kAdBlockerAssetPaths = {
+    'lite': 'assets/adblocker/blockerslite.json',
+    'plus': 'assets/adblocker/blockersplus.json',
+    'privacy': 'assets/adblocker/blockersprivacy.json',
+  };
+  static const String _kPrefBrowserHelpSeen = 'browser_help_seen';
 
   static const List<String> _kAdBlockCssSelectors = [
     '.adsbygoogle',
@@ -360,26 +377,34 @@ class _BrowserPageState extends State<BrowserPage> {
   }
 
   Future<void> _initAdBlockerRules() async {
-    final assetRules = await _loadContentBlockersFromAsset(
-      'assets/adblocker/blockers.json',
-    );
-    final rules =
-        assetRules != null
-            ? <ContentBlocker>[...assetRules, _buildCssDisplayNoneRule()]
-            : _buildLegacyAdBlockerRules();
-    if (assetRules != null) {
-      debugPrint(
-        '[AdBlocker] Loaded ${assetRules.length} rules from assets/adblocker/blockers.json',
-      );
-    } else {
-      debugPrint('[AdBlocker] Loaded ${rules.length} built-in legacy rules');
+    final selected = repo.adBlockFilterSets.value;
+    final combined = <ContentBlocker>[];
+    for (final profile in selected) {
+      final assetPath = _kAdBlockerAssetPaths[profile];
+      if (assetPath == null) {
+        continue;
+      }
+      final rules = await _loadContentBlockersFromAsset(assetPath);
+      if (rules != null && rules.isNotEmpty) {
+        combined.addAll(rules);
+        debugPrint('[AdBlocker] Loaded ${rules.length} rules for $profile');
+      }
     }
+    if (combined.isEmpty) {
+      combined
+        ..clear()
+        ..addAll(_buildLegacyAdBlockerRules());
+      debugPrint(
+        '[AdBlocker] Falling back to legacy rules (${combined.length})',
+      );
+    }
+    combined.add(_buildCssDisplayNoneRule());
     if (!mounted) {
-      _adBlockerRules = rules;
+      _adBlockerRules = combined;
       return;
     }
     setState(() {
-      _adBlockerRules = rules;
+      _adBlockerRules = combined;
     });
     if (repo.adBlockEnabled.value) {
       unawaited(_applyAdBlockerSetting());
@@ -1090,6 +1115,10 @@ class _BrowserPageState extends State<BrowserPage> {
   /// Whether this entry represents a real download task (either ongoing or completed).
   /// Excludes local/imported/library items from the downloads UI entirely.
   bool _isDownloadTaskEntry(DownloadTask t) {
+    final state = (t.state).toString().toLowerCase();
+    if (state == 'done') {
+      return true;
+    }
     final isLocalUrl =
         t.url.startsWith('file://') ||
         t.url.startsWith('/') ||
@@ -2154,6 +2183,7 @@ class _BrowserPageState extends State<BrowserPage> {
     uaNotifier.addListener(_onUaChanged);
     repo.ytOptions.addListener(_onYtOptionsChanged);
     repo.pendingNewTab.addListener(_onPendingNewTab);
+    repo.adBlockFilterSets.addListener(_onAdBlockFilterSetsChanged);
     // Listen to focus changes to handle paste button
     _urlFocus.addListener(() {
       if (_urlFocus.hasFocus) {
@@ -2282,6 +2312,7 @@ class _BrowserPageState extends State<BrowserPage> {
       _blockExternalApp = sp.getBool('block_external_app') ?? false;
       if (mounted) setState(() {});
     }();
+    _maybeShowBrowserHelp();
     // Load cached universal-link hosts so iOS can automatically keep pages in-web.
     () async {
       final sp = await SharedPreferences.getInstance();
@@ -3490,6 +3521,7 @@ class _BrowserPageState extends State<BrowserPage> {
     uaNotifier.removeListener(_onUaChanged);
     repo.ytOptions.removeListener(_onYtOptionsChanged);
     repo.pendingNewTab.removeListener(_onPendingNewTab);
+    repo.adBlockFilterSets.removeListener(_onAdBlockFilterSetsChanged);
     _urlFocus.dispose();
     super.dispose();
   }
@@ -4171,7 +4203,10 @@ class _BrowserPageState extends State<BrowserPage> {
                                     label: const Text('下載'),
                                     onPressed: () {
                                       Navigator.pop(context);
-                                      _confirmDownload(resolvedLink);
+                                      _confirmDownload(
+                                        resolvedLink,
+                                        skipPrompt: true,
+                                      );
                                     },
                                   ),
                                 ],
@@ -4500,6 +4535,7 @@ class _BrowserPageState extends State<BrowserPage> {
         repo.history,
         repo.blockPopup,
         repo.adBlockEnabled,
+        repo.adBlockFilterSets,
       ]),
       builder: (context, _) {
         return IconButton(
@@ -4533,6 +4569,7 @@ class _BrowserPageState extends State<BrowserPage> {
     final historyCount = repo.history.value.length;
     final blockPopupOn = repo.blockPopup.value;
     final adBlockOn = repo.adBlockEnabled.value;
+    final selectedProfiles = repo.adBlockFilterSets.value;
 
     PopupMenuItem<_ToolbarMenuAction> buildItem(
       _ToolbarMenuAction action,
@@ -4589,7 +4626,8 @@ class _BrowserPageState extends State<BrowserPage> {
       buildItem(
         _ToolbarMenuAction.toggleAdBlocker,
         adBlockOn ? Icons.toggle_on : Icons.toggle_off,
-        'Adblocker 廣告阻擋',
+
+        _adBlockerMenuLabel(adBlockOn, selectedProfiles),
         iconColor: adBlockOn ? colorScheme.primary : null,
       ),
       buildItem(
@@ -4608,6 +4646,7 @@ class _BrowserPageState extends State<BrowserPage> {
       const PopupMenuDivider(),
       buildItem(_ToolbarMenuAction.addHome, Icons.add, '加入主頁'),
       buildItem(_ToolbarMenuAction.goHome, Icons.home, '主頁'),
+      buildItem(_ToolbarMenuAction.help, Icons.help_outline, '說明 ?'),
     ];
 
     final selected = await showMenu<_ToolbarMenuAction>(
@@ -4621,8 +4660,7 @@ class _BrowserPageState extends State<BrowserPage> {
 
     final keepOpen =
         selected == _ToolbarMenuAction.toggleBlockPopup ||
-        selected == _ToolbarMenuAction.blockExternalApp ||
-        selected == _ToolbarMenuAction.toggleAdBlocker;
+        selected == _ToolbarMenuAction.blockExternalApp;
 
     switch (selected) {
       case _ToolbarMenuAction.openFavorites:
@@ -4635,7 +4673,7 @@ class _BrowserPageState extends State<BrowserPage> {
         await _clearBrowsingData();
         break;
       case _ToolbarMenuAction.toggleAdBlocker:
-        _toggleAdBlockerSetting();
+        await _showAdBlockerSettings();
         break;
       case _ToolbarMenuAction.toggleBlockPopup:
         _toggleBlockPopupSetting();
@@ -4650,6 +4688,9 @@ class _BrowserPageState extends State<BrowserPage> {
         if (widget.onGoHome != null) {
           widget.onGoHome!();
         }
+        break;
+      case _ToolbarMenuAction.help:
+        await _showBrowserHelpDialog(requireAcknowledgement: false);
         break;
     }
 
@@ -4889,15 +4930,118 @@ class _BrowserPageState extends State<BrowserPage> {
     }
   }
 
-  void _toggleAdBlockerSetting() {
-    final next = !repo.adBlockEnabled.value;
-    repo.setAdBlockEnabled(next);
-    unawaited(_applyAdBlockerSetting());
+  void _onAdBlockFilterSetsChanged() {
+    unawaited(_initAdBlockerRules());
+  }
+
+  Future<void> _showAdBlockerSettings() async {
+    final initialEnabled = repo.adBlockEnabled.value;
+    final initialSelection = repo.adBlockFilterSets.value;
+    final result = await showDialog<_AdBlockerDialogResult>(
+      context: context,
+      builder: (context) {
+        bool enabled = initialEnabled;
+        final tempSelection = {...initialSelection};
+
+        return StatefulBuilder(
+          builder: (context, setState) {
+            Widget checkbox(String profile, String label) {
+              final checked = tempSelection.contains(profile);
+              return CheckboxListTile(
+                value: checked,
+                onChanged:
+                    enabled
+                        ? (_) {
+                          setState(() {
+                            if (checked) {
+                              tempSelection.remove(profile);
+                            } else {
+                              tempSelection.add(profile);
+                            }
+                          });
+                        }
+                        : null,
+                title: Text(label),
+              );
+            }
+
+            final canConfirm = !enabled || tempSelection.isNotEmpty;
+            return AlertDialog(
+              title: const Text('Adblocker 選項'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SwitchListTile(
+                      value: enabled,
+                      onChanged: (value) {
+                        setState(() {
+                          enabled = value;
+                        });
+                      },
+                      title: const Text('啟用 Adblocker 廣告阻擋'),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      '可複選規則，啟用後將載入所有勾選的阻擋清單。',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    checkbox('lite', 'Lite（精簡規則）'),
+                    checkbox('plus', 'Plus（進階阻擋）'),
+                    checkbox('privacy', 'Privacy（隱私強化）'),
+                    if (enabled && tempSelection.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Text(
+                          '請至少選擇一組規則。',
+                          style: Theme.of(
+                            context,
+                          ).textTheme.bodySmall?.copyWith(
+                            color: Theme.of(context).colorScheme.error,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('取消'),
+                ),
+                FilledButton(
+                  onPressed:
+                      canConfirm
+                          ? () {
+                            Navigator.of(context).pop(
+                              _AdBlockerDialogResult(
+                                enabled: enabled,
+                                selectedProfiles: tempSelection.toSet(),
+                              ),
+                            );
+                          }
+                          : null,
+                  child: const Text('套用'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    if (result == null) return;
+    repo.setAdBlockFilterSets(result.selectedProfiles);
+    repo.setAdBlockEnabled(
+      result.enabled && result.selectedProfiles.isNotEmpty,
+    );
+    await _applyAdBlockerSetting();
     if (!mounted) return;
+    final enabled = repo.adBlockEnabled.value;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         duration: const Duration(seconds: 1),
-        content: Text(next ? '已開啟 Adblocker' : '已關閉 Adblocker'),
+        content: Text(enabled ? '已更新 Adblocker 設定' : '已關閉 Adblocker'),
       ),
     );
   }
@@ -4914,36 +5058,135 @@ class _BrowserPageState extends State<BrowserPage> {
     );
   }
 
-  /// Prompts the user to confirm downloading the given URL. If confirmed, enqueues the download.
-  Future<void> _confirmDownload(String url) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder:
-          (_) => AlertDialog(
-            title: const Text('下載媒體'),
-            content: Text(url, maxLines: 3, overflow: TextOverflow.ellipsis),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('取消'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('下載'),
-              ),
-            ],
-          ),
+  Future<void> _recordHelpAcknowledged() async {
+    final sp = await SharedPreferences.getInstance();
+    await sp.setBool(_kPrefBrowserHelpSeen, true);
+  }
+
+  Future<void> _maybeShowBrowserHelp() async {
+    final sp = await SharedPreferences.getInstance();
+    final seen = sp.getBool(_kPrefBrowserHelpSeen) ?? false;
+    if (seen) return;
+    await Future.delayed(const Duration(milliseconds: 300));
+    if (!mounted) return;
+    final acknowledged = await _showBrowserHelpDialog(
+      requireAcknowledgement: true,
     );
-    if (ok == true) {
-      await AppRepo.I.enqueueDownload(url);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          duration: Duration(seconds: 1),
-          content: Text('已加入佇列，完成後會存入相簿'),
-        ),
-      );
+    if (acknowledged) return;
+  }
+
+  Widget _buildHelpDialogContent(TextTheme textTheme) {
+    Widget bullet(String text) => Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Text(text, style: textTheme.bodyMedium),
+    );
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('（日後可再點按查看）', style: textTheme.bodySmall),
+        const SizedBox(height: 12),
+        bullet('1. 大部分影片長按即可跳出提示視窗，再依照需求操作。'),
+        bullet('2. 有些網站不能使用 Adblock 否則無法播放影片，或改用其他過濾規則。'),
+        bullet('3. 推特等已安裝的應用程式網站可長按以新分頁開啟正常瀏覽，並視需求開啟阻擋轉跳外部 App 功能。'),
+        bullet('4. 請尊重智慧財產權，切勿違法盜取他人資源，用戶行為與本應用無關。'),
+        bullet('5. Yi Apps 保留修改與解釋一切權利。'),
+        bullet('6. 按下「我知道了」即代表同意及明白上述條款與說明使用本應用程式。'),
+      ],
+    );
+  }
+
+  Future<bool> _showBrowserHelpDialog({
+    required bool requireAcknowledgement,
+  }) async {
+    if (!mounted) return false;
+    final theme = Theme.of(context);
+    final acknowledged = await showDialog<bool>(
+      context: context,
+      barrierDismissible: !requireAcknowledgement,
+      builder: (context) {
+        final textTheme = theme.textTheme;
+        return AlertDialog(
+          title: const Text('說明'),
+          content: SingleChildScrollView(
+            child: _buildHelpDialogContent(textTheme),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('我知道了'),
+            ),
+          ],
+        );
+      },
+    );
+    if (acknowledged == true) {
+      await _recordHelpAcknowledged();
+      return true;
     }
+    return false;
+  }
+
+  String _adBlockerMenuLabel(bool enabled, Set<String> profiles) {
+    if (!enabled) {
+      return 'Adblocker 廣告阻擋（關閉）';
+    }
+    String displayName(String key) {
+      switch (key) {
+        case 'lite':
+          return 'Lite';
+        case 'privacy':
+          return 'Privacy';
+        case 'plus':
+        default:
+          return 'Plus';
+      }
+    }
+
+    final names = profiles.map(displayName).toList()..sort();
+    final joined = names.join('、');
+    return 'Adblocker 廣告阻擋（$joined）';
+  }
+
+  /// Prompts the user to confirm downloading the given URL. If confirmed, enqueues the download.
+  Future<void> _confirmDownload(String url, {bool skipPrompt = false}) async {
+    bool ok = true;
+    if (!skipPrompt) {
+      ok =
+          await showDialog<bool>(
+            context: context,
+            builder:
+                (_) => AlertDialog(
+                  title: const Text('下載媒體'),
+                  content: Text(
+                    url,
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context, false),
+                      child: const Text('取消'),
+                    ),
+                    FilledButton(
+                      onPressed: () => Navigator.pop(context, true),
+                      child: const Text('下載'),
+                    ),
+                  ],
+                ),
+          ) ??
+          false;
+    }
+    if (!ok) return;
+    await AppRepo.I.enqueueDownload(url);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        duration: Duration(seconds: 1),
+        content: Text('已加入佇列，完成後會存入相簿'),
+      ),
+    );
   }
 
   Future<String?> _ensureVideoThumb(String url) async {
@@ -5415,15 +5658,18 @@ class _BrowserPageState extends State<BrowserPage> {
                           icon: const Icon(Icons.delete_sweep),
                           tooltip: '清除任務（不刪除已完成媒體）',
                           onPressed: () async {
-                            // 只清除任務（進行中/失敗/已取消），保留已完成的下載（已移入媒體）
-                            final kept =
-                                repo.downloads.value.where((t) {
-                                  final s = (t.state).toString().toLowerCase();
-                                  return s == 'done';
-                                }).toList();
-                            repo.downloads.value = kept;
+                            final cleared =
+                                await AppRepo.I.retainOnlyCompletedDownloads();
+                            if (!mounted) return;
                             Navigator.pop(context);
-                            if (mounted) {
+                            if (!cleared) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  duration: Duration(seconds: 1),
+                                  content: Text('沒有可清除的下載任務'),
+                                ),
+                              );
+                            } else {
                               ScaffoldMessenger.of(context).showSnackBar(
                                 const SnackBar(
                                   duration: Duration(seconds: 1),

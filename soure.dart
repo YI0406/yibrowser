@@ -1136,6 +1136,7 @@ class AppRepo extends ChangeNotifier {
         'blockPopup': blockPopup.value,
         // Persist the Adblocker toggle so it survives restarts.
         'adBlockEnabled': adBlockEnabled.value,
+        'adBlockFilterSets': adBlockFilterSets.value.toList(),
         // Persist the auto save setting (whether downloads are automatically
         // saved to the system photo gallery).
         'autoSave': autoSave.value,
@@ -1185,6 +1186,7 @@ class AppRepo extends ChangeNotifier {
     history.value = [];
     blockPopup.value = false;
     adBlockEnabled.value = false;
+    adBlockFilterSets.value = {'plus'};
     autoSave.value = true;
     homeItems.value = [];
     mediaFolders.value = [];
@@ -1286,6 +1288,11 @@ class AppRepo extends ChangeNotifier {
       // Restore pop‑up blocking preference.
       blockPopup.value = data['blockPopup'] as bool? ?? false;
       adBlockEnabled.value = data['adBlockEnabled'] as bool? ?? false;
+      final List<dynamic> adblockRaw =
+          data['adBlockFilterSets'] as List<dynamic>? ?? const [];
+      adBlockFilterSets.value = _normalizeAdBlockProfiles(
+        adblockRaw.map((e) => e.toString()),
+      );
       autoSave.value = data['autoSave'] as bool? ?? true;
 
       // Restore custom home screen items. If absent, leave empty.
@@ -2461,6 +2468,47 @@ class AppRepo extends ChangeNotifier {
     _saveState();
   }
 
+  static const Set<String> _kAdBlockProfiles = {'lite', 'plus', 'privacy'};
+  static const SetEquality<String> _adBlockSetEquality = SetEquality();
+
+  Set<String> _normalizeAdBlockProfiles(Iterable<String> source) {
+    final normalized = <String>{};
+    for (final raw in source) {
+      final candidate = raw.trim().toLowerCase();
+      if (_kAdBlockProfiles.contains(candidate)) {
+        normalized.add(candidate);
+      }
+    }
+    if (normalized.isEmpty) {
+      normalized.add('plus');
+    }
+    return normalized;
+  }
+
+  void setAdBlockFilterSets(Set<String> sets) {
+    final normalized = _normalizeAdBlockProfiles(sets);
+    if (_adBlockSetEquality.equals(adBlockFilterSets.value, normalized)) {
+      return;
+    }
+    adBlockFilterSets.value = normalized;
+    _saveState();
+  }
+
+  Future<bool> retainOnlyCompletedDownloads() async {
+    final current = [...downloads.value];
+    final kept =
+        current
+            .where((t) => (t.state).toString().toLowerCase() == 'done')
+            .toList();
+    if (kept.length == current.length) {
+      return false;
+    }
+    downloads.value = kept;
+    notifyListeners();
+    await _saveState();
+    return true;
+  }
+
   /// Remove all download tasks and their associated files. Uses [removeTasks]
   /// under the hood. This is useful for clearing the downloads list from the
   /// side drawer.
@@ -2669,6 +2717,12 @@ class AppRepo extends ChangeNotifier {
 
   /// Whether the built-in Adblocker (content blockers) is enabled for WebView.
   final ValueNotifier<bool> adBlockEnabled = ValueNotifier(false);
+
+  /// Selected Adblocker rule profiles applied when the blocker is enabled.
+  /// Defaults to the "plus" ruleset for broader coverage and can be customised
+  /// by the user from the browser menu.
+  final ValueNotifier<Set<String>> adBlockFilterSets =
+      ValueNotifier<Set<String>>({'plus'});
 
   /// Data for the global mini player overlay. When non‑null, the root widget
   /// should display a floating mini player allowing background playback.
