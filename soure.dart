@@ -8,6 +8,7 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter/services.dart';
 import 'package:dio/dio.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 import 'package:collection/collection.dart';
 import 'package:path/path.dart' as p;
 import 'package:photo_manager/photo_manager.dart';
@@ -2137,8 +2138,19 @@ class AppRepo extends ChangeNotifier {
       final cmd =
           "-y -ss 1 -i '${t.savePath}' -vframes 1 -update 1 -q:v 3 '$thumbPath'";
       final session = await FFmpegKit.execute(cmd);
-      final rc = await session.getReturnCode();
-      if (rc != null && rc.isValueSuccess() && File(thumbPath).existsSync()) {
+      ReturnCode? rc;
+      try {
+        rc = await session.getReturnCode();
+      } on PlatformException catch (err, stack) {
+        if (kDebugMode) {
+          debugPrint(
+            'FFmpegKit session result unavailable: $err\n${stack.toString()}',
+          );
+        }
+      }
+      final thumbFile = File(thumbPath);
+      final thumbExists = thumbFile.existsSync();
+      if ((rc == null || rc.isValueSuccess()) && thumbExists) {
         final previousThumb = t.thumbnailPath;
         t.thumbnailPath = thumbPath;
         if (previousThumb != null && previousThumb != thumbPath) {
