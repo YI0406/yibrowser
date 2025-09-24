@@ -169,77 +169,86 @@ class _MediaPageState extends State<MediaPage>
         }
         _selected.removeWhere((task) => !tasks.contains(task));
 
-        return Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              child: _buildTopControls(context, tasks),
-            ),
-            Expanded(
-              child: ValueListenableBuilder<List<MediaFolder>>(
-                valueListenable: repo.mediaFolders,
-                builder: (context, folders, __) {
-                  final sections = _buildSections(tasks, folders);
-                  _syncFolderExpansion(sections.map((s) => s.id));
-                  return ListView.builder(
-                    padding: const EdgeInsets.only(bottom: 16),
-                    itemCount: sections.length,
-                    itemBuilder: (context, index) {
-                      final section = sections[index];
-                      final key = _folderKey(section.id);
-                      final expanded = _folderExpanded[key] ?? true;
-                      MediaFolder? folder;
-                      if (section.id != null) {
-                        for (final item in folders) {
-                          if (item.id == section.id) {
-                            folder = item;
-                            break;
+        return SafeArea(
+          top: true,
+          bottom: false,
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
+                child: _buildTopControls(context, tasks),
+              ),
+              Expanded(
+                child: ValueListenableBuilder<List<MediaFolder>>(
+                  valueListenable: repo.mediaFolders,
+                  builder: (context, folders, __) {
+                    final sections = _buildSections(tasks, folders);
+                    _syncFolderExpansion(sections.map((s) => s.id));
+                    return ListView.builder(
+                      padding: const EdgeInsets.only(bottom: 16),
+                      itemCount: sections.length,
+                      itemBuilder: (context, index) {
+                        final section = sections[index];
+                        final key = _folderKey(section.id);
+                        final expanded = _folderExpanded[key] ?? true;
+                        MediaFolder? folder;
+                        if (section.id != null) {
+                          for (final item in folders) {
+                            if (item.id == section.id) {
+                              folder = item;
+                              break;
+                            }
                           }
                         }
-                      }
-                      return Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _buildFolderHeader(
-                            context: context,
-                            section: section,
-                            folder: folder,
-                            expanded: expanded,
-                          ),
-                          if (expanded)
-                            section.tasks.isEmpty
-                                ? Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 16,
-                                    vertical: 12,
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _buildFolderHeader(
+                              context: context,
+                              section: section,
+                              folder: folder,
+                              expanded: expanded,
+                            ),
+                            if (expanded)
+                              section.tasks.isEmpty
+                                  ? Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                      vertical: 12,
+                                    ),
+                                    child: Text(
+                                      _search.isEmpty
+                                          ? '此資料夾尚無媒體'
+                                          : '沒有符合搜尋的媒體',
+                                      style:
+                                          Theme.of(context).textTheme.bodySmall,
+                                    ),
+                                  )
+                                  : Column(
+                                    children:
+                                        section.tasks
+                                            .map(
+                                              (task) => _buildTaskTile(
+                                                context: context,
+                                                task: task,
+                                                sectionTasks: section.tasks,
+                                              ),
+                                            )
+                                            .toList(),
                                   ),
-                                  child: Text(
-                                    _search.isEmpty ? '此資料夾尚無媒體' : '沒有符合搜尋的媒體',
-                                    style:
-                                        Theme.of(context).textTheme.bodySmall,
-                                  ),
-                                )
-                                : Column(
-                                  children:
-                                      section.tasks
-                                          .map(
-                                            (task) => _buildTaskTile(
-                                              context: context,
-                                              task: task,
-                                              sectionTasks: section.tasks,
-                                            ),
-                                          )
-                                          .toList(),
-                                ),
-                          const Divider(height: 1),
-                        ],
-                      );
-                    },
-                  );
-                },
+                            const Divider(height: 1),
+                          ],
+                        );
+                      },
+                    );
+                  },
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         );
       },
     );
