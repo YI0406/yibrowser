@@ -614,17 +614,41 @@ class _RootNavState extends State<RootNav> {
       bottomNavigationBar: ValueListenableBuilder<BannerAd?>(
         valueListenable: AdService.instance.bannerAdNotifier,
         builder: (context, banner, _) {
+          final theme = Theme.of(context);
           final navBar = NavigationBar(
+            height: 64,
+            elevation: 6,
+            backgroundColor: theme.colorScheme.surface.withOpacity(0.94),
+            shadowColor: theme.shadowColor.withOpacity(0.08),
+            surfaceTintColor: Colors.transparent,
+            indicatorColor: theme.colorScheme.primary.withOpacity(0.12),
+            indicatorShape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(18),
+            ),
+            labelBehavior: NavigationDestinationLabelBehavior.alwaysHide,
             selectedIndex: index,
             destinations: const [
               // order: Media, Home, Browser, Settings
               NavigationDestination(
                 icon: Icon(Icons.video_library_outlined),
+                selectedIcon: Icon(Icons.video_library_rounded),
                 label: '媒體',
               ),
-              NavigationDestination(icon: Icon(Icons.home), label: '主頁'),
-              NavigationDestination(icon: Icon(Icons.public), label: '瀏覽器'),
-              NavigationDestination(icon: Icon(Icons.settings), label: '設定'),
+              NavigationDestination(
+                icon: Icon(Icons.home_outlined),
+                selectedIcon: Icon(Icons.home_rounded),
+                label: '主頁',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.public_outlined),
+                selectedIcon: Icon(Icons.public),
+                label: '瀏覽器',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.settings_outlined),
+                selectedIcon: Icon(Icons.settings),
+                label: '設定',
+              ),
             ],
             onDestinationSelected: (i) => setState(() => index = i),
           );
