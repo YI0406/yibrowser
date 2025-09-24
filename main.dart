@@ -5,7 +5,7 @@ import 'media.dart';
 import 'video_player_page.dart';
 import 'setting.dart';
 import 'soure.dart';
-import 'image_preview_page.dart';
+import 'share_review_page.dart';
 import 'package:flutter_in_app_pip/flutter_in_app_pip.dart';
 import 'package:video_player/video_player.dart';
 import 'dart:io';
@@ -320,30 +320,16 @@ class _RootNavState extends State<RootNav> {
     final entries = rawItems
         .whereType<Map<dynamic, dynamic>>()
         .map(_incomingShareFromIosMap)
-        .whereType<_IncomingShare>()
+        .whereType<IncomingShare>()
         .toList(growable: false);
     if (entries.isEmpty) {
       debugPrint('[Share] consumeIosSharedDownloads yielded no valid items');
       return;
     }
     await _importAndPresentSharedMedia(entries);
-    final cleanupPaths = entries
-        .map((e) => e.relativePath)
-        .whereType<String>()
-        .toList(growable: false);
-    if (cleanupPaths.isNotEmpty) {
-      try {
-        await _iosShareChannel.invokeMethod(
-          'cleanupSharedDownloads',
-          cleanupPaths,
-        );
-      } catch (err) {
-        debugPrint('[Share] Cleanup for iOS shared downloads failed: $err');
-      }
-    }
   }
 
-  _IncomingShare? _incomingShareFromIosMap(Map<dynamic, dynamic> map) {
+  IncomingShare? _incomingShareFromIosMap(Map<dynamic, dynamic> map) {
     final pathValue = map['path'];
     if (pathValue is! String || pathValue.isEmpty) {
       return null;
@@ -356,23 +342,34 @@ class _RootNavState extends State<RootNav> {
     final relative = map['relativePath'];
     final relativePath =
         relative is String && relative.isNotEmpty ? relative : null;
-    return _IncomingShare(
+    final displayValue = map['displayName'];
+    String? displayName;
+    if (displayValue is String) {
+      final trimmed = displayValue.trim();
+      if (trimmed.isNotEmpty) {
+        displayName = trimmed;
+      }
+    }
+    return IncomingShare(
       path: pathValue,
       typeHint: type,
       relativePath: relativePath,
+      displayName: displayName,
     );
   }
 
-  _IncomingShare _incomingShareFromPlugin(SharedMediaFile file) {
-    return _IncomingShare(
+  IncomingShare _incomingShareFromPlugin(SharedMediaFile file) {
+    final baseName = p.basename(file.path);
+    return IncomingShare(
       path: file.path,
       typeHint: _normalizedShareType(file.type),
       relativePath: null,
+      displayName: baseName.isNotEmpty ? baseName : null,
     );
   }
 
   Future<void> _importAndPresentSharedMedia(
-    List<_IncomingShare> mediaFiles,
+    List<IncomingShare> mediaFiles,
   ) async {
     if (mediaFiles.isEmpty) {
       debugPrint('[Share] Import requested with 0 items; ignoring');
@@ -393,50 +390,6 @@ class _RootNavState extends State<RootNav> {
     _lastShareEventKey = signature;
     _lastShareEventAt = now;
 
-    final List<DownloadTask> imported = [];
-    for (final media in mediaFiles) {
-      final originalPath = media.path;
-      String resolvedPath = originalPath;
-      final uri = Uri.tryParse(originalPath);
-      if (uri != null && uri.hasScheme) {
-        if (uri.scheme != 'file') {
-          debugPrint('[Share] Non-file URI detected: $originalPath');
-        }
-        try {
-          resolvedPath = uri.toFilePath();
-        } catch (err) {
-          debugPrint('[Share] Failed to convert URI $originalPath: $err');
-        }
-      }
-      if (resolvedPath != originalPath) {
-        debugPrint(
-          '[Share] Resolved share path: $originalPath -> $resolvedPath',
-        );
-      }
-      final exists = await File(resolvedPath).exists();
-      debugPrint('[Share] Candidate path check: $resolvedPath exists=$exists');
-      final task = await AppRepo.I.importSharedMediaFile(
-        sourcePath: resolvedPath,
-        displayName: p.basename(resolvedPath),
-        typeHint: media.typeHint,
-      );
-      if (task != null) {
-        imported.add(task);
-      } else {
-        debugPrint('[Share] Import returned null for $resolvedPath');
-      }
-    }
-    if (imported.isEmpty) {
-      debugPrint('[Share] No media files were imported successfully.');
-      return;
-    }
-
-    if (Platform.isAndroid) {
-      try {
-        await _receiveSharingIntent.reset();
-      } catch (_) {}
-    }
-
     if (!mounted) {
       return;
     }
@@ -444,9 +397,10 @@ class _RootNavState extends State<RootNav> {
     setState(() {
       index = 0;
     });
+    final items = List<IncomingShare>.unmodifiable(mediaFiles);
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _presentSharedMedia(imported);
+      _showShareReview(items);
     });
   }
 
@@ -483,8 +437,8 @@ class _RootNavState extends State<RootNav> {
     return description.isEmpty ? null : description;
   }
 
-  void _presentSharedMedia(List<DownloadTask> tasks, {int attempt = 0}) {
-    if (!mounted || tasks.isEmpty) {
+  void _showShareReview(List<IncomingShare> items, {int attempt = 0}) {
+    if (!mounted || items.isEmpty) {
       return;
     }
     final nav = navigatorKey.currentState;
@@ -494,47 +448,158 @@ class _RootNavState extends State<RootNav> {
         return;
       }
       Future.delayed(const Duration(milliseconds: 200), () {
-        _presentSharedMedia(tasks, attempt: attempt + 1);
+        _showShareReview(items, attempt: attempt + 1);
       });
       return;
     }
 
-    final first = tasks.first;
-    final firstType = AppRepo.I.resolvedTaskType(first);
-    if (firstType == 'image') {
-      nav.push(
-        MaterialPageRoute(
-          builder:
-              (_) => ImagePreviewPage(
-                filePath: first.savePath,
-                title: first.name ?? p.basename(first.savePath),
-              ),
-        ),
+    nav
+        .push<ShareReviewResult>(
+          MaterialPageRoute(
+            fullscreenDialog: true,
+            builder:
+                (_) => ShareReviewPage(
+                  items: items,
+                  onConfirm: _confirmSharedImports,
+                  onDiscard: _discardSharedImports,
+                ),
+          ),
+        )
+        .then((result) {
+          if (!mounted || result == null) {
+            return;
+          }
+          final message = result.message;
+          if (message != null && message.isNotEmpty) {
+            ScaffoldMessenger.of(
+              ctx,
+            ).showSnackBar(SnackBar(content: Text(message)));
+          }
+        });
+  }
+
+  Future<ShareReviewResult> _confirmSharedImports(
+    List<IncomingShare> items,
+  ) async {
+    final imported = <DownloadTask>[];
+    int failureCount = 0;
+
+    for (final media in items) {
+      final originalPath = media.path;
+      String resolvedPath = originalPath;
+      final uri = Uri.tryParse(originalPath);
+      if (uri != null && uri.hasScheme) {
+        if (uri.scheme != 'file') {
+          debugPrint('[Share] Non-file URI detected: $originalPath');
+        }
+        try {
+          resolvedPath = uri.toFilePath();
+        } catch (err) {
+          debugPrint('[Share] Failed to convert URI $originalPath: $err');
+        }
+      }
+      if (resolvedPath != originalPath) {
+        debugPrint(
+          '[Share] Resolved share path: $originalPath -> $resolvedPath',
+        );
+      }
+      final exists = await File(resolvedPath).exists();
+      debugPrint('[Share] Candidate path check: $resolvedPath exists=$exists');
+      final task = await AppRepo.I.importSharedMediaFile(
+        sourcePath: resolvedPath,
+        displayName: media.displayName ?? p.basename(resolvedPath),
+        typeHint: media.typeHint,
       );
-    } else if (firstType == 'video' || firstType == 'audio') {
-      final playlist =
-          tasks.where((task) {
-            final type = AppRepo.I.resolvedTaskType(task);
-            return type == 'video' || type == 'audio';
-          }).toList();
-      nav.push(
-        MaterialPageRoute(
-          builder:
-              (_) => VideoPlayerPage(
-                path: first.savePath,
-                title: first.name ?? p.basename(first.savePath),
-                playlist: playlist.length > 1 ? playlist : null,
-                initialIndex: 0,
-              ),
-        ),
-      );
+      if (task != null) {
+        imported.add(task);
+      } else {
+        failureCount += 1;
+        debugPrint('[Share] Import returned null for $resolvedPath');
+      }
     }
 
-    final importedCount = tasks.length;
-    final firstName = first.name ?? p.basename(first.savePath);
-    final message =
-        importedCount > 1 ? '已匯入 $importedCount 個檔案到媒體' : '已匯入到媒體：$firstName';
-    ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(content: Text(message)));
+    if (Platform.isAndroid) {
+      try {
+        await _receiveSharingIntent.reset();
+      } catch (err) {
+        debugPrint('[Share] Failed to reset share intent: $err');
+      }
+    }
+
+    await _cleanupIncomingShares(items);
+
+    String? message;
+    if (imported.isNotEmpty) {
+      final first = imported.first;
+      final firstName = first.name ?? p.basename(first.savePath);
+      if (imported.length == 1) {
+        message =
+            failureCount > 0
+                ? '已匯入：$firstName（另有 $failureCount 個失敗）'
+                : '已匯入：$firstName';
+      } else {
+        message = '已匯入 ${imported.length} 個項目';
+        if (failureCount > 0) {
+          message = '$message，$failureCount 個失敗';
+        }
+      }
+    } else if (failureCount > 0) {
+      message = '匯入失敗：$failureCount 個項目未能存入';
+    } else {
+      message = '沒有可匯入的項目';
+    }
+
+    return ShareReviewResult(
+      imported: imported.isNotEmpty,
+      message: message,
+      successCount: imported.length,
+      failureCount: failureCount,
+    );
+  }
+
+  Future<ShareReviewResult> _discardSharedImports(
+    List<IncomingShare> items,
+  ) async {
+    if (Platform.isAndroid) {
+      try {
+        await _receiveSharingIntent.reset();
+      } catch (err) {
+        debugPrint('[Share] Failed to reset share intent: $err');
+      }
+    }
+    await _cleanupIncomingShares(items);
+    final count = items.length;
+    final message = count > 1 ? '已丟棄 $count 個分享的項目' : '已丟棄分享的項目';
+    return ShareReviewResult(
+      imported: false,
+      message: message,
+      successCount: 0,
+      failureCount: 0,
+    );
+  }
+
+  Future<void> _cleanupIncomingShares(List<IncomingShare> items) async {
+    if (!Platform.isIOS) {
+      return;
+    }
+    final cleanupPaths = items
+        .map((e) => e.relativePath)
+        .whereType<String>()
+        .map((path) => path.trim())
+        .where((path) => path.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    if (cleanupPaths.isEmpty) {
+      return;
+    }
+    try {
+      await _iosShareChannel.invokeMethod(
+        'cleanupSharedDownloads',
+        cleanupPaths,
+      );
+    } catch (err) {
+      debugPrint('[Share] Cleanup for iOS shared downloads failed: $err');
+    }
   }
 
   @override
@@ -677,14 +742,6 @@ class _RootNavState extends State<RootNav> {
       ),
     );
   }
-}
-
-class _IncomingShare {
-  const _IncomingShare({required this.path, this.typeHint, this.relativePath});
-
-  final String path;
-  final String? typeHint;
-  final String? relativePath;
 }
 
 /// A floating mini player overlay shown above the root content. When active,
