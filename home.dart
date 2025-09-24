@@ -471,21 +471,36 @@ class _HomePageState extends State<HomePage>
     }
 
     Widget buildFallbackIcon() {
-      return Container(
-        color:
-            isDark
-                ? theme.colorScheme.surfaceVariant.withOpacity(0.6)
-                : Colors.white,
-        alignment: Alignment.center,
-        child: Text(
-          fallbackText,
-          style: TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.w700,
-            color:
-                isDark
-                    ? theme.colorScheme.onSurface
-                    : theme.colorScheme.primary,
+      final fallbackGradientColors =
+          isDark
+              ? [
+                theme.colorScheme.primary.withOpacity(0.42),
+                theme.colorScheme.primary.withOpacity(0.16),
+              ]
+              : [
+                theme.colorScheme.primary.withOpacity(0.72),
+                theme.colorScheme.primary.withOpacity(0.45),
+              ];
+      return DecoratedBox(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: fallbackGradientColors,
+          ),
+        ),
+        child: Center(
+          child: Text(
+            fallbackText,
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.2,
+              color:
+                  isDark
+                      ? theme.colorScheme.onPrimary.withOpacity(0.9)
+                      : theme.colorScheme.onPrimaryContainer,
+            ),
           ),
         ),
       );
@@ -495,6 +510,7 @@ class _HomePageState extends State<HomePage>
       return Image.network(
         url,
         fit: BoxFit.cover,
+        filterQuality: FilterQuality.high,
         errorBuilder: (_, __, ___) => fallback,
       );
     }
@@ -513,99 +529,180 @@ class _HomePageState extends State<HomePage>
 
     final cardShadowColor =
         isDark
-            ? Colors.black.withOpacity(dragging ? 0.4 : 0.28)
-            : Colors.black.withOpacity(dragging ? 0.14 : 0.08);
-    final cardBackgroundColor =
+            ? Colors.black.withOpacity(dragging ? 0.45 : 0.32)
+            : Colors.black.withOpacity(dragging ? 0.18 : 0.1);
+    final borderColor = theme.colorScheme.outline.withOpacity(
+      isDark ? 0.28 : 0.16,
+    );
+    final highlightShadow =
         isDark
-            ? theme.colorScheme.surfaceVariant.withOpacity(0.6)
-            : theme.colorScheme.surfaceVariant.withOpacity(0.95);
+            ? Colors.white.withOpacity(0.04)
+            : Colors.white.withOpacity(0.45);
+    final tileGradient =
+        isDark
+            ? [const Color(0xFF2E3141), const Color(0xFF191B24)]
+            : [const Color(0xFFF7F7FB), const Color(0xFFE8EAF0)];
     final iconBorderColor = theme.colorScheme.outline.withOpacity(
-      isDark ? 0.45 : 0.2,
+      isDark ? 0.55 : 0.3,
     );
 
     Widget content = Container(
       decoration: BoxDecoration(
-        color: cardBackgroundColor,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: theme.colorScheme.outline.withOpacity(isDark ? 0.35 : 0.16),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: tileGradient,
         ),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: borderColor, width: 0.9),
         boxShadow: [
           BoxShadow(
             color: cardShadowColor,
-            blurRadius: dragging ? 20 : 12,
-            spreadRadius: 0,
-            offset: Offset(0, dragging ? 10 : 5),
+            blurRadius: dragging ? 26 : 18,
+            spreadRadius: -2,
+            offset: Offset(0, dragging ? 18 : 10),
+          ),
+          BoxShadow(
+            color: highlightShadow,
+            blurRadius: 18,
+            spreadRadius: -8,
+            offset: const Offset(-8, -8),
           ),
         ],
       ),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-      child: Column(
-        mainAxisSize: MainAxisSize.max,
-        mainAxisAlignment: MainAxisAlignment.center,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+      child: Stack(
+        alignment: Alignment.center,
         children: [
-          Container(
-            width: 52,
-            height: 52,
-            decoration: BoxDecoration(
-              color: theme.colorScheme.surface.withOpacity(isDark ? 0.85 : 1.0),
-              shape: BoxShape.circle,
-              border: Border.all(color: iconBorderColor, width: 1.2),
-            ),
-            padding: const EdgeInsets.all(6),
-            child: ClipOval(child: iconChild),
-          ),
-          const SizedBox(height: 10),
-          Flexible(
-            child: Text(
-              displayName,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-              style:
-                  theme.textTheme.titleMedium?.copyWith(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                  ) ??
-                  TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: theme.colorScheme.onSurface,
-                  ),
-            ),
-          ),
-          if (host.isNotEmpty) ...[
-            const SizedBox(height: 6),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+          Positioned(
+            top: 12,
+            right: 16,
+            child: Container(
+              width: 32,
+              height: 32,
               decoration: BoxDecoration(
-                color: theme.colorScheme.primary.withOpacity(
-                  isDark ? 0.2 : 0.1,
-                ),
-                borderRadius: BorderRadius.circular(999),
-              ),
-              child: Text(
-                host,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style:
-                    theme.textTheme.labelSmall?.copyWith(
-                      fontWeight: FontWeight.w600,
-                      color: theme.colorScheme.onPrimary.withOpacity(
-                        isDark ? 0.85 : 0.8,
-                      ),
-                      letterSpacing: 0.2,
-                    ) ??
-                    TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      color: theme.colorScheme.onPrimary.withOpacity(
-                        isDark ? 0.85 : 0.8,
-                      ),
-                    ),
+                shape: BoxShape.circle,
+                color:
+                    isDark
+                        ? Colors.white.withOpacity(0.04)
+                        : Colors.white.withOpacity(0.35),
               ),
             ),
-          ],
+          ),
+          Column(
+            mainAxisSize: MainAxisSize.max,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                width: 56,
+                height: 56,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: LinearGradient(
+                    colors:
+                        isDark
+                            ? [
+                              Colors.white.withOpacity(0.18),
+                              Colors.white.withOpacity(0.05),
+                            ]
+                            : [
+                              Colors.white.withOpacity(0.95),
+                              const Color(0xFFE7E9F2),
+                            ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  border: Border.all(color: iconBorderColor, width: 1.1),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(isDark ? 0.45 : 0.12),
+                      blurRadius: 14,
+                      offset: const Offset(0, 6),
+                    ),
+                  ],
+                ),
+                padding: const EdgeInsets.all(6),
+                child: ClipOval(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(color: theme.colorScheme.surface),
+                    child: iconChild,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Flexible(
+                child: Text(
+                  displayName,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style:
+                      theme.textTheme.titleMedium?.copyWith(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.2,
+                        color: theme.colorScheme.onSurface.withOpacity(0.95),
+                      ) ??
+                      TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.2,
+                        color: theme.colorScheme.onSurface.withOpacity(0.95),
+                      ),
+                ),
+              ),
+              if (host.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors:
+                          isDark
+                              ? [
+                                theme.colorScheme.primary.withOpacity(0.32),
+                                theme.colorScheme.primary.withOpacity(0.18),
+                              ]
+                              : [
+                                theme.colorScheme.primary.withOpacity(0.18),
+                                theme.colorScheme.primary.withOpacity(0.12),
+                              ],
+                    ),
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(
+                      color: theme.colorScheme.primary.withOpacity(0.15),
+                    ),
+                  ),
+                  child: Text(
+                    host,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style:
+                        theme.textTheme.labelSmall?.copyWith(
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 0.3,
+                          color: theme.colorScheme.onPrimary.withOpacity(
+                            isDark ? 0.92 : 0.8,
+                          ),
+                        ) ??
+                        TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 0.3,
+                          color: theme.colorScheme.onPrimary.withOpacity(
+                            isDark ? 0.92 : 0.8,
+                          ),
+                        ),
+                  ),
+                ),
+              ],
+            ],
+          ),
         ],
       ),
     );
