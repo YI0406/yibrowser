@@ -903,7 +903,7 @@ class _MediaPageState extends State<MediaPage>
             return;
           }
           if (!mounted) return;
-          Navigator.of(context).push(
+          await Navigator.of(context).push(
             MaterialPageRoute(
               builder:
                   (_) => MediaSegmentExportPage(
@@ -914,6 +914,9 @@ class _MediaPageState extends State<MediaPage>
                   ),
             ),
           );
+          if (!mounted) return;
+          await AppRepo.I.rescanDownloadsFolder();
+          if (mounted) setState(() {});
         } else if (action == 'share') {
           final ok = await PurchaseService().ensurePremium(
             context: context,
@@ -1929,7 +1932,7 @@ class _MyFavorites extends StatelessWidget {
                     ).showSnackBar(const SnackBar(content: Text('檔案尚未完成或已損毀')));
                     return;
                   }
-                  Navigator.of(context).push(
+                  await Navigator.of(context).push(
                     MaterialPageRoute(
                       builder:
                           (_) => MediaSegmentExportPage(
