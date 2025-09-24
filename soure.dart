@@ -688,6 +688,62 @@ class AppRepo extends ChangeNotifier {
     return dir;
   }
 
+  /// Returns a persistent directory for storing generated media thumbnails.
+  ///
+  /// Thumbnails used to live inside the temporary cache directory which iOS
+  /// may purge at any time. When that happened the app would lose previews for
+  /// older downloads after a restart. Keeping them inside Documents ensures
+  /// they survive restarts and are not deleted unexpectedly.
+  Future<Directory> _thumbnailsDir() async {
+    final docs = await getApplicationDocumentsDirectory();
+    final dir = Directory(p.join(docs.path, '.thumbnails'));
+    if (!await dir.exists()) {
+      await dir.create(recursive: true);
+    }
+    return dir;
+  }
+
+  Future<void> _ensureThumbnailPersistence(DownloadTask t) async {
+    final thumbPath = t.thumbnailPath;
+    if (thumbPath == null || thumbPath.isEmpty) {
+      return;
+    }
+
+    final file = File(thumbPath);
+    if (!await file.exists()) {
+      t.thumbnailPath = null;
+      return;
+    }
+
+    final thumbsDir = await _thumbnailsDir();
+    final normalizedDir = p.normalize(thumbsDir.path);
+    final normalizedThumb = p.normalize(file.path);
+    if (normalizedThumb == normalizedDir ||
+        p.isWithin(normalizedDir, normalizedThumb)) {
+      return; // Already persisted in the new location.
+    }
+
+    final baseName = p.basename(file.path);
+    String destPath = p.join(thumbsDir.path, baseName);
+    if (await File(destPath).exists()) {
+      final uniqueSuffix =
+          '${DateTime.now().microsecondsSinceEpoch}_${math.Random().nextInt(1 << 32)}';
+      final extension = p.extension(baseName);
+      destPath = p.join(thumbsDir.path, 'thumb_$uniqueSuffix$extension');
+    }
+
+    try {
+      await file.copy(destPath);
+      t.thumbnailPath = destPath;
+      try {
+        await file.delete();
+      } catch (_) {}
+    } catch (_) {
+      // If copying fails keep the existing thumbnail path so a later rescan
+      // can regenerate it instead of leaving the task without a preview.
+    }
+  }
+
   /// Copies an externally provided media file (from iOS share extension or
   /// other integrations) into the persistent downloads folder, adds it to the
   /// downloads list and optionally kicks off preview generation. Returns the
@@ -1189,6 +1245,7 @@ class AppRepo extends ChangeNotifier {
       for (final t in tasks) {
         t.savePath = _canonicalPath(t.savePath);
         _normalizeTaskType(t);
+        await _ensureThumbnailPersistence(t);
         if (t.folderId != null && !allowedFolderIds.contains(t.folderId)) {
           t.folderId = null;
         }
@@ -2061,7 +2118,7 @@ class AppRepo extends ChangeNotifier {
   Future<void> _generatePreview(DownloadTask t) async {
     if (t.type != 'video') return;
     try {
-      final tmpDir = await getTemporaryDirectory();
+      final thumbsDir = await _thumbnailsDir();
       final baseName = p.basenameWithoutExtension(t.savePath);
       var sanitized = baseName.replaceAll(RegExp(r'[^A-Za-z0-9]+'), '_');
       if (sanitized.length > 24) {
@@ -2073,7 +2130,7 @@ class AppRepo extends ChangeNotifier {
       final uniqueSuffix =
           '${DateTime.now().microsecondsSinceEpoch}_${math.Random().nextInt(1 << 32)}';
       final thumbPath = p.join(
-        tmpDir.path,
+        thumbsDir.path,
         'thumb_${sanitized}_$uniqueSuffix.jpg',
       );
       // Extract a single frame at 1 second into the file. Suppress output.
@@ -2082,7 +2139,16 @@ class AppRepo extends ChangeNotifier {
       final session = await FFmpegKit.execute(cmd);
       final rc = await session.getReturnCode();
       if (rc != null && rc.isValueSuccess() && File(thumbPath).existsSync()) {
+        final previousThumb = t.thumbnailPath;
         t.thumbnailPath = thumbPath;
+        if (previousThumb != null && previousThumb != thumbPath) {
+          try {
+            final oldFile = File(previousThumb);
+            if (await oldFile.exists()) {
+              await oldFile.delete();
+            }
+          } catch (_) {}
+        }
       }
     } catch (e) {
       if (kDebugMode) print('Failed to generate thumbnail: $e');
