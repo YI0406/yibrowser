@@ -2354,18 +2354,23 @@ class AppRepo extends ChangeNotifier {
 
   /// Remove tasks from the list and delete their associated files. Also
   /// deletes thumbnails. Updates persistent state.
-  Future<void> removeTasks(List<DownloadTask> tasks) async {
+  Future<void> removeTasks(
+    List<DownloadTask> tasks, {
+    bool deleteFiles = true,
+  }) async {
     final current = [...downloads.value];
     for (final t in tasks) {
       current.remove(t);
-      try {
-        final f = File(t.savePath);
-        if (await f.exists()) {
-          await f.delete();
-        }
-      } catch (_) {}
+      if (deleteFiles) {
+        try {
+          final f = File(t.savePath);
+          if (await f.exists()) {
+            await f.delete();
+          }
+        } catch (_) {}
+      }
       _resumePositionsMs.remove(_canonicalPath(t.savePath));
-      if (t.thumbnailPath != null) {
+      if (t.thumbnailPath != null && deleteFiles) {
         try {
           final f2 = File(t.thumbnailPath!);
           if (await f2.exists()) {

@@ -1115,6 +1115,9 @@ class _BrowserPageState extends State<BrowserPage> {
   /// Whether this entry represents a real download task (either ongoing or completed).
   /// Excludes local/imported/library items from the downloads UI entirely.
   bool _isDownloadTaskEntry(DownloadTask t) {
+    if (t.hidden) {
+      return false;
+    }
     final rawUrl = (t.url).toString().trim();
     if (rawUrl.isEmpty) {
       return false;
@@ -6291,7 +6294,15 @@ class _BrowserPageState extends State<BrowserPage> {
               icon: const Icon(Icons.delete_outline),
               tooltip: '刪除',
               onPressed: () async {
-                await AppRepo.I.removeTasks([t]);
+                await AppRepo.I.removeTasks([t], deleteFiles: false);
+                await AppRepo.I.rescanDownloadsFolder();
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    duration: Duration(seconds: 1),
+                    content: Text('已刪除任務，檔案仍在媒體庫'),
+                  ),
+                );
               },
             ),
           ],
