@@ -49,7 +49,7 @@ bool _fileHasContent(String path) {
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
-/// MediaPage displays two tabs: 媒體 (ongoing downloads + completed files) and 我的收藏.
+/// MediaPage displays two tabs: 媒體 (ongoing downloads + completed files) and 收藏.
 ///
 /// Previously this page required Face ID (or other biometrics) to unlock
 /// sensitive content, but the lock has been removed. The tabs are now
@@ -79,6 +79,14 @@ class _MediaPageState extends State<MediaPage>
   @override
   void initState() {
     super.initState();
+    _tab.addListener(() {
+      if (_tab.index == 1 && _isEditing) {
+        setState(() {
+          _isEditing = false;
+          _selected.clear();
+        });
+      }
+    });
     // Previously performed biometric authentication here. The app no longer
     // locks the media section behind Face ID/Touch ID.
     Future.microtask(() async {
@@ -95,6 +103,9 @@ class _MediaPageState extends State<MediaPage>
     _convertTicker = null;
     _searchDebounce?.cancel();
     _searchDebounce = null;
+    try {
+      _tab.dispose();
+    } catch (_) {}
     try {
       _searchCtl.dispose();
     } catch (_) {}
@@ -175,76 +186,106 @@ class _MediaPageState extends State<MediaPage>
           child: Column(
             children: [
               Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 8,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: TabBar(
+                    controller: _tab,
+                    isScrollable: true,
+                    tabs: const [Tab(text: '媒體'), Tab(text: '收藏')],
+                  ),
                 ),
-                child: _buildTopControls(context, tasks),
               ),
+              const Divider(height: 1),
               Expanded(
-                child: ValueListenableBuilder<List<MediaFolder>>(
-                  valueListenable: repo.mediaFolders,
-                  builder: (context, folders, __) {
-                    final sections = _buildSections(tasks, folders);
-                    _syncFolderExpansion(sections.map((s) => s.id));
-                    return ListView.builder(
-                      padding: const EdgeInsets.only(bottom: 16),
-                      itemCount: sections.length,
-                      itemBuilder: (context, index) {
-                        final section = sections[index];
-                        final key = _folderKey(section.id);
-                        final expanded = _folderExpanded[key] ?? true;
-                        MediaFolder? folder;
-                        if (section.id != null) {
-                          for (final item in folders) {
-                            if (item.id == section.id) {
-                              folder = item;
-                              break;
-                            }
-                          }
-                        }
-                        return Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            _buildFolderHeader(
-                              context: context,
-                              section: section,
-                              folder: folder,
-                              expanded: expanded,
-                            ),
-                            if (expanded)
-                              section.tasks.isEmpty
-                                  ? Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 16,
-                                      vertical: 12,
-                                    ),
-                                    child: Text(
-                                      _search.isEmpty
-                                          ? '此資料夾尚無媒體'
-                                          : '沒有符合搜尋的媒體',
-                                      style:
-                                          Theme.of(context).textTheme.bodySmall,
-                                    ),
-                                  )
-                                  : Column(
-                                    children:
-                                        section.tasks
-                                            .map(
-                                              (task) => _buildTaskTile(
-                                                context: context,
-                                                task: task,
-                                                sectionTasks: section.tasks,
+                child: TabBarView(
+                  controller: _tab,
+                  children: [
+                    Column(
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
+                          child: _buildTopControls(context, tasks),
+                        ),
+                        Expanded(
+                          child: ValueListenableBuilder<List<MediaFolder>>(
+                            valueListenable: repo.mediaFolders,
+                            builder: (context, folders, __) {
+                              final sections = _buildSections(tasks, folders);
+                              _syncFolderExpansion(sections.map((s) => s.id));
+                              return ListView.builder(
+                                padding: const EdgeInsets.only(bottom: 16),
+                                itemCount: sections.length,
+                                itemBuilder: (context, index) {
+                                  final section = sections[index];
+                                  final key = _folderKey(section.id);
+                                  final expanded = _folderExpanded[key] ?? true;
+                                  MediaFolder? folder;
+                                  if (section.id != null) {
+                                    for (final item in folders) {
+                                      if (item.id == section.id) {
+                                        folder = item;
+                                        break;
+                                      }
+                                    }
+                                  }
+                                  return Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      _buildFolderHeader(
+                                        context: context,
+                                        section: section,
+                                        folder: folder,
+                                        expanded: expanded,
+                                      ),
+                                      if (expanded)
+                                        section.tasks.isEmpty
+                                            ? Padding(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                    horizontal: 16,
+                                                    vertical: 12,
+                                                  ),
+                                              child: Text(
+                                                _search.isEmpty
+                                                    ? '此資料夾尚無媒體'
+                                                    : '沒有符合搜尋的媒體',
+                                                style:
+                                                    Theme.of(
+                                                      context,
+                                                    ).textTheme.bodySmall,
                                               ),
                                             )
-                                            .toList(),
-                                  ),
-                            const Divider(height: 1),
-                          ],
-                        );
-                      },
-                    );
-                  },
+                                            : Column(
+                                              children:
+                                                  section.tasks
+                                                      .map(
+                                                        (task) =>
+                                                            _buildTaskTile(
+                                                              context: context,
+                                                              task: task,
+                                                              sectionTasks:
+                                                                  section.tasks,
+                                                            ),
+                                                      )
+                                                      .toList(),
+                                            ),
+                                      const Divider(height: 1),
+                                    ],
+                                  );
+                                },
+                              );
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                    const _MyFavorites(),
+                  ],
                 ),
               ),
             ],
