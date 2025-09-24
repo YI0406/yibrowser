@@ -3934,7 +3934,7 @@ class _BrowserPageState extends State<BrowserPage> {
                             _showSnackBar('已阻擋彈出視窗');
                             return true;
                           }
-                          return false;
+                          return true;
                         },
                         onLoadResource: (c, r) async {
                           if (!repo.snifferEnabled.value) {

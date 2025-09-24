@@ -4104,7 +4104,20 @@ class Locker {
     } catch (_) {
       // If the platform cannot report support, still attempt authentication.
     }
-
+    try {
+      final canCheck = await _auth.canCheckBiometrics;
+      if (!canCheck) {
+        // When biometric permissions are missing (e.g. Face ID disabled for the
+        // app) iOS reports that biometrics cannot be checked. Treat this the
+        // same as a missing permission so the UI can prompt the user to grant
+        // access in Settings.
+        return LockerResult.permissionRequired;
+      }
+    } catch (_) {
+      // If the platform throws here, assume we need to guide the user to grant
+      // permission before retrying.
+      return LockerResult.permissionRequired;
+    }
     try {
       final didAuthenticate = await _auth.authenticate(
         localizedReason: reason,

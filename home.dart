@@ -460,66 +460,169 @@ class _HomePageState extends State<HomePage>
         host.isNotEmpty
             ? 'https://www.google.com/s2/favicons?domain=$host&sz=128'
             : null;
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final displayName = item.name.isNotEmpty ? item.name : host;
+    final fallbackSource = displayName.isNotEmpty ? displayName : host;
+    String fallbackText = '?';
+    if (fallbackSource.isNotEmpty) {
+      final firstCodeUnit = fallbackSource.runes.first;
+      fallbackText = String.fromCharCode(firstCodeUnit).toUpperCase();
+    }
+
+    Widget buildFallbackIcon() {
+      return Container(
+        color:
+            isDark
+                ? theme.colorScheme.surfaceVariant.withOpacity(0.6)
+                : Colors.white,
+        alignment: Alignment.center,
+        child: Text(
+          fallbackText,
+          style: TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.w700,
+            color:
+                isDark
+                    ? theme.colorScheme.onSurface
+                    : theme.colorScheme.primary,
+          ),
+        ),
+      );
+    }
+
+    Widget buildNetworkIcon(String url, Widget fallback) {
+      return Image.network(
+        url,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => fallback,
+      );
+    }
+
+    Widget iconChild;
+    if (host.isNotEmpty && faviconDirect != null) {
+      iconChild = buildNetworkIcon(
+        faviconDirect!,
+        faviconS2 != null
+            ? buildNetworkIcon(faviconS2!, buildFallbackIcon())
+            : buildFallbackIcon(),
+      );
+    } else {
+      iconChild = buildFallbackIcon();
+    }
+
+    final cardShadowColor =
+        isDark
+            ? Colors.black.withOpacity(dragging ? 0.55 : 0.35)
+            : theme.colorScheme.primary.withOpacity(dragging ? 0.22 : 0.12);
+    final iconBorderColor =
+        isDark ? Colors.white.withOpacity(0.25) : Colors.white.withOpacity(0.7);
 
     Widget content = Container(
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceVariant,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow:
-            dragging
-                ? [
-                  BoxShadow(
-                    color: Colors.black26,
-                    blurRadius: 8,
-                    offset: const Offset(0, 4),
-                  ),
-                ]
-                : [],
+        gradient: LinearGradient(
+          colors: [
+            theme.colorScheme.surfaceVariant.withOpacity(isDark ? 0.7 : 0.95),
+            theme.colorScheme.surface.withOpacity(isDark ? 0.6 : 1.0),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: theme.colorScheme.outline.withOpacity(isDark ? 0.3 : 0.12),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: cardShadowColor,
+            blurRadius: dragging ? 24 : 16,
+            offset: Offset(0, dragging ? 12 : 6),
+          ),
+        ],
       ),
-      padding: const EdgeInsets.all(8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
       child: Column(
         mainAxisSize: MainAxisSize.max,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Container(
-            width: 48,
-            height: 48,
+            width: 56,
+            height: 56,
             decoration: BoxDecoration(
-              color: Colors.white,
+              gradient: LinearGradient(
+                colors: [
+                  theme.colorScheme.primary.withOpacity(isDark ? 0.6 : 0.3),
+                  theme.colorScheme.secondary.withOpacity(isDark ? 0.45 : 0.18),
+                ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
               shape: BoxShape.circle,
+              border: Border.all(color: iconBorderColor, width: 1.5),
+              boxShadow: [
+                BoxShadow(
+                  color: theme.colorScheme.primary.withOpacity(
+                    isDark ? 0.4 : 0.15,
+                  ),
+                  blurRadius: 14,
+                  offset: const Offset(0, 6),
+                ),
+              ],
             ),
-            clipBehavior: Clip.hardEdge,
-            child:
-                host.isNotEmpty
-                    ? Image.network(
-                      faviconDirect!,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) {
-                        return faviconS2 != null
-                            ? Image.network(
-                              faviconS2,
-                              fit: BoxFit.cover,
-                              errorBuilder:
-                                  (_, __, ___) => const Icon(
-                                    Icons.public,
-                                    color: Colors.black54,
-                                  ),
-                            )
-                            : const Icon(Icons.public, color: Colors.black54);
-                      },
-                    )
-                    : const Icon(Icons.public, color: Colors.black54),
+            padding: const EdgeInsets.all(6),
+            child: ClipOval(child: iconChild),
           ),
           const SizedBox(height: 14),
           Flexible(
             child: Text(
-              item.name.isNotEmpty ? item.name : host,
+              displayName,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 16),
+              style:
+                  theme.textTheme.titleMedium?.copyWith(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                  ) ??
+                  TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    color: theme.colorScheme.onSurface,
+                  ),
             ),
           ),
-          const SizedBox(height: 4),
+          if (host.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.primary.withOpacity(
+                  isDark ? 0.24 : 0.12,
+                ),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text(
+                host,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style:
+                    theme.textTheme.labelSmall?.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: theme.colorScheme.onPrimary.withOpacity(
+                        isDark ? 0.9 : 0.85,
+                      ),
+                      letterSpacing: 0.2,
+                    ) ??
+                    TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: theme.colorScheme.onPrimary.withOpacity(
+                        isDark ? 0.9 : 0.85,
+                      ),
+                    ),
+              ),
+            ),
+          ],
         ],
       ),
     );
