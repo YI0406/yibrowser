@@ -158,7 +158,7 @@ class _SettingPageState extends State<SettingPage> {
       if (!perm.isAuth && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            duration: const Duration(seconds: 1),
+            duration: const Duration(seconds: 2),
             content: const Text('尚未取得相簿存取權限，啟用「自動儲存到相簿」前請先到系統設定開啟。'),
             action: SnackBarAction(
               label: '前往設定',
@@ -361,7 +361,7 @@ class _SettingPageState extends State<SettingPage> {
                               if (!mounted) return;
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
-                                  duration: const Duration(seconds: 1),
+                                  duration: const Duration(seconds: 2),
                                   content: const Text('自動儲存需要相簿權限，請前往設定開啟。'),
                                   action: SnackBarAction(
                                     label: '前往設定',

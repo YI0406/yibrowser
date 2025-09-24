@@ -8,6 +8,7 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'dart:io';
 import 'package:path/path.dart' as path;
 import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'video_player_page.dart';
 import 'image_preview_page.dart';
 import 'coventmp3.dart';
@@ -142,19 +143,57 @@ class _MediaPageState extends State<MediaPage>
         }
       }
 
-      final ok = await Locker.unlock(reason: '解鎖以查看隱藏媒體');
+      final result = await Locker.unlock(reason: '解鎖以查看隱藏媒體');
       if (!mounted) return;
-      if (ok) {
+      if (result.success) {
         setState(() {
           _hiddenUnlocked = true;
         });
         _lastTabIndex = _tab.index;
-      } else if (revertOnFail) {
-        _tab.animateTo(previousIndex);
-        _lastTabIndex = previousIndex;
+      } else {
+        if (result.requiresPermission) {
+          await _showBiometricPermissionDialog();
+        }
+        if (revertOnFail) {
+          _tab.animateTo(previousIndex);
+          _lastTabIndex = previousIndex;
+        }
       }
     } finally {
       _authenticatingHidden = false;
+    }
+  }
+
+  Future<void> _showBiometricPermissionDialog() async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('需要 Face ID / Touch ID 權限'),
+          content: const Text('請在系統設定中允許 Face ID 或 Touch ID 權限，以解鎖隱藏媒體。'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('稍後'),
+            ),
+            FilledButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                unawaited(_openDeviceSettings());
+              },
+              child: const Text('前往設定'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _openDeviceSettings() async {
+    final uri = Uri.parse('app-settings:');
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri);
     }
   }
 

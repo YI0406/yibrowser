@@ -5075,18 +5075,31 @@ class _BrowserPageState extends State<BrowserPage> {
     if (acknowledged) return;
   }
 
-  Widget _buildHelpDialogContent(TextTheme textTheme) {
+  Widget _buildHelpDialogContent(TextTheme textTheme, Color bulletColor) {
     Widget bullet(String text) => Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Text(text, style: textTheme.bodyMedium),
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 8,
+            height: 8,
+            margin: const EdgeInsets.only(top: 6),
+            decoration: BoxDecoration(
+              color: bulletColor,
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(child: Text(text, style: textTheme.bodyMedium)),
+        ],
+      ),
     );
 
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('（日後可再點按查看）', style: textTheme.bodySmall),
-        const SizedBox(height: 12),
         bullet('1. 大部分影片長按即可跳出提示視窗，再依照需求操作。'),
         bullet('2. 有些網站不能使用 Adblock 否則無法播放影片，或改用其他過濾規則。'),
         bullet('3. 推特等已安裝的應用程式網站可長按以新分頁開啟正常瀏覽，並視需求開啟阻擋轉跳外部 App 功能。'),
@@ -5104,20 +5117,96 @@ class _BrowserPageState extends State<BrowserPage> {
     final theme = Theme.of(context);
     final acknowledged = await showDialog<bool>(
       context: context,
-      barrierDismissible: !requireAcknowledgement,
+      barrierDismissible: false,
       builder: (context) {
         final textTheme = theme.textTheme;
-        return AlertDialog(
-          title: const Text('說明'),
-          content: SingleChildScrollView(
-            child: _buildHelpDialogContent(textTheme),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('我知道了'),
+        final colorScheme = theme.colorScheme;
+        final accent = colorScheme.primary;
+        final surface =
+            theme.brightness == Brightness.dark
+                ? colorScheme.surfaceVariant.withOpacity(0.95)
+                : colorScheme.surfaceVariant;
+        return PopScope(
+          canPop: !requireAcknowledgement,
+          child: Dialog(
+            backgroundColor: Colors.transparent,
+            insetPadding: const EdgeInsets.symmetric(
+              horizontal: 24,
+              vertical: 24,
             ),
-          ],
+            child: Container(
+              decoration: BoxDecoration(
+                color: surface,
+                borderRadius: BorderRadius.circular(20),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.18),
+                    blurRadius: 20,
+                    offset: const Offset(0, 12),
+                  ),
+                ],
+              ),
+              padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(Icons.info_outline, color: accent, size: 28),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '說明',
+                              style: textTheme.titleLarge?.copyWith(
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              '（日後可再點按查看）',
+                              style: textTheme.bodySmall?.copyWith(
+                                color:
+                                    textTheme.bodySmall?.color?.withOpacity(
+                                      0.75,
+                                    ) ??
+                                    Colors.black54,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
+                    decoration: BoxDecoration(
+                      color: colorScheme.surface.withOpacity(0.6),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: _buildHelpDialogContent(textTheme, accent),
+                  ),
+                  const SizedBox(height: 20),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: FilledButton(
+                      onPressed: () => Navigator.of(context).pop(true),
+                      child: const Text('我知道了'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         );
       },
     );

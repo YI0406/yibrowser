@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter/services.dart';
 import 'package:dio/dio.dart';
+import 'package:local_auth/error_codes.dart' as auth_error;
 import 'package:path_provider/path_provider.dart';
 import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 import 'package:collection/collection.dart';
@@ -1004,7 +1005,21 @@ class AppRepo extends ChangeNotifier {
           // Prefer tasks that originally lived in the same downloads dir.
           return p.dirname(_canonicalPath(t.savePath)) == p.dirname(norm);
         });
-
+        if (rebound == null) {
+          final fileBase = p.basename(norm);
+          rebound = missing.firstWhereOrNull((t) {
+            if (t.state != 'done') return false;
+            final canonicalSave = _canonicalPath(t.savePath);
+            final saveBase = p.basename(canonicalSave);
+            if (saveBase == fileBase) {
+              return true;
+            }
+            final name = t.name?.trim();
+            if (name == null || name.isEmpty) return false;
+            final nameBase = p.basename(name);
+            return nameBase == fileBase;
+          });
+        }
         if (rebound != null) {
           final oldPath = rebound.savePath;
           final oldBase = p.basename(oldPath);
@@ -4062,22 +4077,58 @@ class SystemPip {
   }
 }
 
+/// Result of attempting to unlock hidden media via biometric authentication.
+class LockerResult {
+  final bool success;
+  final bool requiresPermission;
+
+  const LockerResult({required this.success, this.requiresPermission = false});
+
+  static const LockerResult successResult = LockerResult(success: true);
+  static const LockerResult permissionRequired = LockerResult(
+    success: false,
+    requiresPermission: true,
+  );
+}
+
 /// Helper class that encapsulates local authentication (e.g. Face ID, Touch ID).
 class Locker {
   static final _auth = LocalAuthentication();
-  static Future<bool> unlock({String reason = '解鎖以查看私人影片'}) async {
+
+  static Future<LockerResult> unlock({String reason = '解鎖以查看私人影片'}) async {
     try {
-      final can = await _auth.canCheckBiometrics;
-      if (!can) return true; // 沒有生物辨識時不擋（可改為必須輸入 PIN）
-      return _auth.authenticate(
+      final supported = await _auth.isDeviceSupported();
+      if (!supported) {
+        return LockerResult.successResult;
+      }
+    } catch (_) {
+      // If the platform cannot report support, still attempt authentication.
+    }
+
+    try {
+      final didAuthenticate = await _auth.authenticate(
         localizedReason: reason,
         options: const AuthenticationOptions(
           biometricOnly: false,
           stickyAuth: true,
         ),
       );
+      return LockerResult(success: didAuthenticate);
+    } on PlatformException catch (e) {
+      final code = (e.code).toLowerCase();
+      final permissionCodes = {
+        auth_error.notAvailable.toLowerCase(),
+        auth_error.notEnrolled.toLowerCase(),
+        auth_error.passcodeNotSet.toLowerCase(),
+        auth_error.lockedOut.toLowerCase(),
+        auth_error.permanentlyLockedOut.toLowerCase(),
+      };
+      if (permissionCodes.contains(code)) {
+        return LockerResult.permissionRequired;
+      }
+      return const LockerResult(success: false);
     } catch (_) {
-      return false;
+      return const LockerResult(success: false);
     }
   }
 }
