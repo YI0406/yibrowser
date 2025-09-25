@@ -1,5 +1,5 @@
 import 'dart:io';
-
+import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
@@ -128,24 +128,12 @@ class NotificationService {
                 IOSFlutterLocalNotificationsPlugin
               >();
       if (iosPlugin != null) {
-        final settings = await iosPlugin.getNotificationSettings();
-        final status = settings.authorizationStatus;
-        if (status == DarwinNotificationPermissionStatus.authorized ||
-            status == DarwinNotificationPermissionStatus.provisional) {
-          return true;
-        }
         final granted = await iosPlugin.requestPermissions(
           alert: true,
           badge: true,
           sound: true,
         );
-        if (!granted) {
-          return false;
-        }
-        final updated = await iosPlugin.getNotificationSettings();
-        final updatedStatus = updated.authorizationStatus;
-        return updatedStatus == DarwinNotificationPermissionStatus.authorized ||
-            updatedStatus == DarwinNotificationPermissionStatus.provisional;
+        return granted ?? false;
       }
       return false;
     }
@@ -157,24 +145,12 @@ class NotificationService {
                 MacOSFlutterLocalNotificationsPlugin
               >();
       if (macPlugin != null) {
-        final settings = await macPlugin.getNotificationSettings();
-        final status = settings.authorizationStatus;
-        if (status == DarwinNotificationPermissionStatus.authorized ||
-            status == DarwinNotificationPermissionStatus.provisional) {
-          return true;
-        }
         final granted = await macPlugin.requestPermissions(
           alert: true,
           badge: true,
           sound: true,
         );
-        if (!granted) {
-          return false;
-        }
-        final updated = await macPlugin.getNotificationSettings();
-        final updatedStatus = updated.authorizationStatus;
-        return updatedStatus == DarwinNotificationPermissionStatus.authorized ||
-            updatedStatus == DarwinNotificationPermissionStatus.provisional;
+        return granted ?? false;
       }
       return false;
     }
@@ -190,31 +166,13 @@ class NotificationService {
     if (!_initialized) {
       await init();
     }
-    if (Platform.isAndroid) {
-      final androidPlugin =
-          _plugin
-              .resolvePlatformSpecificImplementation<
-                AndroidFlutterLocalNotificationsPlugin
-              >();
-      await androidPlugin?.openNotificationSettings();
+
+    if (Platform.isIOS || Platform.isMacOS) {
+      final uri = Uri.parse('app-settings:');
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri);
+      }
       return;
-    }
-    if (Platform.isIOS) {
-      final iosPlugin =
-          _plugin
-              .resolvePlatformSpecificImplementation<
-                IOSFlutterLocalNotificationsPlugin
-              >();
-      await iosPlugin?.openNotificationSettings();
-      return;
-    }
-    if (Platform.isMacOS) {
-      final macPlugin =
-          _plugin
-              .resolvePlatformSpecificImplementation<
-                MacOSFlutterLocalNotificationsPlugin
-              >();
-      await macPlugin?.openNotificationSettings();
     }
   }
 }
