@@ -525,7 +525,6 @@ class DownloadTask {
 
   /// Construct a task from persisted JSON. Unknown fields are ignored.
   factory DownloadTask.fromJson(Map<String, dynamic> json) {
-    final rawProgressUnit = json['progressUnit'] as String?;
     return DownloadTask(
       url: json['url'] as String,
       savePath: json['savePath'] as String,
@@ -548,7 +547,7 @@ class DownloadTask {
               ? Duration(milliseconds: json['duration'] as int)
               : null,
       paused: json['paused'] as bool? ?? false,
-      progressUnit: rawProgressUnit == 'time-ms' ? null : rawProgressUnit,
+      progressUnit: json['progressUnit'] as String?,
     );
   }
 
@@ -679,12 +678,6 @@ class AppRepo extends ChangeNotifier {
   /// responsive without flooding with notifications. The key is the task and
   /// the value is the last reported file size in bytes.
   final Map<DownloadTask, int> _lastHlsSize = {};
-
-  /// Some HLS playlists embed absolute timestamps via `#EXT-X-PROGRAM-DATE-TIME`.
-  /// FFmpeg then reports statistics times using those large presentation
-  /// timestamps (milliseconds since epoch) which instantly jump far beyond the
-  /// media duration. To convert those into relative progress we remember the
-  /// first observed timestamp per task and subtract it from subsequent updates.
 
   /// Initialise the repository. Must be called before using [AppRepo.I].
   /// It loads previously persisted state from disk and prepares directories.
@@ -1699,10 +1692,34 @@ class AppRepo extends ChangeNotifier {
         ),
       );
       final txt = r.data ?? '';
-      if (!_playlistTextLooksLikeMedia(txt)) {
+      // 拒絕縮圖或 I-frame 清單（trick-play）
+      if (txt.contains('#EXT-X-IMAGE-STREAM-INF') ||
+          txt.contains('#EXT-X-I-FRAMES-ONLY')) {
         return false;
       }
+      if (!txt.contains('#EXTM3U')) return false;
+      // Must have at least one media segment marker
+      if (!txt.contains('#EXTINF')) return false;
 
+      // First non-comment line should not be an image (thumbnail trick playlists)
+      String firstUri = '';
+      for (final line in txt.split('\n')) {
+        final l = line.trim();
+        if (l.isEmpty || l.startsWith('#')) continue;
+        firstUri = l;
+        break;
+      }
+      final low = firstUri.toLowerCase();
+      if (low.endsWith('.jpg') ||
+          low.endsWith('.jpeg') ||
+          low.endsWith('.png') ||
+          low.endsWith('.webp')) {
+        return false;
+      }
+      // If we see explicit TS/M4S segments, treat as playable
+      if (low.endsWith('.ts') || low.endsWith('.m4s') || low.endsWith('.mp4')) {
+        return true;
+      }
       return true;
     } catch (_) {
       return false;
@@ -1869,46 +1886,6 @@ class AppRepo extends ChangeNotifier {
       }
     } catch (_) {}
     return h;
-  }
-
-  Map<String, String> _mergeHeaderMaps(
-    Map<String, String> primary,
-    Map<String, String> fallback,
-  ) {
-    final merged = <String, String>{};
-    merged.addAll(fallback);
-    primary.forEach((key, value) {
-      final trimmed = value.trim();
-      if (trimmed.isEmpty) return;
-      merged[key] = trimmed;
-    });
-    return merged;
-  }
-
-  bool _playlistTextLooksLikeMedia(String txt) {
-    if (txt.isEmpty) return false;
-    if (txt.contains('#EXT-X-IMAGE-STREAM-INF') ||
-        txt.contains('#EXT-X-I-FRAMES-ONLY')) {
-      return false;
-    }
-    if (!txt.contains('#EXTM3U')) return false;
-    if (!txt.contains('#EXTINF')) return false;
-    String? firstUri;
-    for (final line in txt.split('\n')) {
-      final l = line.trim();
-      if (l.isEmpty || l.startsWith('#')) continue;
-      firstUri = l;
-      break;
-    }
-    if (firstUri == null) return false;
-    final low = firstUri.toLowerCase();
-    if (low.endsWith('.jpg') ||
-        low.endsWith('.jpeg') ||
-        low.endsWith('.png') ||
-        low.endsWith('.webp')) {
-      return false;
-    }
-    return true;
   }
 
   String? _originOf(String url) {
@@ -3063,7 +3040,6 @@ class AppRepo extends ChangeNotifier {
         }
         t.paused = true;
         t.state = 'paused';
-        _lastHlsSize.remove(t);
       }
     } catch (_) {
       // ignore
@@ -3117,7 +3093,6 @@ class AppRepo extends ChangeNotifier {
       final uaArg = ua.isNotEmpty ? "-user_agent '${ua}'" : '';
       final cmd =
           "-y -protocol_whitelist file,http,https,tcp,tls,crypto $uaArg $headerArg -i '${t.url}' -c copy -bsf:a aac_adtstoasc '${t.savePath}'";
-
       final session = await FFmpegKit.executeAsync(
         cmd,
         (session) async {
@@ -3125,17 +3100,6 @@ class AppRepo extends ChangeNotifier {
           if (rc != null && rc.isValueSuccess()) {
             t.state = 'done';
             _normalizeTaskType(t);
-            try {
-              final f = File(t.savePath);
-              if (await f.exists()) {
-                final len = await f.length();
-                t.received = len;
-                t.total = len;
-              }
-            } catch (_) {}
-            t.progressUnit = 'bytes';
-            _lastHlsSize.remove(t);
-
             // propagate update to downloads list
             _notifyDownloadsUpdated();
             notifyListeners();
@@ -3152,7 +3116,6 @@ class AppRepo extends ChangeNotifier {
               t.state = 'error';
               _notifyDownloadsUpdated();
               notifyListeners();
-              _lastHlsSize.remove(t);
             }
           }
           await _saveState();
@@ -3367,99 +3330,43 @@ class AppRepo extends ChangeNotifier {
   }
 
   Future<void> _runTaskHls(DownloadTask t) async {
-    Map<String, String> baseHeaders = const {};
-    Map<String, String> effectiveHeaders = {};
     try {
       // Detect suspicious .jpeg segments and pre-sanitize if needed
       String inputUrl = t.url;
       try {
-        baseHeaders = await _headersFor(t.url);
+        final hdrsProbe = await _headersFor(t.url);
         final dioProbe = Dio();
-        effectiveHeaders = Map.of(baseHeaders);
-
-        Future<String> fetchPlaylist(
-          String url,
-          Map<String, String> headers,
-        ) async {
-          try {
-            final resp = await dioProbe.get<String>(
-              url,
-              options: Options(
-                responseType: ResponseType.plain,
-                headers: headers,
-                followRedirects: true,
-              ),
-            );
-            return resp.data ?? '';
-          } catch (_) {
-            return '';
-          }
-        }
-
-        String probeTxt = await fetchPlaylist(inputUrl, effectiveHeaders);
-
-        if (probeTxt.isNotEmpty) {
-          try {
-            final parser = HlsPlaylistParser.create();
-            final baseUri = Uri.parse(inputUrl);
-            final parsed = await parser.parseString(baseUri, probeTxt);
-            if (parsed is HlsMasterPlaylist) {
-              final variants = List.of(parsed.variants);
-              variants.sort(
-                (a, b) =>
-                    (b.format?.bitrate ?? 0).compareTo(a.format?.bitrate ?? 0),
-              );
-
-              String? chosenUrl;
-              String? chosenText;
-              Map<String, String>? chosenHeaders;
-
-              String? fallbackUrl;
-              String? fallbackText;
-              Map<String, String>? fallbackHeaders;
-
-              for (final variant in variants) {
-                final candUrl = variant.url.toString();
-                final candHeaders = await _headersFor(candUrl);
-                final mergedHeaders = _mergeHeaderMaps(
-                  candHeaders,
-                  baseHeaders,
-                );
-                final candText = await fetchPlaylist(candUrl, mergedHeaders);
-                if (candText.isEmpty) {
-                  continue;
-                }
-                fallbackUrl ??= candUrl;
-                fallbackText ??= candText;
-                fallbackHeaders ??= mergedHeaders;
-                if (_playlistTextLooksLikeMedia(candText)) {
-                  chosenUrl = candUrl;
-                  chosenText = candText;
-                  chosenHeaders = mergedHeaders;
-                  break;
-                }
-              }
-
-              if (chosenUrl != null && chosenText != null) {
-                inputUrl = chosenUrl;
-                probeTxt = chosenText;
-                effectiveHeaders = chosenHeaders ?? effectiveHeaders;
-              } else if (fallbackUrl != null && fallbackText != null) {
-                inputUrl = fallbackUrl;
-                probeTxt = fallbackText;
-                effectiveHeaders = fallbackHeaders ?? effectiveHeaders;
+        final probe = await dioProbe.get<String>(
+          t.url,
+          options: Options(
+            responseType: ResponseType.plain,
+            headers: hdrsProbe,
+            followRedirects: true,
+          ),
+        );
+        final probeTxt = probe.data ?? '';
+        // Pre-calc total duration for progress: sum EXTINF durations if present
+        try {
+          int totalMs = 0;
+          for (final rawLine in probeTxt.split('\n')) {
+            final l = rawLine.trim();
+            if (l.startsWith('#EXTINF')) {
+              final part = l.split(':').skip(1).join(':');
+              final v = part.split(',').first.trim();
+              final sec = double.tryParse(v);
+              if (sec != null && sec > 0) {
+                totalMs += (sec * 1000).round();
               }
             }
-          } catch (_) {}
-        }
-        // Reset counters so progress reflects the accumulated output size.
-        t.received = 0;
-        t.total = null;
-        t.progressUnit = 'bytes';
-        _lastHlsSize.remove(t);
-        _notifyDownloadsUpdated();
-        notifyListeners();
-
+          }
+          if (totalMs > 0) {
+            t.total = totalMs;
+            t.received = 0;
+            t.progressUnit = 'time-ms';
+            _notifyDownloadsUpdated();
+            notifyListeners();
+          }
+        } catch (_) {}
         // Determine if this playlist contains jpeg/png/webp image segments and no TS segments.
         bool jpegish = false;
         bool hasTs = false;
@@ -3485,7 +3392,7 @@ class AppRepo extends ChangeNotifier {
         // If the playlist contains image segments but also TS segments, sanitize to remove images
         if (jpegish) {
           // Provide task so sanitizer can report progress to the UI
-          final local = await _sanitizeHlsToLocal(inputUrl, progressTask: t);
+          final local = await _sanitizeHlsToLocal(t.url, progressTask: t);
           if (local == null) {}
           if (local != null) {
             inputUrl = local; // use local cleaned playlist
@@ -3493,19 +3400,12 @@ class AppRepo extends ChangeNotifier {
         }
       } catch (_) {}
       // Add UA/Referer/Cookie headers for ffmpeg HLS downloads.
-      final headerSource =
-          inputUrl.trim().toLowerCase().startsWith('http') ? inputUrl : t.url;
-      final mergedHeaders = _mergeHeaderMaps(
-        await _headersFor(headerSource),
-        effectiveHeaders,
-      );
-      final ua = (mergedHeaders['User-Agent'] ?? '').replaceAll("'", "\'");
-      final ref = (mergedHeaders['Referer'] ?? '').replaceAll("'", "\'");
-      final origin = (mergedHeaders['Origin'] ?? '').replaceAll("'", "\'");
-      final ck = (mergedHeaders['Cookie'] ?? '').replaceAll("'", "\'");
+      final h = await _headersFor(t.url);
+      final ua = (h['User-Agent'] ?? '').replaceAll("'", "\'");
+      final ref = (h['Referer'] ?? '').replaceAll("'", "\'");
+      final ck = (h['Cookie'] ?? '').replaceAll("'", "\'");
       final headerLines = [
         if (ref.isNotEmpty) 'Referer: $ref',
-        if (origin.isNotEmpty) 'Origin: $origin',
         if (ck.isNotEmpty) 'Cookie: $ck',
       ].join('\\r\\n');
       final headerArg =
@@ -3517,8 +3417,6 @@ class AppRepo extends ChangeNotifier {
           "-allowed_extensions ALL "
           "-rw_timeout 15000000 -timeout 15000000 -analyzeduration 0 -probesize 500000 "
           "$uaArg $headerArg -i '${inputUrl}' -map 0:v:0? -map 0:a:0? -c copy -movflags +faststart -bsf:a aac_adtstoasc '${t.savePath}'";
-      _lastHlsSize.remove(t);
-
       final session = await FFmpegKit.executeAsync(
         cmd,
         (session) async {
@@ -3527,17 +3425,6 @@ class AppRepo extends ChangeNotifier {
           if (rc != null && rc.isValueSuccess()) {
             t.state = 'done';
             _normalizeTaskType(t);
-            try {
-              final f = File(t.savePath);
-              if (await f.exists()) {
-                final len = await f.length();
-                t.received = len;
-                t.total = len;
-              }
-            } catch (_) {}
-            t.progressUnit = 'bytes';
-            _lastHlsSize.remove(t);
-
             // propagate update to downloads list
             _notifyDownloadsUpdated();
             notifyListeners();
@@ -3561,8 +3448,6 @@ class AppRepo extends ChangeNotifier {
               t.state = 'error';
               _notifyDownloadsUpdated();
               notifyListeners();
-              _lastHlsSize.remove(t);
-
               try {
                 await FirebaseAnalytics.instance.logEvent(
                   name: 'download_error',
@@ -3604,19 +3489,8 @@ class AppRepo extends ChangeNotifier {
                     if (rc2 != null && rc2.isValueSuccess()) {
                       t.state = 'done';
                       _normalizeTaskType(t);
-                      try {
-                        final f = File(t.savePath);
-                        if (await f.exists()) {
-                          final len = await f.length();
-                          t.received = len;
-                          t.total = len;
-                        }
-                      } catch (_) {}
-                      t.progressUnit = 'bytes';
                       _notifyDownloadsUpdated();
                       notifyListeners();
-                      _lastHlsSize.remove(t);
-
                       await _generatePreview(t);
                       if (autoSave.value) {
                         try {
@@ -3635,21 +3509,20 @@ class AppRepo extends ChangeNotifier {
         },
         (log) {},
         (stat) async {
-          // Refresh UI updates using the accumulated output size. Trigger a
-          // notification whenever the MP4 grows by at least 16 KB so progress
-          // and speed can be derived from bytes instead of segment counts.
+          // During HLS conversion, refresh the UI based on the output file size.
+          // FFmpeg statistics callbacks occur frequently. To provide a responsive
+          // progress indicator in the UI, trigger a notifier update whenever the
+          // output file grows by at least 16 KB. We do not mutate t.received here
+          // because it represents the segment count for HLS tasks; instead we
+          // store the last known file size in [_lastHlsSize].
           try {
             final f = File(t.savePath);
             if (await f.exists()) {
               final len = await f.length();
               final last = _lastHlsSize[t] ?? 0;
-              if (len > last && (len - last >= (16 * 1024) || last == 0)) {
+              // Throttle notifications to when the file has grown noticeably.
+              if (len >= last + (16 * 1024)) {
                 _lastHlsSize[t] = len;
-                t.received = len;
-                t.progressUnit = 'bytes';
-                if (t.total != null && len > t.total!) {
-                  t.total = len;
-                }
                 _notifyDownloadsUpdated();
                 notifyListeners();
               }
@@ -3657,6 +3530,19 @@ class AppRepo extends ChangeNotifier {
           } catch (_) {
             // Ignore probing errors
           }
+          // Update time-based progress if available
+          try {
+            final ms = stat.getTime();
+            if (ms != null &&
+                (t.progressUnit == 'time-ms') &&
+                (t.total ?? 0) > 0) {
+              final newMs = ms.clamp(0, t.total!);
+              if (newMs > t.received) {
+                t.received = newMs;
+                _notifyDownloadsUpdated();
+              }
+            }
+          } catch (_) {}
         },
       );
       final id = await session.getSessionId();
@@ -3666,7 +3552,6 @@ class AppRepo extends ChangeNotifier {
         t.state = 'error';
         _notifyDownloadsUpdated();
         notifyListeners();
-        _lastHlsSize.remove(t);
 
         await _saveState();
       }
@@ -3787,27 +3672,42 @@ class AppRepo extends ChangeNotifier {
       sb.writeln("file '$lastName'");
       await listFile.writeAsString(sb.toString(), flush: true);
       // assemble images into video using FFmpeg
-      final baseCmd =
-          "-y -f concat -safe 0 -i '${listFile.path}' "
-          "-vf scale='min(1280,iw)':'-2',format=yuv420p "
-          "-vsync vfr -threads 0 "
-          "-movflags +faststart -pix_fmt yuv420p ";
-      final commands = <String>[
-        if (Platform.isIOS || Platform.isMacOS)
-          "${baseCmd}-c:v h264_videotoolbox -b:v 3000k '${t.savePath}'",
-        "${baseCmd}-c:v libx264 -preset veryfast -crf 28 -tune stillimage '${t.savePath}'",
-      ];
-
-      for (int i = 0; i < commands.length; i++) {
-        final success = await _runImageSequenceFfmpegCommand(
-          t,
-          commands[i],
-          finalAttempt: i == commands.length - 1,
-        );
-        if (success || t.state == 'paused') {
-          return;
-        }
-      }
+      final cmd =
+          "-y -f concat -safe 0 -i '${listFile.path}' -vf format=yuv420p -c:v libx264 '${t.savePath}'";
+      final session = await FFmpegKit.executeAsync(
+        cmd,
+        (session) async {
+          final rc = await session.getReturnCode();
+          if (rc != null && rc.isValueSuccess()) {
+            t.state = 'done';
+            // finalise progress
+            t.received = t.total ?? t.received;
+            _normalizeTaskType(t);
+            // generate preview and optionally save to gallery
+            _notifyDownloadsUpdated();
+            notifyListeners();
+            await _generatePreview(t);
+            if (autoSave.value) {
+              try {
+                await saveFileToGallery(t.savePath);
+              } catch (e) {}
+            }
+          } else {
+            t.state = 'error';
+            _notifyDownloadsUpdated();
+            notifyListeners();
+          }
+          await _saveState();
+        },
+        (log) {
+          if (kDebugMode) print('ffmpeg(image-hls): \${log.getMessage()}');
+        },
+        (stat) {
+          // FFmpeg statistics are not used for image sequence; rely on segment count
+        },
+      );
+      final id = await session.getSessionId();
+      if (id != null) _ffmpegSessions[t] = id;
     } catch (e) {
       if (kDebugMode) print('runTaskHlsImages error: $e');
       if (t.state != 'paused') {
@@ -3817,52 +3717,6 @@ class AppRepo extends ChangeNotifier {
         await _saveState();
       }
     }
-  }
-
-  Future<bool> _runImageSequenceFfmpegCommand(
-    DownloadTask t,
-    String cmd, {
-    required bool finalAttempt,
-  }) async {
-    final completer = Completer<bool>();
-    final session = await FFmpegKit.executeAsync(
-      cmd,
-      (session) async {
-        final rc = await session.getReturnCode();
-        final success = rc != null && rc.isValueSuccess();
-        _ffmpegSessions.remove(t);
-        if (success) {
-          t.state = 'done';
-          t.received = t.total ?? t.received;
-          _normalizeTaskType(t);
-          _notifyDownloadsUpdated();
-          notifyListeners();
-          await _generatePreview(t);
-          if (autoSave.value) {
-            try {
-              await saveFileToGallery(t.savePath);
-            } catch (_) {}
-          }
-        } else if (finalAttempt && t.state != 'paused') {
-          t.state = 'error';
-          _notifyDownloadsUpdated();
-          notifyListeners();
-        }
-        await _saveState();
-        if (!completer.isCompleted) {
-          completer.complete(success);
-        }
-      },
-      (log) {
-        if (kDebugMode) {
-          print('ffmpeg(image-hls): ${log.getMessage()}');
-        }
-      },
-      (stat) {},
-    );
-    final id = await session.getSessionId();
-    if (id != null) _ffmpegSessions[t] = id;
-    return completer.future;
   }
 
   /// Helper to notify listeners of changes to the downloads list by reassigning
