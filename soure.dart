@@ -3622,11 +3622,27 @@ class AppRepo extends ChangeNotifier {
       // ensure UI reflects the updated task list
       _notifyDownloadsUpdated();
       notifyListeners();
+      // Determine a consistent filename extension for sequential frames so
+      // FFmpeg's image2 demuxer can glob them with a numeric pattern. We use
+      // the first extension found (defaulting to .jpeg) because FFmpeg probes
+      // file headers to detect actual formats, so the extension itself is not
+      // critical.
+      String frameExt = '.jpeg';
+      for (final uri in imageUris) {
+        final ext = p.extension(uri.path).toLowerCase();
+        if (ext.isNotEmpty) {
+          frameExt = ext;
+          break;
+        }
+      }
+
       // download images sequentially
       final dio = Dio();
       final headers = await _headersFor(t.url);
+      final frameNames = <String>[];
       for (int i = 0; i < imageUris.length; i++) {
         final uri = imageUris[i];
+        final frameName = 'frame_${i.toString().padLeft(6, '0')}$frameExt';
         try {
           final resp = await dio.get<List<int>>(
             uri.toString(),
@@ -3637,43 +3653,52 @@ class AppRepo extends ChangeNotifier {
             ),
           );
           final bytes = resp.data ?? const <int>[];
-          final ext = p.extension(uri.path).toLowerCase();
-          final name = 'img_$i$ext';
-          final file = File(p.join(work.path, name));
+          final file = File(p.join(work.path, frameName));
           await file.writeAsBytes(bytes, flush: true);
         } catch (e) {
           // still create empty file to maintain sequence
-          final ext = p.extension(uri.path).toLowerCase();
-          final name = 'img_$i$ext';
-          final file = File(p.join(work.path, name));
+          final file = File(p.join(work.path, frameName));
           await file.writeAsBytes(const <int>[], flush: true);
         }
+        frameNames.add(frameName);
         // update progress by segment count
         t.received = i + 1;
         // propagate to listeners (downloads list and others)
         _notifyDownloadsUpdated();
         notifyListeners();
       }
-      // Build concat list file for FFmpeg
-      final listFile = File(p.join(work.path, 'list.txt'));
-      final sb = StringBuffer();
-      for (int i = 0; i < imageUris.length; i++) {
-        final uri = imageUris[i];
-        final ext = p.extension(uri.path).toLowerCase();
-        final name = 'img_$i$ext';
-        final dur = durations[i];
-        sb.writeln("file '$name'");
-        sb.writeln('duration ${dur}');
+      // Determine whether all durations are effectively identical so we can
+      // leverage the lightweight image2 demuxer with a constant framerate.
+      final baseDuration = durations.isNotEmpty ? durations.first : 4.0;
+      final uniformDuration = durations.every(
+        (d) => (d - baseDuration).abs() < 0.001 && d > 0,
+      );
+      final framePattern = p.join(work.path, 'frame_%06d$frameExt');
+
+      String cmd;
+      if (uniformDuration && baseDuration > 0) {
+        final fps = 1.0 / baseDuration;
+        final fpsStr = fps.toStringAsFixed(6);
+        cmd =
+            "-y -framerate $fpsStr -i '$framePattern' -vf format=yuv420p -c:v libx264 '${t.savePath}'";
+      } else {
+        // Build concat list file for FFmpeg so we can keep per-image durations
+        final listFile = File(p.join(work.path, 'list.txt'));
+        final sb = StringBuffer();
+        for (int i = 0; i < frameNames.length; i++) {
+          final name = frameNames[i];
+          final dur = durations[i];
+          sb.writeln("file '$name'");
+          sb.writeln('duration ${dur}');
+        }
+        // Append last file without duration to satisfy concat demuxer
+        final lastName = frameNames.last;
+        sb.writeln("file '$lastName'");
+        await listFile.writeAsString(sb.toString(), flush: true);
+        cmd =
+            "-y -f concat -safe 0 -i '${listFile.path}' -vf format=yuv420p -c:v libx264 '${t.savePath}'";
       }
-      // Append last file without duration to satisfy concat demuxer
-      final lastUri = imageUris.last;
-      final lastName =
-          'img_${imageUris.length - 1}${p.extension(lastUri.path).toLowerCase()}';
-      sb.writeln("file '$lastName'");
-      await listFile.writeAsString(sb.toString(), flush: true);
-      // assemble images into video using FFmpeg
-      final cmd =
-          "-y -f concat -safe 0 -i '${listFile.path}' -vf format=yuv420p -c:v libx264 '${t.savePath}'";
+
       final session = await FFmpegKit.executeAsync(
         cmd,
         (session) async {
