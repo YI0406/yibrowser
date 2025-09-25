@@ -3424,6 +3424,18 @@ class AppRepo extends ChangeNotifier {
           _ffmpegSessions.remove(t);
           if (rc != null && rc.isValueSuccess()) {
             t.state = 'done';
+            try {
+              final output = File(t.savePath);
+              if (await output.exists()) {
+                final size = await output.length();
+                if (size > 0) {
+                  t.total = size;
+                  t.received = size;
+                }
+              }
+            } catch (_) {}
+            t.progressUnit = null;
+            _lastHlsSize.remove(t);
             _normalizeTaskType(t);
             // propagate update to downloads list
             _notifyDownloadsUpdated();
@@ -3488,6 +3500,18 @@ class AppRepo extends ChangeNotifier {
                     final rc2 = await s2.getReturnCode();
                     if (rc2 != null && rc2.isValueSuccess()) {
                       t.state = 'done';
+                      try {
+                        final output = File(t.savePath);
+                        if (await output.exists()) {
+                          final size = await output.length();
+                          if (size > 0) {
+                            t.total = size;
+                            t.received = size;
+                          }
+                        }
+                      } catch (_) {}
+                      t.progressUnit = null;
+                      _lastHlsSize.remove(t);
                       _normalizeTaskType(t);
                       _notifyDownloadsUpdated();
                       notifyListeners();
@@ -3705,8 +3729,20 @@ class AppRepo extends ChangeNotifier {
           final rc = await session.getReturnCode();
           if (rc != null && rc.isValueSuccess()) {
             t.state = 'done';
-            // finalise progress
-            t.received = t.total ?? t.received;
+            int? finalSize;
+            try {
+              final output = File(t.savePath);
+              if (await output.exists()) {
+                finalSize = await output.length();
+              }
+            } catch (_) {}
+            if (finalSize != null && finalSize > 0) {
+              t.total = finalSize;
+              t.received = finalSize;
+            } else {
+              t.received = t.total ?? t.received;
+            }
+            t.progressUnit = null;
             _normalizeTaskType(t);
             // generate preview and optionally save to gallery
             _notifyDownloadsUpdated();
