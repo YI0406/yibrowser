@@ -1388,7 +1388,7 @@ class _MediaPageState extends State<MediaPage>
     if (files.isEmpty) {
       if (!mounted) return false;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
+        SnackBar(
           duration: Duration(seconds: 1),
           content: Text(context.l10n('media.snack.noExportable')),
         ),
@@ -2076,7 +2076,7 @@ class _MyFavorites extends StatelessWidget {
                 } else if (action == 'hide') {
                   AppRepo.I.setTaskHidden(task, true);
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
+                    SnackBar(
                       duration: Duration(seconds: 1),
                       content: Text(
                         context.l10n(
