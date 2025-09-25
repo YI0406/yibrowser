@@ -3347,13 +3347,14 @@ class AppRepo extends ChangeNotifier {
 
   Future<void> _runTaskHls(DownloadTask t) async {
     Map<String, String> baseHeaders = const {};
+    Map<String, String> effectiveHeaders = {};
     try {
       // Detect suspicious .jpeg segments and pre-sanitize if needed
       String inputUrl = t.url;
       try {
         baseHeaders = await _headersFor(t.url);
         final dioProbe = Dio();
-        Map<String, String> effectiveHeaders = Map.of(baseHeaders);
+        effectiveHeaders = Map.of(baseHeaders);
 
         Future<String> fetchPlaylist(
           String url,
