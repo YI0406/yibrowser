@@ -679,6 +679,13 @@ class AppRepo extends ChangeNotifier {
   /// the value is the last reported file size in bytes.
   final Map<DownloadTask, int> _lastHlsSize = {};
 
+  /// Some HLS playlists embed absolute timestamps via `#EXT-X-PROGRAM-DATE-TIME`.
+  /// FFmpeg then reports statistics times using those large presentation
+  /// timestamps (milliseconds since epoch) which instantly jump far beyond the
+  /// media duration. To convert those into relative progress we remember the
+  /// first observed timestamp per task and subtract it from subsequent updates.
+  final Map<DownloadTask, int> _hlsTimeBaseMs = {};
+
   /// Initialise the repository. Must be called before using [AppRepo.I].
   /// It loads previously persisted state from disk and prepares directories.
   Future<void> init() async {
@@ -3056,6 +3063,8 @@ class AppRepo extends ChangeNotifier {
         }
         t.paused = true;
         t.state = 'paused';
+        _lastHlsSize.remove(t);
+        _hlsTimeBaseMs.remove(t);
       }
     } catch (_) {
       // ignore
@@ -3109,6 +3118,7 @@ class AppRepo extends ChangeNotifier {
       final uaArg = ua.isNotEmpty ? "-user_agent '${ua}'" : '';
       final cmd =
           "-y -protocol_whitelist file,http,https,tcp,tls,crypto $uaArg $headerArg -i '${t.url}' -c copy -bsf:a aac_adtstoasc '${t.savePath}'";
+      _hlsTimeBaseMs.remove(t);
       final session = await FFmpegKit.executeAsync(
         cmd,
         (session) async {
@@ -3116,6 +3126,8 @@ class AppRepo extends ChangeNotifier {
           if (rc != null && rc.isValueSuccess()) {
             t.state = 'done';
             _normalizeTaskType(t);
+            _lastHlsSize.remove(t);
+            _hlsTimeBaseMs.remove(t);
             // propagate update to downloads list
             _notifyDownloadsUpdated();
             notifyListeners();
@@ -3132,6 +3144,8 @@ class AppRepo extends ChangeNotifier {
               t.state = 'error';
               _notifyDownloadsUpdated();
               notifyListeners();
+              _lastHlsSize.remove(t);
+              _hlsTimeBaseMs.remove(t);
             }
           }
           await _saveState();
@@ -3511,6 +3525,8 @@ class AppRepo extends ChangeNotifier {
           "-allowed_extensions ALL "
           "-rw_timeout 15000000 -timeout 15000000 -analyzeduration 0 -probesize 500000 "
           "$uaArg $headerArg -i '${inputUrl}' -map 0:v:0? -map 0:a:0? -c copy -movflags +faststart -bsf:a aac_adtstoasc '${t.savePath}'";
+      _lastHlsSize.remove(t);
+      _hlsTimeBaseMs.remove(t);
       final session = await FFmpegKit.executeAsync(
         cmd,
         (session) async {
@@ -3519,6 +3535,8 @@ class AppRepo extends ChangeNotifier {
           if (rc != null && rc.isValueSuccess()) {
             t.state = 'done';
             _normalizeTaskType(t);
+            _lastHlsSize.remove(t);
+            _hlsTimeBaseMs.remove(t);
             // propagate update to downloads list
             _notifyDownloadsUpdated();
             notifyListeners();
@@ -3542,6 +3560,8 @@ class AppRepo extends ChangeNotifier {
               t.state = 'error';
               _notifyDownloadsUpdated();
               notifyListeners();
+              _lastHlsSize.remove(t);
+              _hlsTimeBaseMs.remove(t);
               try {
                 await FirebaseAnalytics.instance.logEvent(
                   name: 'download_error',
@@ -3585,6 +3605,8 @@ class AppRepo extends ChangeNotifier {
                       _normalizeTaskType(t);
                       _notifyDownloadsUpdated();
                       notifyListeners();
+                      _lastHlsSize.remove(t);
+                      _hlsTimeBaseMs.remove(t);
                       await _generatePreview(t);
                       if (autoSave.value) {
                         try {
@@ -3630,9 +3652,28 @@ class AppRepo extends ChangeNotifier {
             if (ms != null &&
                 (t.progressUnit == 'time-ms') &&
                 (t.total ?? 0) > 0) {
-              final newMs = ms.clamp(0, t.total!);
-              if (newMs > t.received) {
-                t.received = newMs;
+              final total = t.total!;
+              int base;
+              if (!_hlsTimeBaseMs.containsKey(t)) {
+                if (ms > total * 2) {
+                  _hlsTimeBaseMs[t] = ms;
+                  base = ms;
+                } else {
+                  _hlsTimeBaseMs[t] = 0;
+                  base = 0;
+                }
+              } else {
+                base = _hlsTimeBaseMs[t] ?? 0;
+                if (base != 0 && ms < base) {
+                  _hlsTimeBaseMs[t] = ms;
+                  base = ms;
+                }
+              }
+              int relative = ms - base;
+              if (relative < 0) relative = 0;
+              if (relative > total) relative = total;
+              if (relative > t.received) {
+                t.received = relative;
                 _notifyDownloadsUpdated();
               }
             }
@@ -3646,6 +3687,8 @@ class AppRepo extends ChangeNotifier {
         t.state = 'error';
         _notifyDownloadsUpdated();
         notifyListeners();
+        _lastHlsSize.remove(t);
+        _hlsTimeBaseMs.remove(t);
 
         await _saveState();
       }
