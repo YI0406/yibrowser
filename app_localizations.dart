@@ -2180,6 +2180,11 @@ final Map<String, Map<AppLanguage, String>> _translations = {
     AppLanguage.zhHans: '已选：{count}',
     AppLanguage.en: 'Selected: {count}',
   },
+  'browser.download.segmentsPerSecond': {
+    AppLanguage.zhHant: '片段/秒',
+    AppLanguage.zhHans: '片段/秒',
+    AppLanguage.en: 'segments/s',
+  },
 };
 
 /// Service that manages the current language and translation lookup.

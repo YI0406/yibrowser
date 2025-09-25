@@ -5958,8 +5958,8 @@ class _BrowserPageState extends State<BrowserPage>
                                   );
                                   if (mounted) {
                                     ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        duration: Duration(seconds: 1),
+                                      SnackBar(
+                                        duration: const Duration(seconds: 1),
                                         content: Text(
                                           context.l10n(
                                             'browser.snack.copiedLink',
@@ -5972,7 +5972,7 @@ class _BrowserPageState extends State<BrowserPage>
                               ),
                               IconButton(
                                 icon: const Icon(Icons.download),
-                                tooltip: '下載',
+                                tooltip: context.l10n('common.download'),
                                 onPressed: () {
                                   Navigator.pop(context);
                                   _confirmDownload(h.url);
@@ -6067,21 +6067,28 @@ class _BrowserPageState extends State<BrowserPage>
               }
 
               if (tasks.isEmpty) {
-                return const Padding(
-                  padding: EdgeInsets.all(16),
-                  child: Text('尚無下載任務'),
+                return Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Text(context.l10n('browser.downloadList.empty')),
                 );
               }
               return Column(
                 children: [
                   ListTile(
-                    title: Text('下載清單（${tasks.length}）'),
+                    title: Text(
+                      context.l10n(
+                        'browser.downloadList.titleWithCount',
+                        params: {'count': tasks.length.toString()},
+                      ),
+                    ),
                     trailing: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         IconButton(
                           icon: const Icon(Icons.delete_sweep),
-                          tooltip: '清除任務（不刪除已完成媒體）',
+                          tooltip: context.l10n(
+                            'browser.downloadList.clearTooltip',
+                          ),
                           onPressed: () async {
                             final cleared =
                                 await AppRepo.I.retainOnlyCompletedDownloads();
@@ -6089,16 +6096,22 @@ class _BrowserPageState extends State<BrowserPage>
                             Navigator.pop(context);
                             if (!cleared) {
                               ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  duration: Duration(seconds: 1),
-                                  content: Text('沒有可清除的下載任務'),
+                                SnackBar(
+                                  duration: const Duration(seconds: 1),
+                                  content: Text(
+                                    context.l10n(
+                                      'browser.snack.noTasksToClear',
+                                    ),
+                                  ),
                                 ),
                               );
                             } else {
                               ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  duration: Duration(seconds: 1),
-                                  content: Text('已清除任務，已完成的媒體已保留'),
+                                SnackBar(
+                                  duration: const Duration(seconds: 1),
+                                  content: Text(
+                                    context.l10n('browser.snack.tasksCleared'),
+                                  ),
                                 ),
                               );
                             }
@@ -6208,7 +6221,12 @@ class _BrowserPageState extends State<BrowserPage>
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         duration: const Duration(seconds: 1),
-        content: Text('已移動到 $targetName'),
+        content: Text(
+          context.l10n(
+            'browser.snack.movedToFolder',
+            params: {'folder': targetName},
+          ),
+        ),
       ),
     );
   }
@@ -6290,16 +6308,28 @@ class _BrowserPageState extends State<BrowserPage>
       ),
     );
     // Second line: status (show '轉換中' during conversion)
-    final String statusText = isConverting ? '轉換中' : t.state;
+    final String statusText =
+        isConverting
+            ? context.l10n('browser.download.status.converting')
+            : t.state;
     subtitleWidgets.add(
-      Text('狀態: $statusText', style: const TextStyle(fontSize: 12)),
+      Text(
+        context.l10n(
+          'browser.download.statusLabel',
+          params: {'status': statusText},
+        ),
+        style: const TextStyle(fontSize: 12),
+      ),
     );
     // For non-HLS tasks, display the timestamp when the download was added. HLS
     // tasks omit this to reduce clutter.
     if (!isHls) {
       subtitleWidgets.add(
         Text(
-          '時間: ${t.timestamp.toLocal().toString().split('.').first}',
+          context.l10n(
+            'browser.download.timeLabel',
+            params: {'time': t.timestamp.toLocal().toString().split('.').first},
+          ),
           style: const TextStyle(fontSize: 12),
         ),
       );
@@ -6308,7 +6338,10 @@ class _BrowserPageState extends State<BrowserPage>
     if (isDownloadingSegments) {
       subtitleWidgets.add(
         Text(
-          '片段: ${t.received}/${t.total}',
+          context.l10n(
+            'browser.download.segmentLabel',
+            params: {'progress': '${t.received}/${t.total}'},
+          ),
           style: const TextStyle(fontSize: 12),
         ),
       );
@@ -6317,7 +6350,13 @@ class _BrowserPageState extends State<BrowserPage>
         final double pct = t.received / totalSegs * 100.0;
         subtitleWidgets.add(
           Text(
-            '進度: ${t.received}/${t.total} (${pct.toStringAsFixed(1)}%)',
+            context.l10n(
+              'browser.download.progressLabel',
+              params: {
+                'progress':
+                    '${t.received}/${t.total} (${pct.toStringAsFixed(1)}%)',
+              },
+            ),
             style: const TextStyle(fontSize: 12),
           ),
         );
@@ -6331,14 +6370,23 @@ class _BrowserPageState extends State<BrowserPage>
       if (segRate != null) {
         subtitleWidgets.add(
           Text(
-            '速度: ${segRate.toStringAsFixed(2)} 片段/秒',
+            context.l10n(
+              'browser.download.speedLabel',
+              params: {
+                'speed':
+                    '${segRate.toStringAsFixed(2)} ${context.l10n('browser.download.segmentsPerSecond')}',
+              },
+            ),
             style: const TextStyle(fontSize: 12),
           ),
         );
       } else {
         _rateSnaps[segKey] = _snapNow(t.received);
         subtitleWidgets.add(
-          const Text('速度: 測量中…', style: TextStyle(fontSize: 12)),
+          Text(
+            context.l10n('browser.download.speedMeasuring'),
+            style: const TextStyle(fontSize: 12),
+          ),
         );
       }
     } else if (isHls &&
@@ -6349,7 +6397,13 @@ class _BrowserPageState extends State<BrowserPage>
       final tot = Duration(milliseconds: t.total!);
       subtitleWidgets.add(
         Text(
-          '進度: ${_fmtDur(cur.inSeconds.toDouble())}/${_fmtDur(tot.inSeconds.toDouble())} (${((progressPercent ?? 0) * 100).toStringAsFixed(1)}%)',
+          context.l10n(
+            'browser.download.progressLabel',
+            params: {
+              'progress':
+                  '${_fmtDur(cur.inSeconds.toDouble())}/${_fmtDur(tot.inSeconds.toDouble())} (${((progressPercent ?? 0) * 100).toStringAsFixed(1)}%)',
+            },
+          ),
           style: const TextStyle(fontSize: 12),
         ),
       );
@@ -6359,7 +6413,10 @@ class _BrowserPageState extends State<BrowserPage>
         if (f.existsSync() && !_addedSize) {
           subtitleWidgets.add(
             Text(
-              '大小: ${_fmtSize(f.lengthSync())}',
+              context.l10n(
+                'browser.download.sizeLabel',
+                params: {'size': _fmtSize(f.lengthSync())},
+              ),
               style: const TextStyle(fontSize: 12),
             ),
           );
@@ -6376,19 +6433,28 @@ class _BrowserPageState extends State<BrowserPage>
         if (f.existsSync() && !_addedSize) {
           subtitleWidgets.add(
             Text(
-              '大小: ${_fmtSize(f.lengthSync())}',
+              context.l10n(
+                'browser.download.sizeLabel',
+                params: {'size': _fmtSize(f.lengthSync())},
+              ),
               style: const TextStyle(fontSize: 12),
             ),
           );
           _addedSize = true;
         } else if (!f.existsSync()) {
           subtitleWidgets.add(
-            const Text('大小: 轉換中…', style: TextStyle(fontSize: 12)),
+            Text(
+              context.l10n('browser.download.sizeConverting'),
+              style: const TextStyle(fontSize: 12),
+            ),
           );
         }
       } catch (_) {
         subtitleWidgets.add(
-          const Text('大小: 轉換中…', style: TextStyle(fontSize: 12)),
+          Text(
+            context.l10n('browser.download.sizeConverting'),
+            style: const TextStyle(fontSize: 12),
+          ),
         );
       }
     }
@@ -6397,17 +6463,28 @@ class _BrowserPageState extends State<BrowserPage>
     if (!isHls) {
       if (t.state == 'downloading') {
         final hasTotal = t.total != null && t.total! > 0;
-        final sizeStr =
+        final sizeValue =
             hasTotal
-                ? '大小: ${_fmtSize(t.received)} / ${_fmtSize(t.total!)}'
-                : '大小: ${_fmtSize(t.received)}';
+                ? '${_fmtSize(t.received)} / ${_fmtSize(t.total!)}'
+                : _fmtSize(t.received);
         subtitleWidgets.add(
-          Text(sizeStr, style: const TextStyle(fontSize: 12)),
+          Text(
+            context.l10n(
+              'browser.download.sizeLabel',
+              params: {'size': sizeValue},
+            ),
+            style: const TextStyle(fontSize: 12),
+          ),
         );
         if (progressPercent != null) {
           subtitleWidgets.add(
             Text(
-              '進度: ${(progressPercent * 100).toStringAsFixed(1)}%',
+              context.l10n(
+                'browser.download.progressLabel',
+                params: {
+                  'progress': '${(progressPercent * 100).toStringAsFixed(1)}%',
+                },
+              ),
               style: const TextStyle(fontSize: 12),
             ),
           );
@@ -6418,14 +6495,20 @@ class _BrowserPageState extends State<BrowserPage>
         if (spDirect != null) {
           subtitleWidgets.add(
             Text(
-              '速度: ${_fmtSpeed(spDirect)}',
+              context.l10n(
+                'browser.download.speedLabel',
+                params: {'speed': _fmtSpeed(spDirect)},
+              ),
               style: const TextStyle(fontSize: 12),
             ),
           );
         } else {
           _rateSnaps[keyDirect] = _snapNow(t.received);
           subtitleWidgets.add(
-            const Text('速度: 測量中…', style: TextStyle(fontSize: 12)),
+            Text(
+              context.l10n('browser.download.speedMeasuring'),
+              style: const TextStyle(fontSize: 12),
+            ),
           );
         }
       } else if (t.state == 'done' || t.state == 'error') {
@@ -6434,7 +6517,10 @@ class _BrowserPageState extends State<BrowserPage>
           if (f.existsSync() && !_addedSize) {
             subtitleWidgets.add(
               Text(
-                '大小: ${_fmtSize(f.lengthSync())}',
+                context.l10n(
+                  'browser.download.sizeLabel',
+                  params: {'size': _fmtSize(f.lengthSync())},
+                ),
                 style: const TextStyle(fontSize: 12),
               ),
             );
@@ -6449,7 +6535,10 @@ class _BrowserPageState extends State<BrowserPage>
         if (f.existsSync() && !_addedSize) {
           subtitleWidgets.add(
             Text(
-              '大小: ${_fmtSize(f.lengthSync())}',
+              context.l10n(
+                'browser.download.sizeLabel',
+                params: {'size': _fmtSize(f.lengthSync())},
+              ),
               style: const TextStyle(fontSize: 12),
             ),
           );
@@ -6465,7 +6554,10 @@ class _BrowserPageState extends State<BrowserPage>
         if (f.existsSync()) {
           subtitleWidgets.add(
             Text(
-              '大小: ${_fmtSize(f.lengthSync())}',
+              context.l10n(
+                'browser.download.sizeLabel',
+                params: {'size': _fmtSize(f.lengthSync())},
+              ),
               style: const TextStyle(fontSize: 12),
             ),
           );
@@ -6479,13 +6571,22 @@ class _BrowserPageState extends State<BrowserPage>
       final sp = _computeSpeed(key, speedBytesNow!);
       if (sp != null) {
         subtitleWidgets.add(
-          Text('速度: ${_fmtSpeed(sp)}', style: const TextStyle(fontSize: 12)),
+          Text(
+            context.l10n(
+              'browser.download.speedLabel',
+              params: {'speed': _fmtSpeed(sp)},
+            ),
+            style: const TextStyle(fontSize: 12),
+          ),
         );
       } else {
         // 首次建立快照時先不顯示數值（避免顯示 0）
         _rateSnaps[key] = _snapNow(speedBytesNow!);
         subtitleWidgets.add(
-          const Text('速度: 測量中…', style: TextStyle(fontSize: 12)),
+          Text(
+            context.l10n('browser.download.speedMeasuring'),
+            style: const TextStyle(fontSize: 12),
+          ),
         );
       }
     }
@@ -6495,13 +6596,19 @@ class _BrowserPageState extends State<BrowserPage>
     if (t.duration != null) {
       subtitleWidgets.add(
         Text(
-          '時長: ${_fmtDur(t.duration!.inSeconds.toDouble())}',
+          context.l10n(
+            'browser.media.durationLabel',
+            params: {'duration': _fmtDur(t.duration!.inSeconds.toDouble())},
+          ),
           style: const TextStyle(fontSize: 12),
         ),
       );
     } else if (resolvedType == 'video' || resolvedType == 'audio') {
       subtitleWidgets.add(
-        const Text('時長: 解析中…', style: TextStyle(fontSize: 12)),
+        Text(
+          context.l10n('browser.media.durationResolving'),
+          style: const TextStyle(fontSize: 12),
+        ),
       );
     }
 
@@ -6546,7 +6653,7 @@ class _BrowserPageState extends State<BrowserPage>
             if (t.state == 'downloading' && !t.paused)
               IconButton(
                 icon: const Icon(Icons.pause),
-                tooltip: '暫停',
+                tooltip: context.l10n('common.pause'),
                 onPressed: () {
                   AppRepo.I.pauseTask(t);
                 },
@@ -6554,29 +6661,31 @@ class _BrowserPageState extends State<BrowserPage>
             if (t.state == 'paused' || t.paused)
               IconButton(
                 icon: const Icon(Icons.play_arrow),
-                tooltip: '繼續',
+                tooltip: context.l10n('common.resume'),
                 onPressed: () {
                   AppRepo.I.resumeTask(t);
                 },
               ),
             IconButton(
               icon: const Icon(Icons.folder_open),
-              tooltip: '移動到資料夾',
+              tooltip: context.l10n('browser.download.moveToFolder'),
               onPressed: () {
                 _moveTaskToFolder(t);
               },
             ),
             IconButton(
               icon: const Icon(Icons.delete_outline),
-              tooltip: '刪除',
+              tooltip: context.l10n('common.delete'),
               onPressed: () async {
                 await AppRepo.I.removeTasks([t], deleteFiles: false);
                 await AppRepo.I.rescanDownloadsFolder();
                 if (!mounted) return;
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    duration: Duration(seconds: 1),
-                    content: Text('已刪除任務，檔案仍在媒體庫'),
+                  SnackBar(
+                    duration: const Duration(seconds: 1),
+                    content: Text(
+                      context.l10n('browser.snack.downloadRemovedKeepFile'),
+                    ),
                   ),
                 );
               },
@@ -6614,9 +6723,9 @@ class _BrowserPageState extends State<BrowserPage>
               );
             } else if (mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  duration: Duration(seconds: 1),
-                  content: Text('檔案已不存在'),
+                SnackBar(
+                  duration: const Duration(seconds: 1),
+                  content: Text(context.l10n('browser.snack.fileMissing')),
                 ),
               );
             }
@@ -6630,16 +6739,21 @@ class _BrowserPageState extends State<BrowserPage>
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     duration: const Duration(seconds: 1),
-                    content: Text('匯出失敗: $e'),
+                    content: Text(
+                      context.l10n(
+                        'browser.snack.exportFailed',
+                        params: {'error': '$e'},
+                      ),
+                    ),
                   ),
                 );
               }
             }
           } else if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                duration: Duration(seconds: 1),
-                content: Text('檔案已不存在'),
+              SnackBar(
+                duration: const Duration(seconds: 1),
+                content: Text(context.l10n('browser.snack.fileMissing')),
               ),
             );
           }
@@ -6676,12 +6790,17 @@ class FavoritesPage extends StatelessWidget {
       builder: (context, favs, _) {
         return Scaffold(
           appBar: AppBar(
-            title: Text('我的收藏（${favs.length}）'),
+            title: Text(
+              context.l10n(
+                'browser.favorites.titleWithCount',
+                params: {'count': favs.length.toString()},
+              ),
+            ),
             actions: [
               if (favs.isNotEmpty)
                 IconButton(
                   icon: const Icon(Icons.delete_sweep),
-                  tooltip: '清除全部',
+                  tooltip: context.l10n('common.clearAll'),
                   onPressed: () => repo.clearFavorites(),
                 ),
             ],
@@ -6689,7 +6808,9 @@ class FavoritesPage extends StatelessWidget {
           body: SafeArea(
             child:
                 favs.isEmpty
-                    ? const Center(child: Text('尚無收藏'))
+                    ? Center(
+                      child: Text(context.l10n('browser.favorites.empty')),
+                    )
                     : ListView.separated(
                       itemCount: favs.length,
                       separatorBuilder: (_, __) => const Divider(height: 1),
@@ -6711,7 +6832,9 @@ class FavoritesPage extends StatelessWidget {
                           ),
                           trailing: IconButton(
                             icon: const Icon(Icons.delete),
-                            tooltip: '移除收藏',
+                            tooltip: context.l10n(
+                              'browser.favorites.removeTooltip',
+                            ),
                             onPressed: () => repo.removeFavoriteUrl(url),
                           ),
                           onTap: () {
@@ -6769,7 +6892,7 @@ class _HistoryPageState extends State<HistoryPage>
     final repo = AppRepo.I;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('瀏覽紀錄'),
+        title: Text(context.l10n('browser.history.title')),
         actions: [
           ValueListenableBuilder<List<HistoryEntry>>(
             valueListenable: repo.history,
@@ -6777,6 +6900,7 @@ class _HistoryPageState extends State<HistoryPage>
               if (hist.isEmpty) return const SizedBox.shrink();
               return IconButton(
                 icon: const Icon(Icons.delete_sweep),
+                tooltip: context.l10n('common.clearAll'),
                 onPressed: repo.clearHistory,
               );
             },
@@ -6797,9 +6921,13 @@ class _HistoryPageState extends State<HistoryPage>
               Expanded(
                 child:
                     !hasHistory
-                        ? const _HistoryEmptyState(message: '尚無瀏覽記錄')
+                        ? _HistoryEmptyState(
+                          message: context.l10n('browser.history.empty'),
+                        )
                         : filtered.isEmpty
-                        ? const _HistoryEmptyState(message: '沒有符合的紀錄')
+                        ? _HistoryEmptyState(
+                          message: context.l10n('browser.history.noResults'),
+                        )
                         : _buildHistoryList(filtered, repo),
               ),
             ],
@@ -6821,14 +6949,14 @@ class _HistoryPageState extends State<HistoryPage>
               _query.isEmpty
                   ? null
                   : IconButton(
-                    tooltip: '清除',
+                    tooltip: context.l10n('common.clear'),
                     icon: const Icon(Icons.close),
                     onPressed: () {
                       _searchController.clear();
                       FocusScope.of(context).unfocus();
                     },
                   ),
-          hintText: '搜尋標題或網址',
+          hintText: context.l10n('browser.history.searchHint'),
           border: OutlineInputBorder(borderRadius: BorderRadius.circular(32)),
           isDense: true,
         ),
@@ -6970,7 +7098,7 @@ class _HistoryPageState extends State<HistoryPage>
                     ),
                     IconButton(
                       icon: const Icon(Icons.delete_outline),
-                      tooltip: '刪除',
+                      tooltip: context.l10n('common.delete'),
                       visualDensity: VisualDensity.compact,
                       onPressed: () => repo.removeHistoryEntry(entry),
                     ),
@@ -6978,7 +7106,10 @@ class _HistoryPageState extends State<HistoryPage>
                 ),
                 const SizedBox(height: 12),
                 Text(
-                  '瀏覽於 ${_formatTime(localTs)}',
+                  context.l10n(
+                    'browser.history.browsedAt',
+                    params: {'time': _formatTime(localTs)},
+                  ),
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
@@ -7006,15 +7137,34 @@ class _HistoryPageState extends State<HistoryPage>
     final today = DateTime(now.year, now.month, now.day);
     final entryDay = DateTime(date.year, date.month, date.day);
     final diff = today.difference(entryDay).inDays;
-    if (diff <= 0) return '今天';
-    if (diff == 1) return '昨天';
-    if (diff == 2) return '前天';
-    return '$diff 天前';
+    if (diff <= 0) {
+      return context.l10n('browser.history.relative.today');
+    }
+    if (diff == 1) {
+      return context.l10n('browser.history.relative.yesterday');
+    }
+    if (diff == 2) {
+      return context.l10n('browser.history.relative.twoDaysAgo');
+    }
+    return context.l10n(
+      'browser.history.relative.daysAgo',
+      params: {'days': diff.toString()},
+    );
   }
 
   String _formatCalendarLabel(DateTime date) {
-    const weekdays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
-    final weekday = weekdays[(date.weekday - 1) % weekdays.length];
+    final weekdayKeys = [
+      'browser.history.weekday.mon',
+      'browser.history.weekday.tue',
+      'browser.history.weekday.wed',
+      'browser.history.weekday.thu',
+      'browser.history.weekday.fri',
+      'browser.history.weekday.sat',
+      'browser.history.weekday.sun',
+    ];
+    final weekday = context.l10n(
+      weekdayKeys[(date.weekday - 1) % weekdayKeys.length],
+    );
     return '${date.year}-${_twoDigits(date.month)}-${_twoDigits(date.day)} $weekday';
   }
 
@@ -7089,11 +7239,19 @@ class _TabManagerPageState extends State<_TabManagerPage>
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('分頁（${_localTabs.length}）'),
+        title: Text(
+          context.l10n(
+            'browser.tabs.titleWithCount',
+            params: {'count': _localTabs.length.toString()},
+          ),
+        ),
         actions: [
           // 切換選擇模式
           IconButton(
-            tooltip: _selectMode ? '退出選擇' : '選擇分頁',
+            tooltip:
+                _selectMode
+                    ? context.l10n('browser.tabs.exitSelection')
+                    : context.l10n('browser.tabs.selectTabs'),
             icon: Icon(_selectMode ? Icons.close : Icons.checklist),
             onPressed: () {
               setState(() {
@@ -7107,8 +7265,8 @@ class _TabManagerPageState extends State<_TabManagerPage>
             IconButton(
               tooltip:
                   _selected.length == _localTabs.length && _localTabs.isNotEmpty
-                      ? '取消全選'
-                      : '全選',
+                      ? context.l10n('common.deselectAll')
+                      : context.l10n('common.selectAll'),
               icon: const Icon(Icons.select_all),
               onPressed: () {
                 setState(() {
@@ -7125,7 +7283,13 @@ class _TabManagerPageState extends State<_TabManagerPage>
             ),
             // 刪除已選
             IconButton(
-              tooltip: _selected.isEmpty ? '刪除' : '刪除（${_selected.length}）',
+              tooltip:
+                  _selected.isEmpty
+                      ? context.l10n('common.delete')
+                      : context.l10n(
+                        'browser.tabs.deleteWithCount',
+                        params: {'count': _selected.length.toString()},
+                      ),
               icon: const Icon(Icons.delete_sweep),
               onPressed:
                   _selected.isEmpty
@@ -7351,7 +7515,12 @@ class _TabManagerPageState extends State<_TabManagerPage>
                   color: Theme.of(context).colorScheme.surface,
                   child: Row(
                     children: [
-                      Text('已選：${_selected.length}'),
+                      Text(
+                        context.l10n(
+                          'browser.tabs.selectedCount',
+                          params: {'count': _selected.length.toString()},
+                        ),
+                      ),
                       const Spacer(),
                       TextButton(
                         onPressed: () {
@@ -7374,14 +7543,14 @@ class _TabManagerPageState extends State<_TabManagerPage>
                         child: Text(
                           _selected.length == _localTabs.length &&
                                   _localTabs.isNotEmpty
-                              ? '取消全選'
-                              : '全選',
+                              ? context.l10n('common.deselectAll')
+                              : context.l10n('common.selectAll'),
                         ),
                       ),
                       const SizedBox(width: 8),
                       FilledButton.icon(
                         icon: const Icon(Icons.delete),
-                        label: const Text('刪除'),
+                        label: Text(context.l10n('common.delete')),
                         onPressed:
                             _selected.isEmpty
                                 ? null
