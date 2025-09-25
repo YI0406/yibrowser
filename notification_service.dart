@@ -92,4 +92,91 @@ class NotificationService {
       debugPrint('Failed to show notification: $e');
     }
   }
+
+  Future<bool> ensurePermissions() async {
+    if (!(Platform.isAndroid ||
+        Platform.isIOS ||
+        Platform.isMacOS ||
+        Platform.isLinux)) {
+      return false;
+    }
+    if (!_initialized) {
+      await init();
+    }
+
+    if (Platform.isAndroid) {
+      final androidPlugin =
+          _plugin
+              .resolvePlatformSpecificImplementation<
+                AndroidFlutterLocalNotificationsPlugin
+              >();
+      if (androidPlugin != null) {
+        final enabled = await androidPlugin.areNotificationsEnabled();
+        if (enabled ?? true) {
+          return true;
+        }
+        final granted = await androidPlugin.requestPermission();
+        return granted ?? false;
+      }
+      return true;
+    }
+
+    if (Platform.isIOS || Platform.isMacOS) {
+      final darwinPlugin =
+          _plugin
+              .resolvePlatformSpecificImplementation<
+                DarwinFlutterLocalNotificationsPlugin
+              >();
+      if (darwinPlugin != null) {
+        final settings = await darwinPlugin.getNotificationSettings();
+        final status = settings.authorizationStatus;
+        if (status == AuthorizationStatus.authorized ||
+            status == AuthorizationStatus.provisional) {
+          return true;
+        }
+        final granted = await darwinPlugin.requestPermissions(
+          alert: true,
+          badge: true,
+          sound: true,
+        );
+        if (!granted) {
+          return false;
+        }
+        final updated = await darwinPlugin.getNotificationSettings();
+        final updatedStatus = updated.authorizationStatus;
+        return updatedStatus == AuthorizationStatus.authorized ||
+            updatedStatus == AuthorizationStatus.provisional;
+      }
+      return false;
+    }
+
+    if (Platform.isLinux) {
+      return true;
+    }
+
+    return false;
+  }
+
+  Future<void> openNotificationSettings() async {
+    if (!_initialized) {
+      await init();
+    }
+    if (Platform.isAndroid) {
+      final androidPlugin =
+          _plugin
+              .resolvePlatformSpecificImplementation<
+                AndroidFlutterLocalNotificationsPlugin
+              >();
+      await androidPlugin?.openNotificationSettings();
+      return;
+    }
+    if (Platform.isIOS || Platform.isMacOS) {
+      final darwinPlugin =
+          _plugin
+              .resolvePlatformSpecificImplementation<
+                DarwinFlutterLocalNotificationsPlugin
+              >();
+      await darwinPlugin?.openNotificationSettings();
+    }
+  }
 }

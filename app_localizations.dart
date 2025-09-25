@@ -2195,6 +2195,33 @@ final Map<String, Map<AppLanguage, String>> _translations = {
     AppLanguage.zhHans: '{name} 已下载完成。',
     AppLanguage.en: '“{name}” has finished downloading.',
   },
+  'settings.downloadNotifications.title': {
+    AppLanguage.zhHant: '下載完成後通知',
+    AppLanguage.zhHans: '下载完成后通知',
+    AppLanguage.en: 'Download completion notifications',
+  },
+  'settings.downloadNotifications.subtitle': {
+    AppLanguage.zhHant: '下載完成時顯示通知，需啟用系統通知權限。',
+    AppLanguage.zhHans: '下载完成时显示通知，需要启用系统通知权限。',
+    AppLanguage.en:
+        'Show a notification when downloads finish. Requires system permission.',
+  },
+  'settings.downloadNotifications.permissionDenied': {
+    AppLanguage.zhHant: '尚未取得通知權限，請至系統設定中開啟。',
+    AppLanguage.zhHans: '尚未取得通知权限，请到系统设置中开启。',
+    AppLanguage.en:
+        'Notifications are disabled. Please enable them in system settings.',
+  },
+  'settings.downloadNotifications.snack.enabled': {
+    AppLanguage.zhHant: '下載通知已開啟',
+    AppLanguage.zhHans: '下载通知已开启',
+    AppLanguage.en: 'Download notifications enabled.',
+  },
+  'settings.downloadNotifications.snack.disabled': {
+    AppLanguage.zhHant: '下載通知已關閉',
+    AppLanguage.zhHans: '下载通知已关闭',
+    AppLanguage.en: 'Download notifications disabled.',
+  },
 };
 
 /// Service that manages the current language and translation lookup.

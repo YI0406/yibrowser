@@ -1965,6 +1965,21 @@ class _MyFavorites extends StatelessWidget {
                     ? fileLength
                     : math.max(fileLength, task.total ?? 0);
             final resolvedType = AppRepo.I.resolvedTaskType(task);
+            final bool isHls = task.kind == 'hls';
+            final bool isConverting =
+                isHls &&
+                task.state.toLowerCase() == 'downloading' &&
+                task.total != null &&
+                task.received >= task.total!;
+            double? progressValue;
+            if (task.state.toLowerCase() == 'downloading') {
+              if (!isConverting && task.total != null && task.total! > 0) {
+                final ratio = task.received / task.total!.toDouble();
+                progressValue = ratio.clamp(0.0, 1.0).toDouble();
+              } else {
+                progressValue = null;
+              }
+            }
             Widget? leadingThumb;
             final isDone = task.state.toLowerCase() == 'done';
             if (resolvedType == 'image' &&
@@ -2027,10 +2042,27 @@ class _MyFavorites extends StatelessWidget {
                 ],
               ),
               onTap: () => _handleOpen(context, task, candidates: favs),
-              trailing: IconButton(
-                icon: const Icon(Icons.favorite, color: Colors.redAccent),
-                tooltip: context.l10n('media.action.unfavorite'),
-                onPressed: () => repo.setFavorite(task, false),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (task.state.toLowerCase() == 'downloading')
+                    Padding(
+                      padding: const EdgeInsets.only(right: 12),
+                      child: SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.4,
+                          value: isConverting ? null : progressValue,
+                        ),
+                      ),
+                    ),
+                  IconButton(
+                    icon: const Icon(Icons.favorite, color: Colors.redAccent),
+                    tooltip: context.l10n('media.action.unfavorite'),
+                    onPressed: () => repo.setFavorite(task, false),
+                  ),
+                ],
               ),
               onLongPress: () async {
                 final action = await showModalBottomSheet<String>(

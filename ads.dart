@@ -32,7 +32,7 @@ class AdService with WidgetsBindingObserver {
   DateTime? _lastShowTime;
   bool _hasShownThisResume = false;
   static const Duration _minInterval = Duration(minutes: 3); // 防止過於頻繁
-  static const Duration _launchCooldown = Duration(minutes: 2);
+  static const Duration _launchCooldown = Duration(minutes: 1);
   DateTime? _appLaunchTime;
   bool _iapBusy = false;
 

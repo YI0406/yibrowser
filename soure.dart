@@ -25,6 +25,7 @@ import 'package:video_player/video_player.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 import 'package:flutter_hls_parser/flutter_hls_parser.dart';
 import 'package:firebase_analytics/firebase_analytics.dart';
+import 'notification_service.dart';
 // NOTE: The `download` package targets Flutter Web (browser-triggered save). It is not
 // applicable to iOS/Android file-system saving. Kept here for web builds if needed.
 import 'package:download/download.dart' as web_download; // unused on mobile
@@ -1159,6 +1160,7 @@ class AppRepo extends ChangeNotifier {
         // Persist the auto save setting (whether downloads are automatically
         // saved to the system photo gallery).
         'autoSave': autoSave.value,
+        'downloadNotificationsEnabled': downloadNotificationsEnabled.value,
         // Persist user defined home shortcuts. Each entry stores a URL and
         // label. Without including this array the user's custom home page
         // would reset on next launch.
@@ -1207,6 +1209,7 @@ class AppRepo extends ChangeNotifier {
     adBlockEnabled.value = false;
     adBlockFilterSets.value = {'plus'};
     autoSave.value = true;
+    downloadNotificationsEnabled.value = true;
     homeItems.value = [];
     mediaFolders.value = [];
     openTabs.value = [];
@@ -1313,6 +1316,8 @@ class AppRepo extends ChangeNotifier {
         adblockRaw.map((e) => e.toString()),
       );
       autoSave.value = data['autoSave'] as bool? ?? true;
+      downloadNotificationsEnabled.value =
+          data['downloadNotificationsEnabled'] as bool? ?? true;
 
       // Restore custom home screen items. If absent, leave empty.
       final List<dynamic> homeRaw = data['homeItems'] as List<dynamic>? ?? [];
@@ -1987,6 +1992,30 @@ class AppRepo extends ChangeNotifier {
     }
   }
 
+  void _maybeNotifyDownloadComplete(DownloadTask t) {
+    if (!downloadNotificationsEnabled.value) {
+      return;
+    }
+    final rawName = t.name?.trim();
+    final displayName =
+        (rawName != null && rawName.isNotEmpty)
+            ? rawName
+            : p.basename(t.savePath);
+    final title = LanguageService.instance.translate(
+      'download.notification.title',
+    );
+    final body = LanguageService.instance.translate(
+      'download.notification.body',
+      params: {'name': displayName},
+    );
+    unawaited(
+      NotificationService.instance.showDownloadCompleted(
+        title: title,
+        body: body,
+      ),
+    );
+  }
+
   String resolvedTaskType(DownloadTask t, {String? explicitOverride}) {
     final explicit = explicitOverride ?? t.type;
     if (explicit == 'video' || explicit == 'audio' || explicit == 'image') {
@@ -2359,6 +2388,15 @@ class AppRepo extends ChangeNotifier {
   /// will be copied into the photo gallery. Persists the preference.
   void setAutoSave(bool value) {
     autoSave.value = value;
+    _saveState();
+  }
+
+  /// Enable or disable download completion notifications.
+  void setDownloadNotificationsEnabled(bool value) {
+    if (downloadNotificationsEnabled.value == value) {
+      return;
+    }
+    downloadNotificationsEnabled.value = value;
     _saveState();
   }
 
@@ -2761,6 +2799,7 @@ class AppRepo extends ChangeNotifier {
 
   /// Whether downloaded files should automatically be saved to the device photo gallery.
   final ValueNotifier<bool> autoSave = ValueNotifier(true);
+  final ValueNotifier<bool> downloadNotificationsEnabled = ValueNotifier(true);
 
   /// Browsing history entries. Each time a page finishes loading, a new entry
   /// will be appended here. The list is persisted across restarts.
@@ -3131,6 +3170,7 @@ class AppRepo extends ChangeNotifier {
             _notifyDownloadsUpdated();
             notifyListeners();
             await _generatePreview(t);
+            _maybeNotifyDownloadComplete(t);
             if (autoSave.value) {
               try {
                 await saveFileToGallery(t.savePath);
@@ -3468,6 +3508,7 @@ class AppRepo extends ChangeNotifier {
             _notifyDownloadsUpdated();
             notifyListeners();
             await _generatePreview(t);
+            _maybeNotifyDownloadComplete(t);
             try {
               await FirebaseAnalytics.instance.logEvent(
                 name: 'download_complete',
@@ -3543,6 +3584,7 @@ class AppRepo extends ChangeNotifier {
                       _notifyDownloadsUpdated();
                       notifyListeners();
                       await _generatePreview(t);
+                      _maybeNotifyDownloadComplete(t);
                       if (autoSave.value) {
                         try {
                           await saveFileToGallery(t.savePath);
@@ -3778,6 +3820,7 @@ class AppRepo extends ChangeNotifier {
             _notifyDownloadsUpdated();
             notifyListeners();
             await _generatePreview(t);
+            _maybeNotifyDownloadComplete(t);
             if (autoSave.value) {
               try {
                 await saveFileToGallery(t.savePath);
@@ -4008,6 +4051,7 @@ class AppRepo extends ChangeNotifier {
       _notifyDownloadsUpdated();
       notifyListeners();
       await _generatePreview(t);
+      _maybeNotifyDownloadComplete(t);
       try {
         await FirebaseAnalytics.instance.logEvent(
           name: 'download_complete',

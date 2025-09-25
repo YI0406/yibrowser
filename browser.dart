@@ -6614,14 +6614,6 @@ class _BrowserPageState extends State<BrowserPage>
 
     // 對於 HLS 轉換中或下載中，使用小型 ticker 讓速度/大小文字即時刷新
     final needsTicker = isConverting || t.state == 'downloading';
-    // Periodic rebuild to refresh speed/progress while active.
-    Widget _wrapWithTicker(Widget child) {
-      if (!needsTicker) return child;
-      return StreamBuilder<int>(
-        stream: Stream.periodic(const Duration(milliseconds: 800), (i) => i),
-        builder: (_, __) => child,
-      );
-    }
 
     Widget buildTile() {
       // Build and return the ListTile. Action buttons for pause/resume/delete
@@ -6761,12 +6753,11 @@ class _BrowserPageState extends State<BrowserPage>
       );
     }
 
-    if (!needsTicker) return buildTile();
-    return StreamBuilder<DateTime>(
-      stream: Stream.periodic(
-        const Duration(milliseconds: 700),
-        (_) => DateTime.now(),
-      ),
+    if (!needsTicker) {
+      return buildTile();
+    }
+    return StreamBuilder<int>(
+      stream: Stream.periodic(const Duration(milliseconds: 800), (i) => i),
       builder: (_, __) => buildTile(),
     );
   }
