@@ -2717,6 +2717,33 @@ class AppRepo extends ChangeNotifier {
     } catch (_) {}
   }
 
+  /// Resume downloads that were interrupted by an app restart. Tasks that were
+  /// previously paused remain paused. Tasks that were still queued will be
+  /// started and tasks that were mid-download will continue from where they
+  /// left off when possible.
+  Future<void> resumeIncompleteDownloads() async {
+    final tasks = List<DownloadTask>.from(downloads.value);
+    for (final task in tasks) {
+      if (task.state == 'paused' || task.paused) {
+        task.paused = true;
+        task.state = 'paused';
+        continue;
+      }
+      if (task.state == 'queued') {
+        unawaited(_runTask(task));
+      } else if (task.state == 'downloading') {
+        task.paused = false;
+        if (task.kind == 'file') {
+          unawaited(_runTaskFile(task, resume: true));
+        } else if (task.kind == 'dash') {
+          unawaited(_runTaskDash(task));
+        } else {
+          unawaited(_runTaskHls(task));
+        }
+      }
+    }
+  }
+
   final ValueNotifier<bool> snifferEnabled = ValueNotifier(true);
 
   /// Detected media hits from the browser. Updated by the WebView sniffer.
@@ -3698,13 +3725,16 @@ class AppRepo extends ChangeNotifier {
         (d) => (d - baseDuration).abs() < 0.001 && d > 0,
       );
       final framePattern = p.join(work.path, 'frame_%06d$frameExt');
-
+      final bool useHardwareEncoder = Platform.isIOS;
+      final encoderFilter = useHardwareEncoder ? 'nv12' : 'yuv420p';
+      final encoder = useHardwareEncoder ? 'h264_videotoolbox' : 'libx264';
+      final encoderArgs = '-vf format=$encoderFilter -c:v $encoder';
       String cmd;
       if (uniformDuration && baseDuration > 0) {
         final fps = 1.0 / baseDuration;
         final fpsStr = fps.toStringAsFixed(6);
         cmd =
-            "-y -framerate $fpsStr -i '$framePattern' -vf format=yuv420p -c:v libx264 '${t.savePath}'";
+            "-y -framerate $fpsStr -i '$framePattern' $encoderArgs '${t.savePath}'";
       } else {
         // Build concat list file for FFmpeg so we can keep per-image durations
         final listFile = File(p.join(work.path, 'list.txt'));
@@ -3720,7 +3750,7 @@ class AppRepo extends ChangeNotifier {
         sb.writeln("file '$lastName'");
         await listFile.writeAsString(sb.toString(), flush: true);
         cmd =
-            "-y -f concat -safe 0 -i '${listFile.path}' -vf format=yuv420p -c:v libx264 '${t.savePath}'";
+            "-y -f concat -safe 0 -i '${listFile.path}' $encoderArgs '${t.savePath}'";
       }
 
       final session = await FFmpegKit.executeAsync(
