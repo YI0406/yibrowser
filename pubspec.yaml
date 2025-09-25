@@ -37,8 +37,7 @@ dependencies:
   volume_controller: ^3.4.0
   app_tracking_transparency: ^2.0.6+1
   pdf: ^3.11.3
-  
- 
+  flutter_local_notifications: ^19.4.2
   flutter_in_app_pip: ^1.7.4
   receive_sharing_intent: ^1.8.1
   material_design_icons_flutter: ^7.0.7296

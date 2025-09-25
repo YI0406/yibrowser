@@ -14,6 +14,8 @@ import 'image_preview_page.dart';
 import 'coventmp3.dart';
 import 'iap.dart';
 import 'app_localizations.dart';
+import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
 
 String _defaultFolderName() =>
     LanguageService.instance.translate('media.folder.defaultName');
@@ -68,6 +70,7 @@ class _MediaPageState extends State<MediaPage>
     with SingleTickerProviderStateMixin, LanguageAwareState<MediaPage> {
   late final TabController _tab = TabController(length: 3, vsync: this);
   static const String _kFolderSheetDefaultKey = '__default_media_folder__';
+  static const String _kFolderExpansionPrefKey = 'media.folderExpansionState';
 
   Timer? _convertTicker;
   final TextEditingController _searchCtl = TextEditingController();
@@ -86,6 +89,7 @@ class _MediaPageState extends State<MediaPage>
   bool _authenticatingHidden = false;
   int _lastTabIndex = 0;
   final Map<String, bool> _folderExpanded = <String, bool>{};
+  bool _folderExpansionLoaded = false;
 
   @override
   void initState() {
@@ -100,6 +104,7 @@ class _MediaPageState extends State<MediaPage>
       } catch (_) {}
       if (mounted) setState(() {});
     });
+    _loadFolderExpansionPreferences();
   }
 
   @override
@@ -373,7 +378,9 @@ class _MediaPageState extends State<MediaPage>
                                 itemBuilder: (context, index) {
                                   final section = sections[index];
                                   final key = _folderKey(section.id);
-                                  final expanded = _folderExpanded[key] ?? true;
+                                  final expanded =
+                                      _folderExpanded[key] ??
+                                      _defaultExpanded(key);
                                   MediaFolder? folder;
                                   if (section.id != null) {
                                     for (final item in folders) {
@@ -732,6 +739,7 @@ class _MediaPageState extends State<MediaPage>
           setState(() {
             _folderExpanded[key] = !expanded;
           });
+          _persistFolderExpansion();
         },
       ),
       title: Text('${section.name} (${section.tasks.length})'),
@@ -773,6 +781,7 @@ class _MediaPageState extends State<MediaPage>
         setState(() {
           _folderExpanded[key] = !expanded;
         });
+        _persistFolderExpansion();
       },
     );
   }
@@ -1606,12 +1615,74 @@ class _MediaPageState extends State<MediaPage>
   }
 
   String _folderKey(String? id) => 'folder:${id ?? '__default__'}';
+  bool _defaultExpanded(String key) => key == _folderKey(null);
+
+  Future<void> _loadFolderExpansionPreferences() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_kFolderExpansionPrefKey);
+      if (raw != null && raw.isNotEmpty) {
+        final decoded = jsonDecode(raw);
+        if (decoded is Map) {
+          final restored = <String, bool>{};
+          decoded.forEach((key, value) {
+            if (key is String) {
+              restored[key] = value == true;
+            }
+          });
+          if (mounted) {
+            setState(() {
+              _folderExpanded
+                ..clear()
+                ..addAll(restored);
+            });
+          } else {
+            _folderExpanded
+              ..clear()
+              ..addAll(restored);
+          }
+        }
+      }
+    } catch (_) {}
+    if (mounted) {
+      setState(() {
+        _folderExpanded.putIfAbsent(_folderKey(null), () => true);
+        _folderExpansionLoaded = true;
+      });
+    } else {
+      _folderExpanded.putIfAbsent(_folderKey(null), () => true);
+      _folderExpansionLoaded = true;
+    }
+  }
+
+  Future<void> _persistFolderExpansion() async {
+    if (!_folderExpansionLoaded) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        _kFolderExpansionPrefKey,
+        jsonEncode(_folderExpanded),
+      );
+    } catch (_) {}
+  }
 
   void _syncFolderExpansion(Iterable<String?> ids) {
     final keys = ids.map(_folderKey).toSet();
-    _folderExpanded.removeWhere((key, _) => !keys.contains(key));
+    bool changed = false;
+    final removed =
+        _folderExpanded.keys.where((key) => !keys.contains(key)).toList();
+    for (final key in removed) {
+      _folderExpanded.remove(key);
+      changed = true;
+    }
     for (final key in keys) {
-      _folderExpanded.putIfAbsent(key, () => true);
+      if (!_folderExpanded.containsKey(key)) {
+        _folderExpanded[key] = _defaultExpanded(key);
+        changed = true;
+      }
+    }
+    if (changed) {
+      _persistFolderExpansion();
     }
   }
 
@@ -1742,6 +1813,7 @@ class _MediaPageState extends State<MediaPage>
     setState(() {
       _folderExpanded[_folderKey(folder.id)] = true;
     });
+    _persistFolderExpansion();
   }
 
   String _folderNameForId(String? id, {List<MediaFolder>? folders}) {

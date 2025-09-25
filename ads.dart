@@ -32,6 +32,8 @@ class AdService with WidgetsBindingObserver {
   DateTime? _lastShowTime;
   bool _hasShownThisResume = false;
   static const Duration _minInterval = Duration(minutes: 3); // 防止過於頻繁
+  static const Duration _launchCooldown = Duration(minutes: 2);
+  DateTime? _appLaunchTime;
   bool _iapBusy = false;
 
   final ValueNotifier<BannerAd?> bannerAdNotifier = ValueNotifier<BannerAd?>(
@@ -67,6 +69,7 @@ class AdService with WidgetsBindingObserver {
   ///
   /// [testDeviceIds]: add your device id here to force test ads while developing.
   Future<void> init({List<String> testDeviceIds = const []}) async {
+    _appLaunchTime ??= DateTime.now();
     await MobileAds.instance.initialize();
 
     // In debug/profile, always request test ads (safe for development).
@@ -167,6 +170,11 @@ class AdService with WidgetsBindingObserver {
     }
     if (_iapBusy) {
       debugPrint("⏸️ showInterstitial(): 內購流程進行中，暫停顯示。");
+      return false;
+    }
+    if (_appLaunchTime != null &&
+        DateTime.now().difference(_appLaunchTime!) < _launchCooldown) {
+      debugPrint("⏳ showInterstitial(): 啟動冷卻中，略過此次顯示。");
       return false;
     }
     final ad = _interstitial;

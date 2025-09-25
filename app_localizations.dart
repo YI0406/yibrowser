@@ -2185,6 +2185,16 @@ final Map<String, Map<AppLanguage, String>> _translations = {
     AppLanguage.zhHans: '片段/秒',
     AppLanguage.en: 'segments/s',
   },
+  'download.notification.title': {
+    AppLanguage.zhHant: '下載完成',
+    AppLanguage.zhHans: '下载完成',
+    AppLanguage.en: 'Download complete',
+  },
+  'download.notification.body': {
+    AppLanguage.zhHant: '{name} 已下載完成。',
+    AppLanguage.zhHans: '{name} 已下载完成。',
+    AppLanguage.en: '“{name}” has finished downloading.',
+  },
 };
 
 /// Service that manages the current language and translation lookup.

@@ -23,6 +23,7 @@ import 'package:flutter/services.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 import 'app_localizations.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'notification_service.dart';
 
 /// Entry point of the application. Initializes WebView debugging and sets up
 /// the root navigation with three tabs: browser, media, and settings.
@@ -57,6 +58,8 @@ void main() async {
   await Sniffer.initWebViewDebug();
   // Load any persisted downloads so media lists persist across restarts.
   await AppRepo.I.init();
+  await NotificationService.instance.init();
+  await LanguageService.instance.init();
   final purchaseService = PurchaseService();
   purchaseService.onPurchaseUpdated = () {
     final unlocked = purchaseService.isPremiumUnlocked;
@@ -68,12 +71,13 @@ void main() async {
   };
   await purchaseService.initStoreInfo();
   AppRepo.I.setPremiumUnlocked(purchaseService.isPremiumUnlocked);
+  await AppRepo.I.resumeIncompleteDownloads();
 
   await AdService.instance.init();
   // Request ATT prior to initializing ads (iOS only)
   await _requestATTIfNeeded();
   AdService.instance.setPremiumUnlocked(purchaseService.isPremiumUnlocked);
-  await LanguageService.instance.init();
+
   runApp(const MyApp());
 }
 
