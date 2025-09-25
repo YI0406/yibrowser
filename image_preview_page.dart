@@ -3,6 +3,7 @@ import 'iap.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as path;
 import 'package:share_plus/share_plus.dart';
+import 'app_localizations.dart';
 
 /// Displays a local image with pinch-to-zoom support and an option to share.
 class ImagePreviewPage extends StatelessWidget {
@@ -26,7 +27,7 @@ class ImagePreviewPage extends StatelessWidget {
             onPressed: () async {
               final ok = await PurchaseService().ensurePremium(
                 context: context,
-                featureName: '匯出',
+                featureName: context.l10n('feature.export'),
               );
               if (!ok) return;
               if (!File(filePath).existsSync()) return;

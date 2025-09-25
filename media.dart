@@ -13,6 +13,7 @@ import 'video_player_page.dart';
 import 'image_preview_page.dart';
 import 'coventmp3.dart';
 import 'iap.dart';
+import 'app_localizations.dart';
 
 const String _kDefaultFolderName = '我的下載';
 
@@ -131,7 +132,7 @@ class _MediaPageState extends State<MediaPage>
       if (!AppRepo.I.isPremiumUnlocked) {
         final ok = await PurchaseService().ensurePremium(
           context: context,
-          featureName: '隱藏功能',
+          featureName: context.l10n('feature.hidden'),
         );
         if (!mounted) return;
         if (!ok) {
@@ -892,7 +893,7 @@ class _MediaPageState extends State<MediaPage>
         } else if (action == 'edit-export') {
           final ok = await PurchaseService().ensurePremium(
             context: context,
-            featureName: '編輯導出',
+            featureName: context.l10n('feature.editExport'),
           );
           if (!ok) return;
           if (!_fileHasContent(task.savePath)) {
@@ -920,7 +921,7 @@ class _MediaPageState extends State<MediaPage>
         } else if (action == 'share') {
           final ok = await PurchaseService().ensurePremium(
             context: context,
-            featureName: '匯出',
+            featureName: context.l10n('feature.export'),
           );
           if (!ok) return;
           if (File(task.savePath).existsSync()) {
@@ -1311,7 +1312,7 @@ class _MediaPageState extends State<MediaPage>
   ) async {
     final ok = await PurchaseService().ensurePremium(
       context: context,
-      featureName: '匯出',
+      featureName: context.l10n('feature.export'),
     );
     if (!ok) return false;
     final files = <XFile>[];
@@ -1438,7 +1439,7 @@ class _MediaPageState extends State<MediaPage>
   Future<void> _handleShare(BuildContext context, DownloadTask task) async {
     final ok = await PurchaseService().ensurePremium(
       context: context,
-      featureName: '匯出',
+      featureName: context.l10n('feature.export'),
     );
     if (!ok) return;
     if (!File(task.savePath).existsSync()) {
@@ -1682,7 +1683,7 @@ class _MyFavorites extends StatelessWidget {
   Future<void> _handleShare(BuildContext context, DownloadTask task) async {
     final ok = await PurchaseService().ensurePremium(
       context: context,
-      featureName: '匯出',
+      featureName: context.l10n('feature.export'),
     );
     if (!ok) return;
     if (!File(task.savePath).existsSync()) {
@@ -1923,7 +1924,7 @@ class _MyFavorites extends StatelessWidget {
                 } else if (action == 'edit-export') {
                   final ok = await PurchaseService().ensurePremium(
                     context: context,
-                    featureName: '編輯導出',
+                    featureName: context.l10n('feature.editExport'),
                   );
                   if (!ok) return;
                   if (!_fileHasContent(task.savePath)) {
@@ -1947,7 +1948,7 @@ class _MyFavorites extends StatelessWidget {
                 } else if (action == 'share') {
                   final ok = await PurchaseService().ensurePremium(
                     context: context,
-                    featureName: '匯出',
+                    featureName: context.l10n('feature.export'),
                   );
                   if (!ok) return;
                   await _handleShare(context, task);

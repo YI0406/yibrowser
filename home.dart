@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'dart:math' as math;
 import 'dart:async';
 import 'iap.dart';
+import 'app_localizations.dart';
 
 /// HomePage displays a grid of shortcuts. Each shortcut shows its favicon,
 /// name and actions to edit or delete. The grid supports drag‑and‑drop
@@ -798,7 +799,7 @@ class _HomePageState extends State<HomePage>
     if (AppRepo.I.hasReachedFreeHomeShortcutLimit) {
       await PurchaseService().showPurchasePrompt(
         context,
-        featureName: '新增更多主頁捷徑',
+        featureName: context.l10n('feature.addHomeShortcut'),
       );
       return;
     }
@@ -849,7 +850,7 @@ class _HomePageState extends State<HomePage>
     if (AppRepo.I.hasReachedFreeHomeShortcutLimit) {
       await PurchaseService().showPurchasePrompt(
         context,
-        featureName: '新增更多主頁捷徑',
+        featureName: context.l10n('feature.addHomeShortcut'),
       );
       return;
     }

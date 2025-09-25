@@ -9,6 +9,7 @@ import 'package:in_app_purchase_storekit/in_app_purchase_storekit.dart';
 import 'dart:convert'
     show base64Decode, base64Encode, jsonEncode, jsonDecode, utf8;
 import 'package:http/http.dart' as http;
+import 'app_localizations.dart';
 
 class PurchaseService {
   // 1️⃣ 新增這個變數在 PurchaseService 類別裡
@@ -424,8 +425,11 @@ class PurchaseService {
     final theme = Theme.of(context);
     final description =
         featureName == null
-            ? '解鎖高級功能可去除廣告並開啟所有進階功能。'
-            : '使用$featureName需要先解鎖高級功能並去除廣告。';
+            ? context.l10n('iap.prompt.description.generic')
+            : context.l10n(
+              'iap.prompt.description.feature',
+              params: {'feature': featureName},
+            );
     final action = await showModalBottomSheet<String>(
       context: context,
       builder: (ctx) {
@@ -437,23 +441,26 @@ class PurchaseService {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text('升級至高級版', style: theme.textTheme.titleMedium),
+                Text(
+                  ctx.l10n('iap.prompt.title'),
+                  style: theme.textTheme.titleMedium,
+                ),
                 const SizedBox(height: 8),
                 Text(description, style: theme.textTheme.bodyMedium),
                 const SizedBox(height: 16),
                 FilledButton(
                   onPressed: busy ? null : () => Navigator.of(ctx).pop('buy'),
-                  child: const Text('解鎖高級功能＆去廣告'),
+                  child: Text(ctx.l10n('iap.prompt.action.buy')),
                 ),
                 const SizedBox(height: 8),
                 OutlinedButton(
                   onPressed:
                       busy ? null : () => Navigator.of(ctx).pop('restore'),
-                  child: const Text('還原購買'),
+                  child: Text(ctx.l10n('iap.prompt.action.restore')),
                 ),
                 TextButton(
                   onPressed: () => Navigator.of(ctx).pop(),
-                  child: const Text('稍後再說'),
+                  child: Text(ctx.l10n('iap.prompt.action.later')),
                 ),
               ],
             ),
@@ -467,7 +474,11 @@ class PurchaseService {
       messenger.showSnackBar(
         SnackBar(
           duration: const Duration(seconds: 1),
-          content: Text(ok ? '感謝購買，高級功能已解鎖。' : '購買未完成，請稍後再試。'),
+          content: Text(
+            ok
+                ? context.l10n('iap.prompt.snack.buySuccess')
+                : context.l10n('iap.prompt.snack.buyIncomplete'),
+          ),
         ),
       );
     } else if (action == 'restore') {
@@ -476,7 +487,11 @@ class PurchaseService {
       messenger.showSnackBar(
         SnackBar(
           duration: const Duration(seconds: 1),
-          content: Text(ok ? '已還原購買。' : '未找到可還原的購買紀錄。'),
+          content: Text(
+            ok
+                ? context.l10n('iap.prompt.snack.restoreSuccess')
+                : context.l10n('iap.prompt.snack.restoreFailed'),
+          ),
         ),
       );
     }

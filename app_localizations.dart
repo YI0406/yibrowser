@@ -295,6 +295,113 @@ final Map<String, Map<AppLanguage, String>> _translations = {
     AppLanguage.zhHans: '自动保存到相册',
     AppLanguage.en: 'Auto-save to gallery',
   },
+  'iap.prompt.title': {
+    AppLanguage.zhHant: '升級至高級版',
+    AppLanguage.zhHans: '升级至高级版',
+    AppLanguage.en: 'Upgrade to premium',
+  },
+  'iap.prompt.description.generic': {
+    AppLanguage.zhHant: '解鎖高級功能可去除廣告並開啟所有進階功能。',
+    AppLanguage.zhHans: '解锁高级功能可去除广告并开启所有进阶功能。',
+    AppLanguage.en:
+        'Unlock premium to remove ads and enable all advanced features.',
+  },
+  'iap.prompt.description.feature': {
+    AppLanguage.zhHant: '使用{feature}需要先解鎖高級功能並去除廣告。',
+    AppLanguage.zhHans: '使用{feature}需要先解锁高级功能并去除广告。',
+    AppLanguage.en:
+        '{feature} requires premium to unlock and remove ads first.',
+  },
+  'iap.prompt.action.buy': {
+    AppLanguage.zhHant: '解鎖高級功能＆去廣告',
+    AppLanguage.zhHans: '解锁高级功能＆去广告',
+    AppLanguage.en: 'Unlock premium & remove ads',
+  },
+  'iap.prompt.action.restore': {
+    AppLanguage.zhHant: '還原購買',
+    AppLanguage.zhHans: '还原购买',
+    AppLanguage.en: 'Restore purchases',
+  },
+  'iap.prompt.action.later': {
+    AppLanguage.zhHant: '稍後再說',
+    AppLanguage.zhHans: '稍后再说',
+    AppLanguage.en: 'Maybe later',
+  },
+  'iap.prompt.snack.buySuccess': {
+    AppLanguage.zhHant: '感謝購買，高級功能已解鎖。',
+    AppLanguage.zhHans: '感谢购买，高级功能已解锁。',
+    AppLanguage.en: 'Thanks for the purchase. Premium is unlocked.',
+  },
+  'iap.prompt.snack.buyIncomplete': {
+    AppLanguage.zhHant: '購買未完成，請稍後再試。',
+    AppLanguage.zhHans: '购买未完成，请稍后再试。',
+    AppLanguage.en: 'Purchase incomplete. Please try again later.',
+  },
+  'iap.prompt.snack.restoreSuccess': {
+    AppLanguage.zhHant: '已還原購買。',
+    AppLanguage.zhHans: '已还原购买。',
+    AppLanguage.en: 'Purchases restored.',
+  },
+  'iap.prompt.snack.restoreFailed': {
+    AppLanguage.zhHant: '未找到可還原的購買紀錄。',
+    AppLanguage.zhHans: '未找到可还原的购买记录。',
+    AppLanguage.en: 'No purchases available to restore.',
+  },
+  'feature.addHomeShortcut': {
+    AppLanguage.zhHant: '新增更多主頁捷徑',
+    AppLanguage.zhHans: '新增更多主页捷径',
+    AppLanguage.en: 'Add more home shortcuts',
+  },
+  'feature.sniffing': {
+    AppLanguage.zhHant: '嗅探功能',
+    AppLanguage.zhHans: '嗅探功能',
+    AppLanguage.en: 'Sniffing feature',
+  },
+  'feature.sniffingResources': {
+    AppLanguage.zhHant: '嗅探資源',
+    AppLanguage.zhHans: '嗅探资源',
+    AppLanguage.en: 'Sniff media resources',
+  },
+  'feature.export': {
+    AppLanguage.zhHant: '匯出',
+    AppLanguage.zhHans: '导出',
+    AppLanguage.en: 'Export',
+  },
+  'feature.editExport': {
+    AppLanguage.zhHant: '編輯導出',
+    AppLanguage.zhHans: '编辑导出',
+    AppLanguage.en: 'Edit & export',
+  },
+  'feature.hidden': {
+    AppLanguage.zhHant: '隱藏功能',
+    AppLanguage.zhHans: '隐藏功能',
+    AppLanguage.en: 'Hidden feature',
+  },
+  'browser.sniffer.tooltip.enabled': {
+    AppLanguage.zhHant: '嗅探',
+    AppLanguage.zhHans: '嗅探',
+    AppLanguage.en: 'Sniff',
+  },
+  'browser.sniffer.tooltip.premiumLocked': {
+    AppLanguage.zhHant: '嗅探（需高級版）',
+    AppLanguage.zhHans: '嗅探（需高级版）',
+    AppLanguage.en: 'Sniff (Premium required)',
+  },
+  'browser.resources.tooltip': {
+    AppLanguage.zhHant: '資源',
+    AppLanguage.zhHans: '资源',
+    AppLanguage.en: 'Resources',
+  },
+  'browser.resources.tooltip.count': {
+    AppLanguage.zhHant: '資源（{count}）',
+    AppLanguage.zhHans: '资源（{count}）',
+    AppLanguage.en: 'Resources ({count})',
+  },
+  'browser.resources.tooltip.premiumLocked': {
+    AppLanguage.zhHant: '資源（需高級版）',
+    AppLanguage.zhHans: '资源（需高级版）',
+    AppLanguage.en: 'Resources (Premium required)',
+  },
 };
 
 /// Service that manages the current language and translation lookup.

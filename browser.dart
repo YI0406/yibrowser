@@ -25,6 +25,7 @@ import 'image_preview_page.dart';
 import 'package:share_plus/share_plus.dart';
 import 'dart:io' show Platform;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'app_localizations.dart';
 
 // --- Top-level helper for measuring instantaneous rates (bytes per second)
 class _RateSnapshot {
@@ -2166,7 +2167,7 @@ class _BrowserPageState extends State<BrowserPage> {
     if (AppRepo.I.hasReachedFreeHomeShortcutLimit) {
       await PurchaseService().showPurchasePrompt(
         context,
-        featureName: '新增更多主頁捷徑',
+        featureName: context.l10n('feature.addHomeShortcut'),
       );
       return;
     }
@@ -4402,12 +4403,19 @@ class _BrowserPageState extends State<BrowserPage> {
                     builder: (context, on, __) {
                       final active = premium && on;
                       return IconButton(
-                        tooltip: premium ? '嗅探' : '嗅探（需高級版）',
+                        tooltip:
+                            premium
+                                ? context.l10n(
+                                  'browser.sniffer.tooltip.enabled',
+                                )
+                                : context.l10n(
+                                  'browser.sniffer.tooltip.premiumLocked',
+                                ),
                         onPressed: () async {
                           if (!premium) {
                             await PurchaseService().showPurchasePrompt(
                               context,
-                              featureName: '嗅探功能',
+                              featureName: context.l10n('feature.sniffing'),
                             );
                             return;
                           }
@@ -4433,16 +4441,26 @@ class _BrowserPageState extends State<BrowserPage> {
                     valueListenable: repo.hits,
                     builder: (context, hits, __) {
                       final detected = hits.length;
+                      final tooltip =
+                          premium
+                              ? (detected > 0
+                                  ? context.l10n(
+                                    'browser.resources.tooltip.count',
+                                    params: {'count': detected.toString()},
+                                  )
+                                  : context.l10n('browser.resources.tooltip'))
+                              : context.l10n(
+                                'browser.resources.tooltip.premiumLocked',
+                              );
                       return IconButton(
-                        tooltip:
-                            premium
-                                ? (detected > 0 ? '資源（$detected）' : '資源')
-                                : '資源（需高級版）',
+                        tooltip: tooltip,
                         onPressed: () async {
                           if (!premium) {
                             await PurchaseService().showPurchasePrompt(
                               context,
-                              featureName: '嗅探資源',
+                              featureName: context.l10n(
+                                'feature.sniffingResources',
+                              ),
                             );
                             return;
                           }
@@ -4872,7 +4890,7 @@ class _BrowserPageState extends State<BrowserPage> {
   Future<void> _toggleSniffer() async {
     final ok = await PurchaseService().ensurePremium(
       context: context,
-      featureName: '嗅探功能',
+      featureName: context.l10n('feature.sniffing'),
     );
     if (!ok) {
       return;
@@ -5531,7 +5549,7 @@ class _BrowserPageState extends State<BrowserPage> {
   Future<void> _openDetectedSheet() async {
     final ok = await PurchaseService().ensurePremium(
       context: context,
-      featureName: '嗅探資源',
+      featureName: context.l10n('feature.sniffingResources'),
     );
     if (!ok) {
       return;
@@ -6412,7 +6430,7 @@ class _BrowserPageState extends State<BrowserPage> {
             if (filePath != null) {
               final ok = await PurchaseService().ensurePremium(
                 context: context,
-                featureName: '匯出',
+                featureName: context.l10n('feature.export'),
               );
               if (!ok) return;
               final imagePath = filePath;

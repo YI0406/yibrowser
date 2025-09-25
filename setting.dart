@@ -23,6 +23,7 @@ class _SettingPageState extends State<SettingPage> {
   String? _uaMode; // 'iphone' | 'ipad' | 'android'
   bool _uaLoaded = false;
   String? _searchEngine;
+  late final VoidCallback _languageListener;
   static const Map<String, String> _uaLabelKey = {
     'iphone': 'settings.ua.option.iphone',
     'ipad': 'settings.ua.option.ipad',
@@ -46,6 +47,19 @@ class _SettingPageState extends State<SettingPage> {
     // Ensure default OFF only once, and remind about photo permission on open.
     _ensureAutoSaveDefaultOff();
     _checkPhotoPermissionOnOpen();
+    _languageListener = () {
+      if (!mounted) return;
+      setState(() {});
+    };
+    LanguageService.instance.languageListenable.addListener(_languageListener);
+  }
+
+  @override
+  void dispose() {
+    LanguageService.instance.languageListenable.removeListener(
+      _languageListener,
+    );
+    super.dispose();
   }
 
   Future<void> _loadSearchEngine() async {
