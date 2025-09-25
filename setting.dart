@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:photo_manager/photo_manager.dart';
 import 'iap.dart';
+import 'app_localizations.dart';
 
 /// SettingPage exposes preferences such as whether downloads are
 /// automatically saved to the photo album and provides a way to clear
@@ -22,18 +23,18 @@ class _SettingPageState extends State<SettingPage> {
   String? _uaMode; // 'iphone' | 'ipad' | 'android'
   bool _uaLoaded = false;
   String? _searchEngine;
-  static const Map<String, String> _uaLabel = {
-    'iphone': 'iPhone',
-    'ipad': 'iPad',
-    'android': 'Android',
-    'windows': 'Windows',
+  static const Map<String, String> _uaLabelKey = {
+    'iphone': 'settings.ua.option.iphone',
+    'ipad': 'settings.ua.option.ipad',
+    'android': 'settings.ua.option.android',
+    'windows': 'settings.ua.option.windows',
   };
-  static const Map<String, String> _searchEngineLabel = {
-    'google': 'Google',
-    'bing': 'Bing',
-    'yahoo': 'Yahoo',
-    'duckduckgo': 'DuckDuckGo',
-    'baidu': 'Baidu',
+  static const Map<String, String> _searchEngineLabelKey = {
+    'google': 'settings.searchEngine.option.google',
+    'bing': 'settings.searchEngine.option.bing',
+    'yahoo': 'settings.searchEngine.option.yahoo',
+    'duckduckgo': 'settings.searchEngine.option.duckduckgo',
+    'baidu': 'settings.searchEngine.option.baidu',
   };
 
   @override
@@ -66,7 +67,12 @@ class _SettingPageState extends State<SettingPage> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         duration: const Duration(seconds: 1),
-        content: Text('已設定搜尋引擎：${_searchEngineLabel[v]}'),
+        content: Text(
+          context.l10n(
+            'settings.searchEngine.snack',
+            params: {'engine': context.l10n(_searchEngineLabelKey[v]!)},
+          ),
+        ),
       ),
     );
   }
@@ -102,7 +108,12 @@ class _SettingPageState extends State<SettingPage> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         duration: const Duration(seconds: 1),
-        content: Text('已設定 UA：${_uaLabel[v]}（重啟後保留）'),
+        content: Text(
+          context.l10n(
+            'settings.ua.snack',
+            params: {'ua': context.l10n(_uaLabelKey[v]!)},
+          ),
+        ),
       ),
     );
   }
@@ -159,9 +170,10 @@ class _SettingPageState extends State<SettingPage> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             duration: const Duration(seconds: 2),
-            content: const Text('尚未取得相簿存取權限，啟用「自動儲存到相簿」前請先到系統設定開啟。'),
+            content: Text(context.l10n('settings.photoPermission.reminder')),
             action: SnackBarAction(
-              label: '前往設定',
+              label: context.l10n('common.goToSettings'),
+
               onPressed: () {
                 PhotoManager.openSetting();
               },
@@ -172,9 +184,9 @@ class _SettingPageState extends State<SettingPage> {
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          duration: Duration(seconds: 1),
-          content: Text('無法檢查相簿權限，請至系統設定確認。'),
+        SnackBar(
+          duration: const Duration(seconds: 1),
+          content: Text(context.l10n('settings.photoPermission.unableCheck')),
         ),
       );
     }
@@ -183,9 +195,10 @@ class _SettingPageState extends State<SettingPage> {
   @override
   Widget build(BuildContext context) {
     final repo = AppRepo.I;
+    final languageService = LanguageService.instance;
     // _uaMode will be set by _loadUaMode(); until then, just render the page without auto-writing defaults.
     return Scaffold(
-      appBar: AppBar(title: const Text('設定')),
+      appBar: AppBar(title: Text(context.l10n('settings.title'))),
       body: ListView(
         children: [
           Padding(
@@ -196,7 +209,9 @@ class _SettingPageState extends State<SettingPage> {
                 final purchase = PurchaseService();
                 final busy = purchase.isIapActive;
                 final description =
-                    premium ? '高級功能已啟用，廣告已移除。' : '升級後可使用編輯導出、嗅探、匯出等進階功能並去除廣告。';
+                    premium
+                        ? context.l10n('settings.premium.statusUnlocked')
+                        : context.l10n('settings.premium.statusLocked');
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
@@ -207,16 +222,24 @@ class _SettingPageState extends State<SettingPage> {
                               : () async {
                                 final ok = await purchase.buyPremium(context);
                                 if (!mounted) return;
+                                final key =
+                                    ok
+                                        ? 'settings.premium.purchaseSuccess'
+                                        : 'settings.premium.purchaseIncomplete';
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   SnackBar(
                                     duration: const Duration(seconds: 1),
-                                    content: Text(
-                                      ok ? '購買成功，已解鎖高級功能。' : '購買未完成',
-                                    ),
+                                    content: Text(context.l10n(key)),
                                   ),
                                 );
                               },
-                      child: Text(premium ? '已解鎖高級功能' : '解鎖高級功能＆去廣告'),
+                      child: Text(
+                        context.l10n(
+                          premium
+                              ? 'settings.premium.button.unlocked'
+                              : 'settings.premium.button.upgrade',
+                        ),
+                      ),
                     ),
                     const SizedBox(height: 8),
                     OutlinedButton(
@@ -226,16 +249,20 @@ class _SettingPageState extends State<SettingPage> {
                               : () async {
                                 final ok = await purchase.restore();
                                 if (!mounted) return;
+                                final key =
+                                    ok
+                                        ? 'settings.premium.restoreSuccess'
+                                        : 'settings.premium.restoreFailed';
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   SnackBar(
                                     duration: const Duration(seconds: 1),
-                                    content: Text(
-                                      ok ? '已還原購買。' : '未找到可還原的購買紀錄。',
-                                    ),
+                                    content: Text(context.l10n(key)),
                                   ),
                                 );
                               },
-                      child: const Text('還原購買'),
+                      child: Text(
+                        context.l10n('settings.premium.restoreButton'),
+                      ),
                     ),
                     const SizedBox(height: 8),
                     Text(
@@ -247,43 +274,101 @@ class _SettingPageState extends State<SettingPage> {
               },
             ),
           ),
-          const ListTile(title: Text('一般')),
+          ValueListenableBuilder<AppLanguage>(
+            valueListenable: languageService.languageListenable,
+            builder: (context, selectedLanguage, _) {
+              return ListTile(
+                leading: const Icon(Icons.translate_outlined),
+                title: Text(context.l10n('settings.language.title')),
+                subtitle: Text(
+                  context.l10n(
+                    languageService.languageNameKey(selectedLanguage),
+                  ),
+                ),
+                trailing: DropdownButton<AppLanguage>(
+                  value: selectedLanguage,
+                  items:
+                      AppLanguage.values
+                          .map(
+                            (lang) => DropdownMenuItem<AppLanguage>(
+                              value: lang,
+                              child: Text(
+                                context.l10n(
+                                  languageService.languageNameKey(lang),
+                                ),
+                              ),
+                            ),
+                          )
+                          .toList(),
+                  onChanged: (value) {
+                    if (value == null) return;
+                    () async {
+                      await languageService.setLanguage(value);
+                      if (!mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          duration: const Duration(seconds: 1),
+                          content: Text(
+                            context.l10n(
+                              'settings.language.snack',
+                              params: {
+                                'language': context.l10n(
+                                  languageService.languageNameKey(value),
+                                ),
+                              },
+                            ),
+                          ),
+                        ),
+                      );
+                    }();
+                  },
+                ),
+              );
+            },
+          ),
+          const Divider(height: 1),
+          ListTile(title: Text(context.l10n('settings.section.general'))),
           const Divider(height: 1),
           ValueListenableBuilder<bool>(
             valueListenable: repo.premiumUnlocked,
             builder: (context, premium, _) {
-              final subtitle = _uaLabel[_uaMode ?? ''] ?? '未設定';
+              final uaKey = _uaMode != null ? _uaLabelKey[_uaMode!] : null;
+              final uaText =
+                  uaKey != null
+                      ? context.l10n(uaKey)
+                      : context.l10n('common.notSet');
+              final subtitle =
+                  premium
+                      ? uaText
+                      : '$uaText${context.l10n('settings.requiresPremiumSuffix')}';
               return ListTile(
                 leading: const Icon(Icons.language_outlined),
-                title: const Text('User-Agent (UA)'),
-                subtitle: Text(premium ? subtitle : '$subtitle（需高級版）'),
+                title: Text(context.l10n('settings.ua.title')),
+                subtitle: Text(subtitle),
                 onTap:
                     premium
                         ? null
                         : () => PurchaseService().showPurchasePrompt(
                           context,
-                          featureName: '更改 User-Agent',
+                          featureName: context.l10n('settings.ua.featureName'),
                         ),
                 trailing: IgnorePointer(
                   ignoring: !premium,
                   child: DropdownButton<String>(
                     value:
-                        (_uaMode != null && _uaLabel.containsKey(_uaMode))
+                        (_uaMode != null && _uaLabelKey.containsKey(_uaMode))
                             ? _uaMode
                             : null,
-                    hint: const Text('選擇'),
-                    items: const [
-                      DropdownMenuItem(value: 'iphone', child: Text('iPhone')),
-                      DropdownMenuItem(value: 'ipad', child: Text('iPad')),
-                      DropdownMenuItem(
-                        value: 'android',
-                        child: Text('Android'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'windows',
-                        child: Text('Windows'),
-                      ),
-                    ],
+                    hint: Text(context.l10n('settings.action.select')),
+                    items:
+                        _uaLabelKey.entries
+                            .map(
+                              (entry) => DropdownMenuItem<String>(
+                                value: entry.key,
+                                child: Text(context.l10n(entry.value)),
+                              ),
+                            )
+                            .toList(),
                     onChanged:
                         premium
                             ? (v) {
@@ -299,25 +384,29 @@ class _SettingPageState extends State<SettingPage> {
           const Divider(height: 1),
           ListTile(
             leading: const Icon(Icons.search_outlined),
-            title: const Text('搜尋引擎'),
-            subtitle: Text(_searchEngineLabel[_searchEngine ?? ''] ?? '未設定'),
+            title: Text(context.l10n('settings.searchEngine.title')),
+            subtitle: Text(
+              _searchEngine != null &&
+                      _searchEngineLabelKey.containsKey(_searchEngine)
+                  ? context.l10n(_searchEngineLabelKey[_searchEngine!]!)
+                  : context.l10n('common.notSet'),
+            ),
             trailing: DropdownButton<String>(
               value:
                   (_searchEngine != null &&
-                          _searchEngineLabel.containsKey(_searchEngine))
+                          _searchEngineLabelKey.containsKey(_searchEngine))
                       ? _searchEngine
                       : null,
-              hint: const Text('選擇'),
-              items: const [
-                DropdownMenuItem(value: 'google', child: Text('Google')),
-                DropdownMenuItem(value: 'bing', child: Text('Bing')),
-                DropdownMenuItem(value: 'yahoo', child: Text('Yahoo')),
-                DropdownMenuItem(
-                  value: 'duckduckgo',
-                  child: Text('DuckDuckGo'),
-                ),
-                DropdownMenuItem(value: 'baidu', child: Text('Baidu')),
-              ],
+              hint: Text(context.l10n('settings.action.select')),
+              items:
+                  _searchEngineLabelKey.entries
+                      .map(
+                        (entry) => DropdownMenuItem<String>(
+                          value: entry.key,
+                          child: Text(context.l10n(entry.value)),
+                        ),
+                      )
+                      .toList(),
               onChanged: (v) {
                 if (v == null) return;
                 _saveSearchEngine(v);
@@ -325,7 +414,7 @@ class _SettingPageState extends State<SettingPage> {
             ),
           ),
           const Divider(height: 1),
-          // Toggle for automatic saving to gallery（需高級版）
+
           ValueListenableBuilder<bool>(
             valueListenable: repo.premiumUnlocked,
             builder: (context, premium, _) {
@@ -340,15 +429,22 @@ class _SettingPageState extends State<SettingPage> {
                     effectiveValue = false;
                   }
                   return SwitchListTile(
-                    title: const Text('自動儲存到相簿'),
-                    subtitle: premium ? null : const Text('升級高級版後才可啟用。'),
+                    title: Text(context.l10n('settings.autoSave.title')),
+                    subtitle:
+                        premium
+                            ? null
+                            : Text(
+                              context.l10n('settings.autoSave.premiumHint'),
+                            ),
                     value: effectiveValue,
                     onChanged: (v) {
                       () async {
                         if (!premium) {
                           await PurchaseService().showPurchasePrompt(
                             context,
-                            featureName: '自動儲存到相簿',
+                            featureName: context.l10n(
+                              'settings.autoSave.featureName',
+                            ),
                           );
                           return;
                         }
@@ -362,9 +458,13 @@ class _SettingPageState extends State<SettingPage> {
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
                                   duration: const Duration(seconds: 2),
-                                  content: const Text('自動儲存需要相簿權限，請前往設定開啟。'),
+                                  content: Text(
+                                    context.l10n(
+                                      'settings.autoSave.permissionRequired',
+                                    ),
+                                  ),
                                   action: SnackBarAction(
-                                    label: '前往設定',
+                                    label: context.l10n('common.goToSettings'),
                                     onPressed: () {
                                       PhotoManager.openSetting();
                                     },
@@ -377,9 +477,13 @@ class _SettingPageState extends State<SettingPage> {
                             repo.setAutoSave(false);
                             if (!mounted) return;
                             ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                duration: Duration(seconds: 1),
-                                content: Text('無法確認相簿權限，請手動檢查設定。'),
+                              SnackBar(
+                                duration: const Duration(seconds: 1),
+                                content: Text(
+                                  context.l10n(
+                                    'settings.autoSave.permissionUnknown',
+                                  ),
+                                ),
                               ),
                             );
                             return;
@@ -388,10 +492,14 @@ class _SettingPageState extends State<SettingPage> {
 
                         repo.setAutoSave(v);
                         if (!mounted) return;
+                        final key =
+                            v
+                                ? 'settings.autoSave.snack.enabled'
+                                : 'settings.autoSave.snack.disabled';
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
                             duration: const Duration(seconds: 1),
-                            content: Text(v ? '下載完成後將自動存入相簿' : '已關閉自動存相簿'),
+                            content: Text(context.l10n(key)),
                           ),
                         );
                       }();
@@ -403,41 +511,44 @@ class _SettingPageState extends State<SettingPage> {
           ),
           ListTile(
             leading: const Icon(Icons.delete_sweep_outlined),
-            title: const Text('清理快取'),
-            subtitle: Text('目前快取大小：$_cacheSize'),
+            title: Text(context.l10n('settings.cache.title')),
+            subtitle: Text(
+              context.l10n(
+                'settings.cache.subtitle',
+                params: {'size': _cacheSize},
+              ),
+            ),
             onTap: () async {
               await repo.clearCache();
               await _refreshCacheSize();
               if (!mounted) return;
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  duration: Duration(seconds: 1),
-                  content: Text('已清理快取'),
+                SnackBar(
+                  duration: const Duration(seconds: 1),
+                  content: Text(context.l10n('settings.cache.cleared')),
                 ),
               );
             },
           ),
           const Divider(height: 1),
-          // Static sections
           ListTile(
             leading: const Icon(Icons.privacy_tip_outlined),
-            title: const Text('版權與使用聲明'),
-            subtitle: const Text(
-              '本應用程式僅提供技術工具，用戶的所有使用行為均與作者無關。請尊重智慧財產權，僅下載您擁有或已獲授權的內容；加密 DRM 流可能無法下載',
-            ),
+            title: Text(context.l10n('settings.legal.title')),
+            subtitle: Text(context.l10n('settings.legal.description')),
           ),
           const Divider(height: 1),
           ListTile(
             leading: const Icon(Icons.info_outline),
-            title: const Text('關於'),
-            subtitle: const Text(
-              'Yi Apps Copyright © Yi Browser \n聯絡我們: tzuyichan0406@gmail.com',
-            ),
+            title: Text(context.l10n('settings.about.title')),
+            subtitle: Text(context.l10n('settings.about.description')),
             onTap: () async {
-              final Uri emailLaunchUri = Uri(
+              final emailLaunchUri = Uri(
                 scheme: 'mailto',
                 path: 'tzuyichan0406@gmail.com',
-                query: 'subject=App 聯絡&body=您好，',
+                queryParameters: {
+                  'subject': context.l10n('settings.about.email.subject'),
+                  'body': context.l10n('settings.about.email.body'),
+                },
               );
               if (await canLaunchUrl(emailLaunchUri)) {
                 await launchUrl(emailLaunchUri);

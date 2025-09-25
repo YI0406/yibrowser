@@ -21,6 +21,8 @@ import 'package:app_tracking_transparency/app_tracking_transparency.dart';
 import 'package:quick_actions/quick_actions.dart';
 import 'package:flutter/services.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
+import 'app_localizations.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 
 /// Entry point of the application. Initializes WebView debugging and sets up
 /// the root navigation with three tabs: browser, media, and settings.
@@ -71,6 +73,7 @@ void main() async {
   // Request ATT prior to initializing ads (iOS only)
   await _requestATTIfNeeded();
   AdService.instance.setPremiumUnlocked(purchaseService.isPremiumUnlocked);
+  await LanguageService.instance.init();
   runApp(const MyApp());
 }
 
@@ -80,26 +83,39 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      navigatorKey: navigatorKey,
-      title: 'Sniffer Browser',
-      // Follow system theme: use light/dark themes and rely on system setting.
-      themeMode: ThemeMode.system,
-      theme: ThemeData(
-        useMaterial3: true,
-        colorSchemeSeed: Colors.teal,
-        brightness: Brightness.light,
-      ),
-      darkTheme: ThemeData(
-        useMaterial3: true,
-        colorSchemeSeed: Colors.teal,
-        brightness: Brightness.dark,
-      ),
-      navigatorObservers: [
-        // Report navigation as screen_view 到 Firebase Analytics
-        FirebaseAnalyticsObserver(analytics: FirebaseAnalytics.instance),
-      ],
-      home: const RootNav(),
+    return ValueListenableBuilder<AppLanguage>(
+      valueListenable: LanguageService.instance.languageListenable,
+      builder: (context, language, _) {
+        final languageService = LanguageService.instance;
+        return MaterialApp(
+          navigatorKey: navigatorKey,
+          title: languageService.translate('app.title'),
+          locale: languageService.currentLocale,
+          supportedLocales: languageService.supportedLocales,
+          localizationsDelegates: const [
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
+          // Follow system theme: use light/dark themes and rely on system setting.
+          themeMode: ThemeMode.system,
+          theme: ThemeData(
+            useMaterial3: true,
+            colorSchemeSeed: Colors.teal,
+            brightness: Brightness.light,
+          ),
+          darkTheme: ThemeData(
+            useMaterial3: true,
+            colorSchemeSeed: Colors.teal,
+            brightness: Brightness.dark,
+          ),
+          navigatorObservers: [
+            // Report navigation as screen_view 到 Firebase Analytics
+            FirebaseAnalyticsObserver(analytics: FirebaseAnalytics.instance),
+          ],
+          home: const RootNav(),
+        );
+      },
     );
   }
 }
