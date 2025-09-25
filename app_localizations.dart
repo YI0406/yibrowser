@@ -1563,6 +1563,623 @@ final Map<String, Map<AppLanguage, String>> _translations = {
     AppLanguage.zhHans: '新增分页',
     AppLanguage.en: 'Add tab',
   },
+  'common.selectAll': {
+    AppLanguage.zhHant: '全選',
+    AppLanguage.zhHans: '全选',
+    AppLanguage.en: 'Select all',
+  },
+  'common.deselectAll': {
+    AppLanguage.zhHant: '取消全選',
+    AppLanguage.zhHans: '取消全选',
+    AppLanguage.en: 'Deselect all',
+  },
+  'common.clear': {
+    AppLanguage.zhHant: '清除',
+    AppLanguage.zhHans: '清除',
+    AppLanguage.en: 'Clear',
+  },
+  'common.clearAll': {
+    AppLanguage.zhHant: '清除全部',
+    AppLanguage.zhHans: '清除全部',
+    AppLanguage.en: 'Clear all',
+  },
+  'common.apply': {
+    AppLanguage.zhHant: '套用',
+    AppLanguage.zhHans: '应用',
+    AppLanguage.en: 'Apply',
+  },
+  'common.close': {
+    AppLanguage.zhHant: '關閉',
+    AppLanguage.zhHans: '关闭',
+    AppLanguage.en: 'Close',
+  },
+  'common.download': {
+    AppLanguage.zhHant: '下載',
+    AppLanguage.zhHans: '下载',
+    AppLanguage.en: 'Download',
+  },
+  'common.resume': {
+    AppLanguage.zhHant: '繼續',
+    AppLanguage.zhHans: '继续',
+    AppLanguage.en: 'Resume',
+  },
+  'common.help': {
+    AppLanguage.zhHant: '說明',
+    AppLanguage.zhHans: '说明',
+    AppLanguage.en: 'Help',
+  },
+  'common.gotIt': {
+    AppLanguage.zhHant: '我知道了',
+    AppLanguage.zhHans: '我知道了',
+    AppLanguage.en: 'Got it',
+  },
+  'browser.snack.blockExternalApp.enabled': {
+    AppLanguage.zhHant: '已開啟「阻擋外部 App」',
+    AppLanguage.zhHans: '已开启“阻挡外部 App”',
+    AppLanguage.en: 'Enabled "Block external apps"',
+  },
+  'browser.snack.blockExternalApp.disabled': {
+    AppLanguage.zhHant: '已關閉「阻擋外部 App」',
+    AppLanguage.zhHans: '已关闭“阻挡外部 App”',
+    AppLanguage.en: 'Disabled "Block external apps"',
+  },
+  'browser.error.openExternalApp': {
+    AppLanguage.zhHant: '無法開啟外部 App',
+    AppLanguage.zhHans: '无法开启外部 App',
+    AppLanguage.en: 'Unable to open external app',
+  },
+  'browser.urlField.hint': {
+    AppLanguage.zhHant: '輸入網址或關鍵字以搜尋',
+    AppLanguage.zhHans: '输入网址或关键字以搜寻',
+    AppLanguage.en: 'Enter a URL or keywords to search',
+  },
+  'browser.urlField.paste': {
+    AppLanguage.zhHant: '貼上',
+    AppLanguage.zhHans: '粘贴',
+    AppLanguage.en: 'Paste',
+  },
+  'browser.urlField.clear': {
+    AppLanguage.zhHant: '清除網址',
+    AppLanguage.zhHans: '清除网址',
+    AppLanguage.en: 'Clear URL',
+  },
+  'browser.toolbar.favorite.remove': {
+    AppLanguage.zhHant: '取消收藏',
+    AppLanguage.zhHans: '取消收藏',
+    AppLanguage.en: 'Remove from favorites',
+  },
+  'browser.toolbar.favorite.add': {
+    AppLanguage.zhHant: '收藏',
+    AppLanguage.zhHans: '收藏',
+    AppLanguage.en: 'Add to favorites',
+  },
+  'browser.toolbar.reload': {
+    AppLanguage.zhHant: '重新整理',
+    AppLanguage.zhHans: '刷新',
+    AppLanguage.en: 'Reload',
+  },
+  'browser.toolbar.stop': {
+    AppLanguage.zhHant: '停止載入',
+    AppLanguage.zhHans: '停止载入',
+    AppLanguage.en: 'Stop loading',
+  },
+  'browser.detectMedia.dialog.title': {
+    AppLanguage.zhHant: '偵測到媒體',
+    AppLanguage.zhHans: '侦测到媒体',
+    AppLanguage.en: 'Media detected',
+  },
+  'browser.mediaType.image': {
+    AppLanguage.zhHant: '圖片',
+    AppLanguage.zhHans: '图片',
+    AppLanguage.en: 'Image',
+  },
+  'browser.mediaType.audio': {
+    AppLanguage.zhHant: '音訊',
+    AppLanguage.zhHans: '音讯',
+    AppLanguage.en: 'Audio',
+  },
+  'browser.mediaType.video': {
+    AppLanguage.zhHant: '影片',
+    AppLanguage.zhHans: '视频',
+    AppLanguage.en: 'Video',
+  },
+  'browser.mediaType.unknown': {
+    AppLanguage.zhHant: '未知',
+    AppLanguage.zhHans: '未知',
+    AppLanguage.en: 'Unknown',
+  },
+  'browser.toolbar.back': {
+    AppLanguage.zhHant: '返回',
+    AppLanguage.zhHans: '返回',
+    AppLanguage.en: 'Back',
+  },
+  'browser.toolbar.forward': {
+    AppLanguage.zhHant: '前進',
+    AppLanguage.zhHans: '前进',
+    AppLanguage.en: 'Forward',
+  },
+  'browser.downloadList.title': {
+    AppLanguage.zhHant: '下載清單',
+    AppLanguage.zhHans: '下载清单',
+    AppLanguage.en: 'Download list',
+  },
+  'browser.downloadList.titleWithCount': {
+    AppLanguage.zhHant: '下載清單（{count}）',
+    AppLanguage.zhHans: '下载清单（{count}）',
+    AppLanguage.en: 'Download list ({count})',
+  },
+  'browser.tabs.closeAll.title': {
+    AppLanguage.zhHant: '關閉所有分頁',
+    AppLanguage.zhHans: '关闭所有分页',
+    AppLanguage.en: 'Close all tabs',
+  },
+  'browser.tabs.closeAll.message': {
+    AppLanguage.zhHant: '是否確定要關閉所有分頁？',
+    AppLanguage.zhHans: '是否确定要关闭所有分页？',
+    AppLanguage.en: 'Are you sure you want to close all tabs?',
+  },
+  'browser.snack.tabs.cleared': {
+    AppLanguage.zhHant: '已清除全部分頁',
+    AppLanguage.zhHans: '已清除全部分页',
+    AppLanguage.en: 'Cleared all tabs',
+  },
+  'browser.toolbar.menu': {
+    AppLanguage.zhHant: '功能選單',
+    AppLanguage.zhHans: '功能菜单',
+    AppLanguage.en: 'Menu',
+  },
+  'browser.menu.favorites': {
+    AppLanguage.zhHant: '我的收藏',
+    AppLanguage.zhHans: '我的收藏',
+    AppLanguage.en: 'Favorites',
+  },
+  'browser.menu.favoritesWithCount': {
+    AppLanguage.zhHant: '我的收藏（{count}）',
+    AppLanguage.zhHans: '我的收藏（{count}）',
+    AppLanguage.en: 'Favorites ({count})',
+  },
+  'browser.favorites.title': {
+    AppLanguage.zhHant: '我的收藏',
+    AppLanguage.zhHans: '我的收藏',
+    AppLanguage.en: 'Favorites',
+  },
+  'browser.favorites.titleWithCount': {
+    AppLanguage.zhHant: '我的收藏（{count}）',
+    AppLanguage.zhHans: '我的收藏（{count}）',
+    AppLanguage.en: 'Favorites ({count})',
+  },
+  'browser.menu.history': {
+    AppLanguage.zhHant: '瀏覽記錄',
+    AppLanguage.zhHans: '浏览记录',
+    AppLanguage.en: 'Browsing history',
+  },
+  'browser.menu.historyWithCount': {
+    AppLanguage.zhHant: '瀏覽記錄（{count}）',
+    AppLanguage.zhHans: '浏览记录（{count}）',
+    AppLanguage.en: 'Browsing history ({count})',
+  },
+  'browser.history.title': {
+    AppLanguage.zhHant: '瀏覽紀錄',
+    AppLanguage.zhHans: '浏览记录',
+    AppLanguage.en: 'Browsing history',
+  },
+  'browser.history.titleWithCount': {
+    AppLanguage.zhHant: '瀏覽紀錄（{count}）',
+    AppLanguage.zhHans: '浏览记录（{count}）',
+    AppLanguage.en: 'Browsing history ({count})',
+  },
+  'browser.menu.clearBrowsingData': {
+    AppLanguage.zhHant: '清除瀏覽記錄與網站資料',
+    AppLanguage.zhHans: '清除浏览记录与网站资料',
+    AppLanguage.en: 'Clear history & site data',
+  },
+  'browser.menu.blockPopups': {
+    AppLanguage.zhHant: '阻擋彈出視窗',
+    AppLanguage.zhHans: '阻挡弹出窗口',
+    AppLanguage.en: 'Block pop-ups',
+  },
+  'browser.menu.blockExternalApps': {
+    AppLanguage.zhHant: '阻擋外部App',
+    AppLanguage.zhHans: '阻挡外部App',
+    AppLanguage.en: 'Block external apps',
+  },
+  'browser.menu.home': {
+    AppLanguage.zhHant: '主頁',
+    AppLanguage.zhHans: '主页',
+    AppLanguage.en: 'Home',
+  },
+  'browser.menu.help': {
+    AppLanguage.zhHant: '說明 ?',
+    AppLanguage.zhHans: '说明 ?',
+    AppLanguage.en: 'Help ?',
+  },
+  'browser.snack.favorites.updated': {
+    AppLanguage.zhHant: '已更新收藏狀態',
+    AppLanguage.zhHans: '已更新收藏状态',
+    AppLanguage.en: 'Updated favorite status',
+  },
+  'browser.snack.sniffer.enabled': {
+    AppLanguage.zhHant: '已開啟嗅探',
+    AppLanguage.zhHans: '已开启嗅探',
+    AppLanguage.en: 'Sniffer enabled',
+  },
+  'browser.snack.sniffer.disabled': {
+    AppLanguage.zhHant: '已關閉嗅探',
+    AppLanguage.zhHans: '已关闭嗅探',
+    AppLanguage.en: 'Sniffer disabled',
+  },
+  'browser.dialog.clearBrowsingData.title': {
+    AppLanguage.zhHant: '清除瀏覽資料',
+    AppLanguage.zhHans: '清除浏览资料',
+    AppLanguage.en: 'Clear browsing data',
+  },
+  'browser.dialog.clearBrowsingData.message': {
+    AppLanguage.zhHant: '將刪除所有瀏覽記錄、Cookies 與網站資料，確定要繼續嗎？',
+    AppLanguage.zhHans: '将删除所有浏览记录、Cookies 与网站资料，确定要继续吗？',
+    AppLanguage.en:
+        'This will delete all browsing history, cookies, and site data. Continue?',
+  },
+  'browser.snack.browsingDataCleared': {
+    AppLanguage.zhHant: '已清除瀏覽記錄與網站資料',
+    AppLanguage.zhHans: '已清除浏览记录与网站资料',
+    AppLanguage.en: 'Browsing history and site data cleared',
+  },
+  'browser.dialog.adblocker.title': {
+    AppLanguage.zhHant: 'Adblocker 選項',
+    AppLanguage.zhHans: 'Adblocker 选项',
+    AppLanguage.en: 'Adblocker options',
+  },
+  'browser.dialog.adblocker.enableTitle': {
+    AppLanguage.zhHant: '啟用 Adblocker 廣告阻擋',
+    AppLanguage.zhHans: '启用 Adblocker 广告阻挡',
+    AppLanguage.en: 'Enable Adblocker',
+  },
+  'browser.dialog.adblocker.enableSubtitle': {
+    AppLanguage.zhHant: '可複選規則，啟用後將載入所有勾選的阻擋清單。',
+    AppLanguage.zhHans: '可复选规则，启用后将载入所有勾选的阻挡清单。',
+    AppLanguage.en: 'Select one or more rule lists to load when enabling.',
+  },
+  'browser.dialog.adblocker.checkbox.lite': {
+    AppLanguage.zhHant: 'Lite（精簡規則）',
+    AppLanguage.zhHans: 'Lite（精简规则）',
+    AppLanguage.en: 'Lite (basic rules)',
+  },
+  'browser.dialog.adblocker.checkbox.plus': {
+    AppLanguage.zhHant: 'Plus（進階阻擋）',
+    AppLanguage.zhHans: 'Plus（进阶阻挡）',
+    AppLanguage.en: 'Plus (advanced blocking)',
+  },
+  'browser.dialog.adblocker.checkbox.privacy': {
+    AppLanguage.zhHant: 'Privacy（隱私強化）',
+    AppLanguage.zhHans: 'Privacy（隐私强化）',
+    AppLanguage.en: 'Privacy (enhanced privacy)',
+  },
+  'browser.dialog.adblocker.selectAtLeastOne': {
+    AppLanguage.zhHant: '請至少選擇一組規則。',
+    AppLanguage.zhHans: '请至少选择一组规则。',
+    AppLanguage.en: 'Select at least one rule.',
+  },
+  'browser.snack.adblocker.enabled': {
+    AppLanguage.zhHant: '已更新 Adblocker 設定',
+    AppLanguage.zhHans: '已更新 Adblocker 设置',
+    AppLanguage.en: 'Adblocker settings updated',
+  },
+  'browser.snack.adblocker.disabled': {
+    AppLanguage.zhHant: '已關閉 Adblocker',
+    AppLanguage.zhHans: '已关闭 Adblocker',
+    AppLanguage.en: 'Adblocker disabled',
+  },
+  'browser.snack.blockPopups.enabled': {
+    AppLanguage.zhHant: '已開啟阻擋彈出視窗',
+    AppLanguage.zhHans: '已开启阻挡弹出视窗',
+    AppLanguage.en: 'Pop-up blocking enabled',
+  },
+  'browser.snack.blockPopups.disabled': {
+    AppLanguage.zhHant: '已關閉阻擋彈出視窗',
+    AppLanguage.zhHans: '已关闭阻挡弹出视窗',
+    AppLanguage.en: 'Pop-up blocking disabled',
+  },
+  'browser.dialog.adblocker.helpSubtitle': {
+    AppLanguage.zhHant: '（日後可再點按查看）',
+    AppLanguage.zhHans: '（日后可再点按查看）',
+    AppLanguage.en: '(You can view this again later)',
+  },
+  'browser.menu.adblockerDisabled': {
+    AppLanguage.zhHant: 'Adblocker 廣告阻擋（關閉）',
+    AppLanguage.zhHans: 'Adblocker 广告阻挡（关闭）',
+    AppLanguage.en: 'Adblocker (off)',
+  },
+  'browser.menu.adblockerEnabled': {
+    AppLanguage.zhHant: 'Adblocker 廣告阻擋（{status}）',
+    AppLanguage.zhHans: 'Adblocker 广告阻挡（{status}）',
+    AppLanguage.en: 'Adblocker ({status})',
+  },
+  'browser.dialog.downloadMedia.title': {
+    AppLanguage.zhHant: '下載媒體',
+    AppLanguage.zhHans: '下载媒体',
+    AppLanguage.en: 'Download media',
+  },
+  'browser.snack.addedToQueue': {
+    AppLanguage.zhHant: '已加入佇列',
+    AppLanguage.zhHans: '已加入队列',
+    AppLanguage.en: 'Added to queue',
+  },
+  'browser.dialog.detectDownloadable.title': {
+    AppLanguage.zhHant: '偵測到可下載連結',
+    AppLanguage.zhHans: '侦测到可下载连结',
+    AppLanguage.en: 'Detected downloadable link',
+  },
+  'browser.dialog.detectDownloadable.message': {
+    AppLanguage.zhHant: '偵測到此網址為可下載的媒體，是否直接下載？',
+    AppLanguage.zhHans: '侦测到此网址为可下载的媒体，是否直接下载？',
+    AppLanguage.en: 'This URL contains downloadable media. Download now?',
+  },
+  'browser.mediaDetection.emptyState': {
+    AppLanguage.zhHant: '尚未偵測到媒體資源',
+    AppLanguage.zhHans: '尚未侦测到媒体资源',
+    AppLanguage.en: 'No media detected yet',
+  },
+  'browser.mediaDetection.titleWithCount': {
+    AppLanguage.zhHant: '偵測到的資源（{count}）',
+    AppLanguage.zhHans: '侦测到的资源（{count}）',
+    AppLanguage.en: 'Detected resources ({count})',
+  },
+  'browser.snack.mediaCleared': {
+    AppLanguage.zhHant: '已清除所有資源',
+    AppLanguage.zhHans: '已清除所有资源',
+    AppLanguage.en: 'Cleared all resources',
+  },
+  'browser.dialog.adblocker.bullet1': {
+    AppLanguage.zhHant: '1. 大部分影片長按即可跳出提示視窗，再依照需求操作。',
+    AppLanguage.zhHans: '1. 大部分影片长按即可跳出提示视窗，再依照需求操作。',
+    AppLanguage.en:
+        '1. Long-press most videos to show the action sheet and proceed as needed.',
+  },
+  'browser.dialog.adblocker.bullet2': {
+    AppLanguage.zhHant: '2. 有些網站不能使用 Adblock 否則無法播放影片，或改用其他過濾規則。',
+    AppLanguage.zhHans: '2. 有些网站不能使用 Adblock 否则无法播放影片，或改用其他过滤规则。',
+    AppLanguage.en:
+        '2. Some sites break with Adblock; disable it there or try different filters.',
+  },
+  'browser.dialog.adblocker.bullet3': {
+    AppLanguage.zhHant: '3. 推特等已安裝的應用程式網站可長按以新分頁開啟正常瀏覽，並視需求開啟阻擋轉跳外部 App 功能。',
+    AppLanguage.zhHans: '3. 推特等已安装的应用程式网站可长按以新分页开启正常浏览，并视需求开启阻挡转跳外部 App 功能。',
+    AppLanguage.en:
+        '3. For installed apps like Twitter, long-press to open in a new tab and enable external-app blocking if needed.',
+  },
+  'browser.dialog.adblocker.bullet4': {
+    AppLanguage.zhHant: '4. 請尊重智慧財產權，切勿違法盜取他人資源，用戶行為與本應用無關。',
+    AppLanguage.zhHans: '4. 请尊重智慧财产权，切勿违法盗取他人资源，用户行为与本应用无关。',
+    AppLanguage.en:
+        '4. Respect intellectual property—do not illegally copy others’ content; user actions are independent of this app.',
+  },
+  'browser.dialog.adblocker.bullet5': {
+    AppLanguage.zhHant: '5. Yi Apps© 保留修改與解釋一切權利。',
+    AppLanguage.zhHans: '5. Yi Apps© 保留修改与解释一切权利。',
+    AppLanguage.en:
+        '5. Yi Apps© reserves the right to modify and interpret these terms.',
+  },
+  'browser.dialog.adblocker.bullet6': {
+    AppLanguage.zhHant: '6. 按下「我知道了」即代表同意及明白上述條款與說明使用本應用程式。',
+    AppLanguage.zhHans: '6. 按下“我知道了”即代表同意及明白上述条款与说明使用本应用程式。',
+    AppLanguage.en:
+        '6. Tapping “Got it” means you understand and agree to the above terms.',
+  },
+  'browser.media.statusResolving': {
+    AppLanguage.zhHant: '解析中…',
+    AppLanguage.zhHans: '解析中…',
+    AppLanguage.en: 'Resolving…',
+  },
+  'browser.media.durationLabel': {
+    AppLanguage.zhHant: '時長: {duration}',
+    AppLanguage.zhHans: '时长: {duration}',
+    AppLanguage.en: 'Duration: {duration}',
+  },
+  'browser.media.durationResolving': {
+    AppLanguage.zhHant: '時長: 解析中…',
+    AppLanguage.zhHans: '时长: 解析中…',
+    AppLanguage.en: 'Duration: Resolving…',
+  },
+  'browser.downloadList.empty': {
+    AppLanguage.zhHant: '尚無下載任務',
+    AppLanguage.zhHans: '尚无下载任务',
+    AppLanguage.en: 'No download tasks yet',
+  },
+  'browser.downloadList.clearTooltip': {
+    AppLanguage.zhHant: '清除任務（不刪除已完成媒體）',
+    AppLanguage.zhHans: '清除任务（不删除已完成媒体）',
+    AppLanguage.en: 'Clear tasks (keep completed media)',
+  },
+  'browser.snack.noTasksToClear': {
+    AppLanguage.zhHant: '沒有可清除的下載任務',
+    AppLanguage.zhHans: '没有可清除的下载任务',
+    AppLanguage.en: 'No download tasks to clear',
+  },
+  'browser.snack.tasksCleared': {
+    AppLanguage.zhHant: '已清除任務，已完成的媒體已保留',
+    AppLanguage.zhHans: '已清除任务，已完成的媒体已保留',
+    AppLanguage.en: 'Cleared tasks; completed media kept',
+  },
+  'browser.snack.movedToFolder': {
+    AppLanguage.zhHant: '已移動到 {folder}',
+    AppLanguage.zhHans: '已移动到 {folder}',
+    AppLanguage.en: 'Moved to {folder}',
+  },
+  'browser.download.status.converting': {
+    AppLanguage.zhHant: '轉換中',
+    AppLanguage.zhHans: '转换中',
+    AppLanguage.en: 'Converting',
+  },
+  'browser.download.statusLabel': {
+    AppLanguage.zhHant: '狀態: {status}',
+    AppLanguage.zhHans: '状态: {status}',
+    AppLanguage.en: 'Status: {status}',
+  },
+  'browser.download.timeLabel': {
+    AppLanguage.zhHant: '時間: {time}',
+    AppLanguage.zhHans: '时间: {time}',
+    AppLanguage.en: 'Time: {time}',
+  },
+  'browser.download.segmentLabel': {
+    AppLanguage.zhHant: '片段: {progress}',
+    AppLanguage.zhHans: '片段: {progress}',
+    AppLanguage.en: 'Segments: {progress}',
+  },
+  'browser.download.progressLabel': {
+    AppLanguage.zhHant: '進度: {progress}',
+    AppLanguage.zhHans: '进度: {progress}',
+    AppLanguage.en: 'Progress: {progress}',
+  },
+  'browser.download.speedLabel': {
+    AppLanguage.zhHant: '速度: {speed}',
+    AppLanguage.zhHans: '速度: {speed}',
+    AppLanguage.en: 'Speed: {speed}',
+  },
+  'browser.download.speedMeasuring': {
+    AppLanguage.zhHant: '速度: 測量中…',
+    AppLanguage.zhHans: '速度: 测量中…',
+    AppLanguage.en: 'Speed: Measuring…',
+  },
+  'browser.download.sizeLabel': {
+    AppLanguage.zhHant: '大小: {size}',
+    AppLanguage.zhHans: '大小: {size}',
+    AppLanguage.en: 'Size: {size}',
+  },
+  'browser.download.sizeConverting': {
+    AppLanguage.zhHant: '大小: 轉換中…',
+    AppLanguage.zhHans: '大小: 转换中…',
+    AppLanguage.en: 'Size: Converting…',
+  },
+  'browser.download.moveToFolder': {
+    AppLanguage.zhHant: '移動到資料夾',
+    AppLanguage.zhHans: '移动到资料夹',
+    AppLanguage.en: 'Move to folder',
+  },
+  'browser.snack.downloadRemovedKeepFile': {
+    AppLanguage.zhHant: '已刪除任務，檔案仍在媒體庫',
+    AppLanguage.zhHans: '已删除任务，档案仍在媒体库',
+    AppLanguage.en: 'Removed task; file kept in media library',
+  },
+  'browser.snack.fileMissing': {
+    AppLanguage.zhHant: '檔案已不存在',
+    AppLanguage.zhHans: '档案已不存在',
+    AppLanguage.en: 'File no longer exists',
+  },
+  'browser.snack.exportFailed': {
+    AppLanguage.zhHant: '匯出失敗: {error}',
+    AppLanguage.zhHans: '汇出失败: {error}',
+    AppLanguage.en: 'Export failed: {error}',
+  },
+  'browser.favorites.empty': {
+    AppLanguage.zhHant: '尚無收藏',
+    AppLanguage.zhHans: '尚无收藏',
+    AppLanguage.en: 'No favorites yet',
+  },
+  'browser.favorites.removeTooltip': {
+    AppLanguage.zhHant: '移除收藏',
+    AppLanguage.zhHans: '移除收藏',
+    AppLanguage.en: 'Remove favorite',
+  },
+  'browser.history.empty': {
+    AppLanguage.zhHant: '尚無瀏覽記錄',
+    AppLanguage.zhHans: '尚无浏览记录',
+    AppLanguage.en: 'No browsing history yet',
+  },
+  'browser.history.noResults': {
+    AppLanguage.zhHant: '沒有符合的紀錄',
+    AppLanguage.zhHans: '没有符合的纪录',
+    AppLanguage.en: 'No matching records',
+  },
+  'browser.history.searchHint': {
+    AppLanguage.zhHant: '搜尋標題或網址',
+    AppLanguage.zhHans: '搜寻标题或网址',
+    AppLanguage.en: 'Search titles or URLs',
+  },
+  'browser.history.browsedAt': {
+    AppLanguage.zhHant: '瀏覽於 {time}',
+    AppLanguage.zhHans: '浏览于 {time}',
+    AppLanguage.en: 'Browsed at {time}',
+  },
+  'browser.history.relative.today': {
+    AppLanguage.zhHant: '今天',
+    AppLanguage.zhHans: '今天',
+    AppLanguage.en: 'Today',
+  },
+  'browser.history.relative.yesterday': {
+    AppLanguage.zhHant: '昨天',
+    AppLanguage.zhHans: '昨天',
+    AppLanguage.en: 'Yesterday',
+  },
+  'browser.history.relative.twoDaysAgo': {
+    AppLanguage.zhHant: '前天',
+    AppLanguage.zhHans: '前天',
+    AppLanguage.en: 'Two days ago',
+  },
+  'browser.history.relative.daysAgo': {
+    AppLanguage.zhHant: '{days} 天前',
+    AppLanguage.zhHans: '{days} 天前',
+    AppLanguage.en: '{days} days ago',
+  },
+  'browser.history.weekday.mon': {
+    AppLanguage.zhHant: '周一',
+    AppLanguage.zhHans: '周一',
+    AppLanguage.en: 'Mon',
+  },
+  'browser.history.weekday.tue': {
+    AppLanguage.zhHant: '周二',
+    AppLanguage.zhHans: '周二',
+    AppLanguage.en: 'Tue',
+  },
+  'browser.history.weekday.wed': {
+    AppLanguage.zhHant: '周三',
+    AppLanguage.zhHans: '周三',
+    AppLanguage.en: 'Wed',
+  },
+  'browser.history.weekday.thu': {
+    AppLanguage.zhHant: '周四',
+    AppLanguage.zhHans: '周四',
+    AppLanguage.en: 'Thu',
+  },
+  'browser.history.weekday.fri': {
+    AppLanguage.zhHant: '周五',
+    AppLanguage.zhHans: '周五',
+    AppLanguage.en: 'Fri',
+  },
+  'browser.history.weekday.sat': {
+    AppLanguage.zhHant: '周六',
+    AppLanguage.zhHans: '周六',
+    AppLanguage.en: 'Sat',
+  },
+  'browser.history.weekday.sun': {
+    AppLanguage.zhHant: '周日',
+    AppLanguage.zhHans: '周日',
+    AppLanguage.en: 'Sun',
+  },
+  'browser.tabs.titleWithCount': {
+    AppLanguage.zhHant: '分頁（{count}）',
+    AppLanguage.zhHans: '分页（{count}）',
+    AppLanguage.en: 'Tabs ({count})',
+  },
+  'browser.tabs.exitSelection': {
+    AppLanguage.zhHant: '退出選擇',
+    AppLanguage.zhHans: '退出选择',
+    AppLanguage.en: 'Exit selection',
+  },
+  'browser.tabs.selectTabs': {
+    AppLanguage.zhHant: '選擇分頁',
+    AppLanguage.zhHans: '选择分页',
+    AppLanguage.en: 'Select tabs',
+  },
+  'browser.tabs.deleteWithCount': {
+    AppLanguage.zhHant: '刪除（{count}）',
+    AppLanguage.zhHans: '删除（{count}）',
+    AppLanguage.en: 'Delete ({count})',
+  },
+  'browser.tabs.selectedCount': {
+    AppLanguage.zhHant: '已選：{count}',
+    AppLanguage.zhHans: '已选：{count}',
+    AppLanguage.en: 'Selected: {count}',
+  },
 };
 
 /// Service that manages the current language and translation lookup.

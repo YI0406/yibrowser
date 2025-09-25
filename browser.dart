@@ -2432,7 +2432,11 @@ class _BrowserPageState extends State<BrowserPage>
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         duration: const Duration(seconds: 1),
-        content: Text(next ? '已開啟「阻擋外部 App」' : '已關閉「阻擋外部 App」'),
+         content: Text(
+          next
+              ? context.l10n('browser.snack.blockExternalApp.enabled')
+              : context.l10n('browser.snack.blockExternalApp.disabled'),
+        ),
       ),
     );
     setState(() {});
@@ -2529,7 +2533,7 @@ class _BrowserPageState extends State<BrowserPage>
         action:
             canLaunch
                 ? SnackBarAction(
-                  label: '打開',
+                     label: context.l10n('common.open'),
                   onPressed: () {
                     messenger.hideCurrentSnackBar();
                     unawaited(_launchExternalApp(blocked.rawUrl));
@@ -2569,10 +2573,11 @@ class _BrowserPageState extends State<BrowserPage>
   void _showExternalAppLaunchError() {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        duration: Duration(seconds: 1),
-        content: Text('無法開啟外部 App'),
-      ),
+       SnackBar(
+        duration: const Duration(seconds: 1),
+        content: Text(
+          context.l10n('browser.error.openExternalApp'),
+        ),
     );
   }
 
@@ -3659,13 +3664,14 @@ class _BrowserPageState extends State<BrowserPage>
                     textInputAction: TextInputAction.go,
                     decoration: InputDecoration(
                       border: InputBorder.none,
-                      hintText: '輸入網址或關鍵字以搜尋',
+                    hintText: context.l10n('browser.urlField.hint'),
                       suffixIcon: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           if (_showPaste)
                             IconButton(
-                              tooltip: '貼上',
+                          tooltip:
+                                  context.l10n('browser.urlField.paste'),
                               icon: const Icon(Icons.content_paste),
                               onPressed: () async {
                                 try {
@@ -3688,7 +3694,8 @@ class _BrowserPageState extends State<BrowserPage>
                               _tabs[_currentTabIndex].urlCtrl.text.isNotEmpty &&
                               _urlFocus.hasFocus)
                             IconButton(
-                              tooltip: '清除網址',
+                               tooltip:
+                                  context.l10n('browser.urlField.clear'),
                               icon: const Icon(Icons.clear),
                               onPressed: () {
                                 if (_tabs.isNotEmpty) {
@@ -3722,7 +3729,9 @@ class _BrowserPageState extends State<BrowserPage>
                         isFav ? Icons.favorite : Icons.favorite_border,
                       ),
                       color: isFav ? Colors.redAccent : null,
-                      tooltip: isFav ? '取消收藏' : '收藏',
+                       tooltip: isFav
+                          ? context.l10n('browser.toolbar.favorite.remove')
+                          : context.l10n('browser.toolbar.favorite.add'),
                       visualDensity: VisualDensity.compact,
                       onPressed:
                           currentUrl == null
@@ -3737,9 +3746,9 @@ class _BrowserPageState extends State<BrowserPage>
                 if (_tabs.isEmpty ||
                     _currentTabIndex < 0 ||
                     _currentTabIndex >= _tabs.length)
-                  const IconButton(
-                    icon: Icon(Icons.refresh),
-                    tooltip: '重新整理',
+                IconButton(
+                    icon: const Icon(Icons.refresh),
+                    tooltip: context.l10n('browser.toolbar.reload'),
                     visualDensity: VisualDensity.compact,
                     onPressed: null,
                   )
@@ -3750,7 +3759,9 @@ class _BrowserPageState extends State<BrowserPage>
                       final tab = _tabs[_currentTabIndex];
                       return IconButton(
                         icon: Icon(loading ? Icons.close : Icons.refresh),
-                        tooltip: loading ? '停止載入' : '重新整理',
+                        tooltip: loading
+                            ? context.l10n('browser.toolbar.stop')
+                            : context.l10n('browser.toolbar.reload'),
                         visualDensity: VisualDensity.compact,
                         onPressed: () {
                           final controller = tab.controller;
@@ -4241,7 +4252,11 @@ class _BrowserPageState extends State<BrowserPage>
                             context: context,
                             builder: (_) {
                               return AlertDialog(
-                                title: const Text('偵測到媒體'),
+                              title: Text(
+                                  context.l10n(
+                                    'browser.detectMedia.dialog.title',
+                                  ),
+                                ),
                                 content: Column(
                                   mainAxisSize: MainAxisSize.min,
                                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -4256,7 +4271,12 @@ class _BrowserPageState extends State<BrowserPage>
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
                                         Chip(
-                                          label: Text(type),
+                                        label: Text(
+                                            _localizedMediaType(
+                                              context,
+                                              type,
+                                            ),
+                                          ),
                                           visualDensity: VisualDensity.compact,
                                           materialTapTargetSize:
                                               MaterialTapTargetSize.shrinkWrap,
@@ -4275,8 +4295,8 @@ class _BrowserPageState extends State<BrowserPage>
                                               ScaffoldMessenger.of(
                                                 context,
                                               ).showSnackBar(
-                                                const SnackBar(
-                                                  duration: Duration(
+                                            SnackBar(
+                                                  duration: const Duration(
                                                     seconds: 1,
                                                   ),
                                                   content: Text(
@@ -4296,12 +4316,16 @@ class _BrowserPageState extends State<BrowserPage>
                                 actions: [
                                   TextButton(
                                     onPressed: () => Navigator.pop(context),
-                                    child: const Text('取消'),
+                                 child: Text(
+                                      context.l10n('common.cancel'),
+                                    ),
                                   ),
                                   if (type != 'image')
                                     TextButton.icon(
                                       icon: const Icon(Icons.play_arrow),
-                                      label: const Text('播放'),
+                                      label: Text(
+                                        context.l10n('common.play'),
+                                      ),
                                       onPressed: () {
                                         Navigator.pop(context);
                                         _playMedia(resolvedLink);
@@ -4309,7 +4333,9 @@ class _BrowserPageState extends State<BrowserPage>
                                     ),
                                   FilledButton.icon(
                                     icon: const Icon(Icons.download),
-                                    label: const Text('下載'),
+                                    label: Text(
+                                      context.l10n('common.download'),
+                                    ),
                                     onPressed: () {
                                       Navigator.pop(context);
                                       _confirmDownload(
@@ -4420,14 +4446,14 @@ class _BrowserPageState extends State<BrowserPage>
             pad(
               IconButton(
                 icon: const Icon(Icons.arrow_back),
-                tooltip: '返回',
+                 tooltip: context.l10n('browser.toolbar.back'),
                 onPressed: () => _navigateHistoryDelta(-1),
               ),
             ),
             pad(
               IconButton(
                 icon: const Icon(Icons.arrow_forward),
-                tooltip: '前進',
+          tooltip: context.l10n('browser.toolbar.forward'),
                 onPressed: () => _navigateHistoryDelta(1),
               ),
             ),
@@ -4543,7 +4569,12 @@ class _BrowserPageState extends State<BrowserPage>
                           .length;
                   return IconButton(
                     tooltip:
-                        downloadCount > 0 ? '下載清單（$downloadCount）' : '下載清單',
+ downloadCount > 0
+                            ? context.l10n(
+                                'browser.downloadList.titleWithCount',
+                                params: {'count': downloadCount.toString()},
+                              )
+                            : context.l10n('browser.downloadList.title'),
                     onPressed: _openDownloadsSheet,
                     visualDensity: VisualDensity.compact,
                     icon: _iconWithBadge(
@@ -4566,16 +4597,24 @@ class _BrowserPageState extends State<BrowserPage>
                   context: context,
                   builder: (context) {
                     return AlertDialog(
-                      title: const Text('關閉所有分頁'),
-                      content: const Text('是否確定要關閉所有分頁？'),
+                     title: Text(
+                        context.l10n('browser.tabs.closeAll.title'),
+                      ),
+                      content: Text(
+                        context.l10n('browser.tabs.closeAll.message'),
+                      ),
                       actions: [
                         TextButton(
                           onPressed: () => Navigator.of(context).pop(false),
-                          child: const Text('取消'),
+                        child: Text(
+                            context.l10n('common.cancel'),
+                          ),
                         ),
                         FilledButton(
                           onPressed: () => Navigator.of(context).pop(true),
-                          child: const Text('關閉'),
+                          child: Text(
+                            context.l10n('common.close'),
+                          ),
                         ),
                       ],
                     );
@@ -4585,9 +4624,11 @@ class _BrowserPageState extends State<BrowserPage>
                   _clearAllTabs();
                   if (mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        duration: Duration(seconds: 1),
-                        content: Text('已清除全部分頁'),
+                      SnackBar(
+                        duration: const Duration(seconds: 1),
+                        content: Text(
+                          context.l10n('browser.snack.tabs.cleared'),
+                        ),
                       ),
                     );
                   }
@@ -4666,7 +4707,7 @@ class _BrowserPageState extends State<BrowserPage>
       builder: (context, _) {
         return IconButton(
           key: _menuButtonKey,
-          tooltip: '功能選單',
+           tooltip: context.l10n('browser.toolbar.menu'),
           padding: EdgeInsets.zero,
           constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
           onPressed: _showToolbarMenu,
@@ -4733,19 +4774,29 @@ class _BrowserPageState extends State<BrowserPage>
       buildItem(
         _ToolbarMenuAction.openFavorites,
         Icons.favorite,
-        favoriteCount > 0 ? '我的收藏（$favoriteCount）' : '我的收藏',
+           favoriteCount > 0
+            ? context.l10n(
+                'browser.menu.favoritesWithCount',
+                params: {'count': favoriteCount.toString()},
+              )
+            : context.l10n('browser.menu.favorites'),
         iconColor: favoriteCount > 0 ? Colors.redAccent : null,
       ),
       buildItem(
         _ToolbarMenuAction.openHistory,
         Icons.history,
-        historyCount > 0 ? '瀏覽記錄（$historyCount）' : '瀏覽記錄',
+         historyCount > 0
+            ? context.l10n(
+                'browser.menu.historyWithCount',
+                params: {'count': historyCount.toString()},
+              )
+            : context.l10n('browser.menu.history'),
         iconColor: historyCount > 0 ? colorScheme.primary : null,
       ),
       buildItem(
         _ToolbarMenuAction.clearBrowsingData,
         Icons.cleaning_services,
-        '清除瀏覽記錄與網站資料',
+      context.l10n('browser.menu.clearBrowsingData'),
         iconColor: colorScheme.error,
       ),
       const PopupMenuDivider(),
@@ -4759,13 +4810,13 @@ class _BrowserPageState extends State<BrowserPage>
       buildItem(
         _ToolbarMenuAction.toggleBlockPopup,
         blockPopupOn ? Icons.toggle_on : Icons.toggle_off,
-        '阻擋彈出視窗',
+         context.l10n('browser.menu.blockPopups'),
         iconColor: blockPopupOn ? Colors.redAccent : null,
       ),
       buildItem(
         _ToolbarMenuAction.blockExternalApp,
         _blockExternalApp ? Icons.toggle_on : Icons.toggle_off,
-        '阻擋外部App',
+        context.l10n('browser.menu.blockExternalApps'),
         iconColor:
             _blockExternalApp ? Theme.of(context).colorScheme.primary : null,
       ),
@@ -4775,8 +4826,16 @@ class _BrowserPageState extends State<BrowserPage>
         Icons.add,
         context.l10n('browser.context.addHome'),
       ),
-      buildItem(_ToolbarMenuAction.goHome, Icons.home, '主頁'),
-      buildItem(_ToolbarMenuAction.help, Icons.help_outline, '說明 ?'),
+       buildItem(
+        _ToolbarMenuAction.goHome,
+        Icons.home,
+        context.l10n('browser.menu.home'),
+      ),
+      buildItem(
+        _ToolbarMenuAction.help,
+        Icons.help_outline,
+        context.l10n('browser.menu.help'),
+      ),
     ];
 
     final selected = await showMenu<_ToolbarMenuAction>(
@@ -4929,7 +4988,12 @@ class _BrowserPageState extends State<BrowserPage>
     repo.toggleFavoriteUrl(url);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(duration: Duration(seconds: 1), content: Text('已更新收藏狀態')),
+     SnackBar(
+        duration: const Duration(seconds: 1),
+        content: Text(
+          context.l10n('browser.snack.favorites.updated'),
+        ),
+      ),
     );
   }
 
@@ -4956,7 +5020,11 @@ class _BrowserPageState extends State<BrowserPage>
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         duration: const Duration(seconds: 1),
-        content: Text(next ? '已開啟嗅探' : '已關閉嗅探'),
+         content: Text(
+          next
+              ? context.l10n('browser.snack.sniffer.enabled')
+              : context.l10n('browser.snack.sniffer.disabled'),
+        ),
       ),
     );
   }
@@ -5004,19 +5072,28 @@ class _BrowserPageState extends State<BrowserPage>
       context: context,
       builder:
           (_) => AlertDialog(
-            title: const Text('清除瀏覽資料'),
-            content: const Text('將刪除所有瀏覽記錄、Cookies 與網站資料，確定要繼續嗎？'),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(false),
-                child: const Text('取消'),
+          title: Text(
+                  context.l10n('browser.dialog.clearBrowsingData.title'),
+                ),
+                content: Text(
+                  context.l10n('browser.dialog.clearBrowsingData.message'),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(false),
+                    child: Text(
+                      context.l10n('common.cancel'),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(true),
+                    child: Text(
+                      context.l10n('common.clear'),
+                    ),
+                  ),
+                ],
               ),
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(true),
-                child: const Text('清除'),
-              ),
-            ],
-          ),
+         
     );
 
     if (confirm != true) {
@@ -5043,9 +5120,11 @@ class _BrowserPageState extends State<BrowserPage>
 
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        duration: Duration(seconds: 1),
-        content: Text('已清除瀏覽記錄與網站資料'),
+     SnackBar(
+        duration: const Duration(seconds: 1),
+        content: Text(
+          context.l10n('browser.snack.browsingDataCleared'),
+        ),
       ),
     );
   }
@@ -5082,7 +5161,7 @@ class _BrowserPageState extends State<BrowserPage>
 
         return StatefulBuilder(
           builder: (context, setState) {
-            Widget checkbox(String profile, String label) {
+           Widget checkbox(String profile) {
               final checked = tempSelection.contains(profile);
               return CheckboxListTile(
                 value: checked,
@@ -5098,13 +5177,19 @@ class _BrowserPageState extends State<BrowserPage>
                           });
                         }
                         : null,
-                title: Text(label),
+             title: Text(
+                  context.l10n(
+                    'browser.dialog.adblocker.checkbox.$profile',
+                  ),
+                ),
               );
             }
 
             final canConfirm = !enabled || tempSelection.isNotEmpty;
             return AlertDialog(
-              title: const Text('Adblocker 選項'),
+             title: Text(
+                context.l10n('browser.dialog.adblocker.title'),
+              ),
               content: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -5117,21 +5202,25 @@ class _BrowserPageState extends State<BrowserPage>
                           enabled = value;
                         });
                       },
-                      title: const Text('啟用 Adblocker 廣告阻擋'),
+                     title: Text(
+                        context.l10n('browser.dialog.adblocker.enableTitle'),
+                      ),
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      '可複選規則，啟用後將載入所有勾選的阻擋清單。',
+                       context.l10n('browser.dialog.adblocker.enableSubtitle'),
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
-                    checkbox('lite', 'Lite（精簡規則）'),
-                    checkbox('plus', 'Plus（進階阻擋）'),
-                    checkbox('privacy', 'Privacy（隱私強化）'),
+                   checkbox('lite'),
+                    checkbox('plus'),
+                    checkbox('privacy'),
                     if (enabled && tempSelection.isEmpty)
                       Padding(
                         padding: const EdgeInsets.only(top: 8),
                         child: Text(
-                          '請至少選擇一組規則。',
+                       context.l10n(
+                            'browser.dialog.adblocker.selectAtLeastOne',
+                          ),
                           style: Theme.of(
                             context,
                           ).textTheme.bodySmall?.copyWith(
@@ -5145,7 +5234,9 @@ class _BrowserPageState extends State<BrowserPage>
               actions: [
                 TextButton(
                   onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('取消'),
+               child: Text(
+                    context.l10n('common.cancel'),
+                  ),
                 ),
                 FilledButton(
                   onPressed:
@@ -5159,7 +5250,9 @@ class _BrowserPageState extends State<BrowserPage>
                             );
                           }
                           : null,
-                  child: const Text('套用'),
+                 child: Text(
+                    context.l10n('common.apply'),
+                  ),
                 ),
               ],
             );
@@ -5178,7 +5271,11 @@ class _BrowserPageState extends State<BrowserPage>
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         duration: const Duration(seconds: 1),
-        content: Text(enabled ? '已更新 Adblocker 設定' : '已關閉 Adblocker'),
+           content: Text(
+          enabled
+              ? context.l10n('browser.snack.adblocker.enabled')
+              : context.l10n('browser.snack.adblocker.disabled'),
+        ),
       ),
     );
   }
@@ -5190,7 +5287,11 @@ class _BrowserPageState extends State<BrowserPage>
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         duration: const Duration(seconds: 1),
-        content: Text(next ? '已開啟阻擋彈出視窗' : '已關閉阻擋彈出視窗'),
+      content: Text(
+          next
+              ? context.l10n('browser.snack.blockPopups.enabled')
+              : context.l10n('browser.snack.blockPopups.disabled'),
+        ),
       ),
     );
   }
@@ -5212,7 +5313,11 @@ class _BrowserPageState extends State<BrowserPage>
     if (acknowledged) return;
   }
 
-  Widget _buildHelpDialogContent(TextTheme textTheme, Color bulletColor) {
+  Widget _buildHelpDialogContent(
+    BuildContext context,
+    TextTheme textTheme,
+    Color bulletColor,
+  ) {
     Widget bullet(String text) => Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
@@ -5237,12 +5342,12 @@ class _BrowserPageState extends State<BrowserPage>
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        bullet('1. 大部分影片長按即可跳出提示視窗，再依照需求操作。'),
-        bullet('2. 有些網站不能使用 Adblock 否則無法播放影片，或改用其他過濾規則。'),
-        bullet('3. 推特等已安裝的應用程式網站可長按以新分頁開啟正常瀏覽，並視需求開啟阻擋轉跳外部 App 功能。'),
-        bullet('4. 請尊重智慧財產權，切勿違法盜取他人資源，用戶行為與本應用無關。'),
-        bullet('5. Yi Apps© 保留修改與解釋一切權利。'),
-        bullet('6. 按下「我知道了」即代表同意及明白上述條款與說明使用本應用程式。'),
+       bullet(context.l10n('browser.dialog.adblocker.bullet1')),
+        bullet(context.l10n('browser.dialog.adblocker.bullet2')),
+        bullet(context.l10n('browser.dialog.adblocker.bullet3')),
+        bullet(context.l10n('browser.dialog.adblocker.bullet4')),
+        bullet(context.l10n('browser.dialog.adblocker.bullet5')),
+        bullet(context.l10n('browser.dialog.adblocker.bullet6')),
       ],
     );
   }
@@ -5298,14 +5403,16 @@ class _BrowserPageState extends State<BrowserPage>
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              '說明',
+                           context.l10n('common.help'),
                               style: textTheme.titleLarge?.copyWith(
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
                             const SizedBox(height: 4),
                             Text(
-                              '（日後可再點按查看）',
+                        context.l10n(
+                                'browser.dialog.adblocker.helpSubtitle',
+                              ),
                               style: textTheme.bodySmall?.copyWith(
                                 color:
                                     textTheme.bodySmall?.color?.withOpacity(
@@ -5330,14 +5437,16 @@ class _BrowserPageState extends State<BrowserPage>
                       color: colorScheme.surface.withOpacity(0.6),
                       borderRadius: BorderRadius.circular(16),
                     ),
-                    child: _buildHelpDialogContent(textTheme, accent),
+                    child: _buildHelpDialogContent(context, textTheme, accent),
                   ),
                   const SizedBox(height: 20),
                   Align(
                     alignment: Alignment.centerRight,
                     child: FilledButton(
                       onPressed: () => Navigator.of(context).pop(true),
-                      child: const Text('我知道了'),
+                     child: Text(
+                        context.l10n('common.gotIt'),
+                      ),
                     ),
                   ),
                 ],
@@ -5356,7 +5465,7 @@ class _BrowserPageState extends State<BrowserPage>
 
   String _adBlockerMenuLabel(bool enabled, Set<String> profiles) {
     if (!enabled) {
-      return 'Adblocker 廣告阻擋（關閉）';
+   return context.l10n('browser.menu.adblockerDisabled');
     }
     String displayName(String key) {
       switch (key) {
@@ -5372,7 +5481,10 @@ class _BrowserPageState extends State<BrowserPage>
 
     final names = profiles.map(displayName).toList()..sort();
     final joined = names.join('、');
-    return 'Adblocker 廣告阻擋（$joined）';
+     return context.l10n(
+      'browser.menu.adblockerEnabled',
+      params: {'status': joined},
+    );
   }
 
   /// Prompts the user to confirm downloading the given URL. If confirmed, enqueues the download.
@@ -5384,7 +5496,9 @@ class _BrowserPageState extends State<BrowserPage>
             context: context,
             builder:
                 (_) => AlertDialog(
-                  title: const Text('下載媒體'),
+               title: Text(
+                    context.l10n('browser.dialog.downloadMedia.title'),
+                  ),
                   content: Text(
                     url,
                     maxLines: 3,
@@ -5393,11 +5507,15 @@ class _BrowserPageState extends State<BrowserPage>
                   actions: [
                     TextButton(
                       onPressed: () => Navigator.pop(context, false),
-                      child: const Text('取消'),
+                      child: Text(
+                        context.l10n('common.cancel'),
+                      ),
                     ),
                     FilledButton(
                       onPressed: () => Navigator.pop(context, true),
-                      child: const Text('下載'),
+                       child: Text(
+                        context.l10n('common.download'),
+                      ),
                     ),
                   ],
                 ),
@@ -5408,7 +5526,12 @@ class _BrowserPageState extends State<BrowserPage>
     await AppRepo.I.enqueueDownload(url);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(duration: Duration(seconds: 1), content: Text('已加入佇列')),
+       SnackBar(
+        duration: const Duration(seconds: 1),
+        content: Text(
+          context.l10n('browser.snack.addedToQueue'),
+        ),
+      ),
     );
   }
 
@@ -5459,12 +5582,16 @@ class _BrowserPageState extends State<BrowserPage>
       context: context,
       builder: (_) {
         return AlertDialog(
-          title: const Text('偵測到可下載連結'),
+       title: Text(
+            context.l10n('browser.dialog.detectDownloadable.title'),
+          ),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('偵測到此網址為可下載的媒體，是否直接下載？'),
+         Text(
+                context.l10n('browser.dialog.detectDownloadable.message'),
+              ),
               const SizedBox(height: 12),
               Text(
                 url,
@@ -5477,11 +5604,15 @@ class _BrowserPageState extends State<BrowserPage>
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, false),
-              child: const Text('取消'),
+             child: Text(
+                context.l10n('common.cancel'),
+              ),
             ),
             FilledButton(
               onPressed: () => Navigator.pop(context, true),
-              child: const Text('下載'),
+                child: Text(
+                context.l10n('common.download'),
+              ),
             ),
           ],
         );
@@ -5565,7 +5696,9 @@ class _BrowserPageState extends State<BrowserPage>
                   children: [
                     TextButton.icon(
                       icon: const Icon(Icons.play_arrow),
-                      label: const Text('播放'),
+                       label: Text(
+                        context.l10n('common.play'),
+                      ),
                       onPressed: () {
                         Navigator.pop(context);
                         // 使用內建播放器播放（支援 iOS 子母畫面 PiP）。
@@ -5575,7 +5708,9 @@ class _BrowserPageState extends State<BrowserPage>
                     const SizedBox(width: 8),
                     FilledButton.icon(
                       icon: const Icon(Icons.download),
-                      label: const Text('下載'),
+                    label: Text(
+                        context.l10n('common.download'),
+                      ),
                       onPressed: () {
                         Navigator.pop(context);
                         _confirmDownload(h.url);
@@ -5608,26 +5743,37 @@ class _BrowserPageState extends State<BrowserPage>
             valueListenable: repo.hits,
             builder: (_, list, __) {
               if (list.isEmpty) {
-                return const Padding(
-                  padding: EdgeInsets.all(16),
-                  child: Text('尚未偵測到媒體資源'),
+                 return Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Text(
+                    context.l10n('browser.mediaDetection.emptyState'),
+                  ),
                 );
               }
               return Column(
                 children: [
                   ListTile(
-                    title: Text('偵測到的資源（${list.length}）'),
+                    title: Text(
+                      context.l10n(
+                        'browser.mediaDetection.titleWithCount',
+                        params: {'count': list.length.toString()},
+                      ),
+                    ),
                     trailing: TextButton.icon(
                       icon: const Icon(Icons.delete_sweep),
-                      label: const Text('清除全部'),
+                      label: Text(
+                        context.l10n('common.clearAll'),
+                      ),
                       onPressed: () {
                         repo.hits.value = [];
                         Navigator.pop(context);
                         if (mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              duration: Duration(seconds: 1),
-                              content: Text('已清除所有資源'),
+                            SnackBar(
+                              duration: const Duration(seconds: 1),
+                              content: Text(
+                                context.l10n('browser.snack.mediaCleared'),
+                              ),
                             ),
                           );
                         }
@@ -5749,13 +5895,15 @@ class _BrowserPageState extends State<BrowserPage>
                                                 borderRadius:
                                                     BorderRadius.circular(4),
                                               ),
-                                              child: const Text(
-                                                '解析中…',
-                                                style: TextStyle(
-                                                  fontSize: 10,
-                                                  color: Colors.white,
-                                                ),
-                                              ),
+                                               child: Text(
+                                            context.l10n(
+                                              'browser.media.statusResolving',
+                                            ),
+                                            style: const TextStyle(
+                                              fontSize: 10,
+                                              color: Colors.white,
+                                            ),
+                                          ),
                                             ),
                                           ),
                                       ],
@@ -5833,8 +5981,16 @@ class _BrowserPageState extends State<BrowserPage>
                               if (h.type != 'image')
                                 Text(
                                   h.durationSeconds != null
-                                      ? '時長: ${_fmtDur(h.durationSeconds!)}'
-                                      : '時長: 解析中…',
+                                     ? context.l10n(
+                                          'browser.media.durationLabel',
+                                          params: {
+                                            'duration':
+                                                _fmtDur(h.durationSeconds!),
+                                          },
+                                        )
+                                      : context.l10n(
+                                          'browser.media.durationResolving',
+                                        ),
                                   style: const TextStyle(fontSize: 12),
                                 ),
                             ],
@@ -5909,7 +6065,18 @@ class _BrowserPageState extends State<BrowserPage>
   }
 
   _RateSnapshot _snapNow(int bytes) => _RateSnapshot(bytes, DateTime.now());
-
+String _localizedMediaType(BuildContext context, String type) {
+    switch (type.toLowerCase()) {
+      case 'image':
+        return context.l10n('browser.mediaType.image');
+      case 'audio':
+        return context.l10n('browser.mediaType.audio');
+      case 'video':
+        return context.l10n('browser.mediaType.video');
+      default:
+        return context.l10n('browser.mediaType.unknown');
+    }
+  }
   /// Computes speed in B/s based on previous snapshot.
   /// Returns null if not enough data yet.
   double? _computeSpeed(String key, int bytesNow) {
