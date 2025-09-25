@@ -1420,6 +1420,149 @@ final Map<String, Map<AppLanguage, String>> _translations = {
     AppLanguage.zhHans: '无法开启档案：{message}',
     AppLanguage.en: 'Unable to open file: {message}',
   },
+  'browser.download.defaultFolder': {
+    AppLanguage.zhHant: '我的下載',
+    AppLanguage.zhHans: '我的下载',
+    AppLanguage.en: 'My downloads',
+  },
+  'browser.download.status.processing': {
+    AppLanguage.zhHant: '處理中…',
+    AppLanguage.zhHans: '处理中…',
+    AppLanguage.en: 'Processing…',
+  },
+  'browser.miniPlayer.error.openFailed': {
+    AppLanguage.zhHant: '無法開啟迷你播放器',
+    AppLanguage.zhHans: '无法开启迷你播放器',
+    AppLanguage.en: 'Unable to open mini player',
+  },
+  'browser.miniPlayer.tooltip.rewind15': {
+    AppLanguage.zhHant: '後退 15 秒',
+    AppLanguage.zhHans: '后退 15 秒',
+    AppLanguage.en: 'Rewind 15 seconds',
+  },
+  'browser.miniPlayer.tooltip.playPause': {
+    AppLanguage.zhHant: '播放/暫停',
+    AppLanguage.zhHans: '播放/暂停',
+    AppLanguage.en: 'Play/Pause',
+  },
+  'browser.miniPlayer.tooltip.forward15': {
+    AppLanguage.zhHant: '快轉 15 秒',
+    AppLanguage.zhHans: '快进 15 秒',
+    AppLanguage.en: 'Forward 15 seconds',
+  },
+  'browser.dialog.downloadQuality.title': {
+    AppLanguage.zhHant: '選擇下載品質',
+    AppLanguage.zhHans: '选择下载品质',
+    AppLanguage.en: 'Select download quality',
+  },
+  'browser.dialog.downloadQuality.subtitle': {
+    AppLanguage.zhHant: '已擷取到可下載串流，選擇一個品質/種類即可開始下載',
+    AppLanguage.zhHans: '已捕获到可下载串流，选择一个品质/种类即可开始下载',
+    AppLanguage.en:
+        'Detected downloadable streams. Choose a quality/type to start downloading.',
+  },
+  'browser.snack.addedDownload': {
+    AppLanguage.zhHant: '已加入下載',
+    AppLanguage.zhHans: '已加入下载',
+    AppLanguage.en: 'Added to downloads',
+  },
+  'browser.snack.copiedLink': {
+    AppLanguage.zhHant: '已複製連結',
+    AppLanguage.zhHans: '已复制链接',
+    AppLanguage.en: 'Link copied',
+  },
+  'browser.snack.openedNewTab': {
+    AppLanguage.zhHant: '已在新分頁開啟',
+    AppLanguage.zhHans: '已在新分页打开',
+    AppLanguage.en: 'Opened in a new tab',
+  },
+  'browser.snack.alreadyFavorited': {
+    AppLanguage.zhHant: '網址已在收藏',
+    AppLanguage.zhHans: '网址已在收藏',
+    AppLanguage.en: 'Already in favorites',
+  },
+  'browser.snack.addedFavorite': {
+    AppLanguage.zhHant: '已加入收藏',
+    AppLanguage.zhHans: '已加入收藏',
+    AppLanguage.en: 'Added to favorites',
+  },
+  'browser.snack.blockedPopup': {
+    AppLanguage.zhHant: '已阻擋彈出視窗',
+    AppLanguage.zhHans: '已阻挡弹出窗口',
+    AppLanguage.en: 'Pop-up blocked',
+  },
+  'browser.snack.blockExternal.blocked': {
+    AppLanguage.zhHant: '已阻止網頁打開第三方 App({app})',
+    AppLanguage.zhHans: '已阻止网页打开第三方 App({app})',
+    AppLanguage.en: 'Blocked the page from opening external app ({app})',
+  },
+  'browser.snack.blockExternal.openedNewTab': {
+    AppLanguage.zhHant: '已阻止網頁打開第三方 App({app})，已在新分頁開啟網頁內容',
+    AppLanguage.zhHans: '已阻止网页打开第三方 App({app})，已在新分页打开网页内容',
+    AppLanguage.en:
+        'Blocked the page from opening external app ({app}); opened content in a new tab.',
+  },
+  'browser.snack.blockExternal.webFallback': {
+    AppLanguage.zhHant: '已阻止網頁打開第三方 App({app})，改以網頁顯示內容',
+    AppLanguage.zhHans: '已阻止网页打开第三方 App({app})，改以网页显示内容',
+    AppLanguage.en:
+        'Blocked the page from opening external app ({app}); showing content in the web view instead.',
+  },
+  'browser.context.copyLink': {
+    AppLanguage.zhHant: '複製連結',
+    AppLanguage.zhHans: '复制链接',
+    AppLanguage.en: 'Copy link',
+  },
+  'browser.context.downloadLink': {
+    AppLanguage.zhHant: '下載連結網址',
+    AppLanguage.zhHans: '下载链接网址',
+    AppLanguage.en: 'Download link URL',
+  },
+  'browser.context.openInNewTab': {
+    AppLanguage.zhHant: '在新分頁開啟',
+    AppLanguage.zhHans: '在新分页打开',
+    AppLanguage.en: 'Open in new tab',
+  },
+  'browser.context.addFavorite': {
+    AppLanguage.zhHant: '收藏網址',
+    AppLanguage.zhHans: '收藏网址',
+    AppLanguage.en: 'Add to favorites',
+  },
+  'browser.context.addHome': {
+    AppLanguage.zhHant: '加入主頁',
+    AppLanguage.zhHans: '加入主页',
+    AppLanguage.en: 'Add to home',
+  },
+  'browser.dialog.selectFolder': {
+    AppLanguage.zhHant: '選擇資料夾',
+    AppLanguage.zhHans: '选择文件夹',
+    AppLanguage.en: 'Select folder',
+  },
+  'browser.shortcuts.emptyHint': {
+    AppLanguage.zhHant: '尚未添加任何捷徑\n使用 + 按鈕新增網址到主頁',
+    AppLanguage.zhHans: '尚未添加任何捷径\n使用 + 按钮新增网址到主页',
+    AppLanguage.en: 'No shortcuts yet\nUse the + button to add sites to Home',
+  },
+  'browser.shortcuts.editShortcut': {
+    AppLanguage.zhHant: '編輯捷徑',
+    AppLanguage.zhHans: '编辑捷径',
+    AppLanguage.en: 'Edit shortcut',
+  },
+  'browser.shortcuts.addShortcutTitle': {
+    AppLanguage.zhHant: '新增捷徑到主頁',
+    AppLanguage.zhHans: '新增捷径到主页',
+    AppLanguage.en: 'Add shortcut to Home',
+  },
+  'browser.tab.newTabTitle': {
+    AppLanguage.zhHant: '新分頁',
+    AppLanguage.zhHans: '新分页',
+    AppLanguage.en: 'New tab',
+  },
+  'browser.tabManager.addTab': {
+    AppLanguage.zhHant: '新增分頁',
+    AppLanguage.zhHans: '新增分页',
+    AppLanguage.en: 'Add tab',
+  },
 };
 
 /// Service that manages the current language and translation lookup.

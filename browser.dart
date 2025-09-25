@@ -212,7 +212,8 @@ class _BrowserPageState extends State<BrowserPage>
     '[data-ad-client]',
     '[data-ad-name]',
   ];
-  static const String _kDefaultFolderName = '我的下載';
+  String get _defaultFolderName =>
+      context.l10n('browser.download.defaultFolder');
   static const String _kFolderSheetDefaultKey = '__default_media_folder__';
 
   List<ContentBlocker> _adBlockerRules = const <ContentBlocker>[];
@@ -792,9 +793,9 @@ class _BrowserPageState extends State<BrowserPage>
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            duration: Duration(seconds: 1),
-            content: Text('無法開啟迷你播放器'),
+          SnackBar(
+            duration: const Duration(seconds: 1),
+            content: Text(context.l10n('browser.miniPlayer.error.openFailed')),
           ),
         );
       }
@@ -878,7 +879,9 @@ class _BrowserPageState extends State<BrowserPage>
                           children: [
                             IconButton(
                               icon: const Icon(Icons.replay_10),
-                              tooltip: '後退 15 秒',
+                              tooltip: context.l10n(
+                                'browser.miniPlayer.tooltip.rewind15',
+                              ),
                               onPressed: () async {
                                 final v = _miniCtrl;
                                 if (v == null) return;
@@ -896,7 +899,9 @@ class _BrowserPageState extends State<BrowserPage>
                                     ? Icons.pause
                                     : Icons.play_arrow,
                               ),
-                              tooltip: '播放/暫停',
+                              tooltip: context.l10n(
+                                'browser.miniPlayer.tooltip.playPause',
+                              ),
                               onPressed: () async {
                                 final v = _miniCtrl;
                                 if (v == null) return;
@@ -910,7 +915,9 @@ class _BrowserPageState extends State<BrowserPage>
                             ),
                             IconButton(
                               icon: const Icon(Icons.forward_10),
-                              tooltip: '快轉 15 秒',
+                              tooltip: context.l10n(
+                                'browser.miniPlayer.tooltip.forward15',
+                              ),
                               onPressed: () async {
                                 final v = _miniCtrl;
                                 if (v == null) return;
@@ -1000,7 +1007,9 @@ class _BrowserPageState extends State<BrowserPage>
     final opts = repo.ytOptions.value;
     if (opts == null || _ytMenuOpen) return;
     _ytMenuOpen = true;
-    final title = repo.ytTitle.value ?? '選擇下載品質';
+    final title =
+        repo.ytTitle.value ??
+        context.l10n('browser.dialog.downloadQuality.title');
 
     showModalBottomSheet(
       context: context,
@@ -1017,7 +1026,9 @@ class _BrowserPageState extends State<BrowserPage>
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                 ),
-                subtitle: const Text('已擷取到可下載串流，選擇一個品質/種類即可開始下載'),
+                subtitle: Text(
+                  context.l10n('browser.dialog.downloadQuality.subtitle'),
+                ),
               ),
               const Divider(height: 1),
               Flexible(
@@ -1049,9 +1060,11 @@ class _BrowserPageState extends State<BrowserPage>
                         await AppRepo.I.enqueueDownload(o.url);
                         if (mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              duration: Duration(seconds: 1),
-                              content: Text('已加入下載'),
+                            SnackBar(
+                              duration: const Duration(seconds: 1),
+                              content: Text(
+                                context.l10n('browser.snack.addedDownload'),
+                              ),
                             ),
                           );
                         }
@@ -1201,7 +1214,7 @@ class _BrowserPageState extends State<BrowserPage>
   String _currentReceived(DownloadTask t) {
     // Hide size while still processing segmented downloads
     if (_isSegmentedTask(t) && (t.state.toLowerCase() != 'done')) {
-      return '處理中…';
+      return context.l10n('browser.download.status.processing');
     }
     if (t.total != null && t.total! > 0) {
       return '${_fmtSize(t.received)} / ${_fmtSize(t.total)}';
@@ -1522,14 +1535,14 @@ class _BrowserPageState extends State<BrowserPage>
     switch (action) {
       case _LinkContextMenuAction.copyLink:
         await Clipboard.setData(ClipboardData(text: url));
-        _showSnackBar('已複製連結');
+        _showSnackBar(context.l10n('browser.snack.copiedLink'));
         break;
       case _LinkContextMenuAction.downloadLink:
         await _confirmDownload(url);
         break;
       case _LinkContextMenuAction.openInNewTab:
         await _openLinkInNewTab(url);
-        _showSnackBar('已在新分頁開啟');
+        _showSnackBar(context.l10n('browser.snack.openedNewTab'));
         break;
       case _LinkContextMenuAction.addFavorite:
         _addUrlToFavorites(url);
@@ -1606,31 +1619,31 @@ class _BrowserPageState extends State<BrowserPage>
                         const Divider(height: 1),
                         buildItem(
                           Icons.copy,
-                          '複製連結',
+                          context.l10n('browser.context.copyLink'),
                           _LinkContextMenuAction.copyLink,
                         ),
                         const Divider(height: 1),
                         buildItem(
                           Icons.download,
-                          '下載連結網址',
+                          context.l10n('browser.context.downloadLink'),
                           _LinkContextMenuAction.downloadLink,
                         ),
                         const Divider(height: 1),
                         buildItem(
                           Icons.open_in_new,
-                          '在新分頁開啟',
+                          context.l10n('browser.context.openInNewTab'),
                           _LinkContextMenuAction.openInNewTab,
                         ),
                         const Divider(height: 1),
                         buildItem(
                           Icons.bookmark_add,
-                          '收藏網址',
+                          context.l10n('browser.context.addFavorite'),
                           _LinkContextMenuAction.addFavorite,
                         ),
                         const Divider(height: 1),
                         buildItem(
                           Icons.home,
-                          '加入主頁',
+                          context.l10n('browser.context.addHome'),
                           _LinkContextMenuAction.addHome,
                         ),
                       ],
@@ -1690,11 +1703,11 @@ class _BrowserPageState extends State<BrowserPage>
     final target = url.trim();
     if (target.isEmpty) return;
     if (repo.favorites.value.contains(target)) {
-      _showSnackBar('網址已在收藏');
+      _showSnackBar(context.l10n('browser.snack.alreadyFavorited'));
       return;
     }
     repo.addFavoriteUrl(target);
-    _showSnackBar('已加入收藏');
+    _showSnackBar(context.l10n('browser.snack.addedFavorite'));
   }
 
   Future<void> _persistCurrentTabIndex() async {
@@ -1742,7 +1755,8 @@ class _BrowserPageState extends State<BrowserPage>
                       child: Text(
                         _tabs[i].pageTitle?.isNotEmpty == true
                             ? _tabs[i].pageTitle!
-                            : (_tabs[i].currentUrl ?? '新分頁'),
+                            : (_tabs[i].currentUrl ??
+                                context.l10n('browser.tab.newTabTitle')),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(fontSize: 12),
@@ -1879,7 +1893,7 @@ class _BrowserPageState extends State<BrowserPage>
             !u.toLowerCase().startsWith('about:blank')) {
           return u;
         }
-        return '新分頁';
+        return context.l10n('browser.tab.newTabTitle');
       }();
 
       final shot = await _captureTabThumbnail(t);
@@ -2012,9 +2026,9 @@ class _BrowserPageState extends State<BrowserPage>
       valueListenable: repo.homeItems,
       builder: (context, items, _) {
         if (items.isEmpty) {
-          return const Center(
+          return Center(
             child: Text(
-              '尚未添加任何捷徑\n使用 + 按鈕新增網址到主頁',
+              context.l10n('browser.shortcuts.emptyHint'),
               textAlign: TextAlign.center,
             ),
           );
@@ -2079,7 +2093,7 @@ class _BrowserPageState extends State<BrowserPage>
     showModalBottomSheet(
       context: context,
       builder:
-          (_) => SafeArea(
+          (sheetContext) => SafeArea(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -2089,7 +2103,7 @@ class _BrowserPageState extends State<BrowserPage>
                 ),
                 ListTile(
                   leading: const Icon(Icons.edit),
-                  title: const Text('編輯'),
+                  title: Text(sheetContext.l10n('common.edit')),
                   onTap: () {
                     Navigator.pop(context);
                     _editHomeItem(index);
@@ -2097,7 +2111,7 @@ class _BrowserPageState extends State<BrowserPage>
                 ),
                 ListTile(
                   leading: const Icon(Icons.delete),
-                  title: const Text('刪除'),
+                  title: Text(sheetContext.l10n('common.delete')),
                   onTap: () {
                     Navigator.pop(context);
                     repo.removeHomeItemAt(index);
@@ -2119,27 +2133,31 @@ class _BrowserPageState extends State<BrowserPage>
     final urlCtrlLocal = TextEditingController(text: item.url);
     showDialog(
       context: context,
-      builder: (_) {
+      builder: (dialogContext) {
         return AlertDialog(
-          title: const Text('編輯捷徑'),
+          title: Text(dialogContext.l10n('browser.shortcuts.editShortcut')),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               TextField(
                 controller: nameCtrl,
-                decoration: const InputDecoration(labelText: '名稱'),
+                decoration: InputDecoration(
+                  labelText: dialogContext.l10n('common.name'),
+                ),
               ),
               const SizedBox(height: 8),
               TextField(
                 controller: urlCtrlLocal,
-                decoration: const InputDecoration(labelText: '網址'),
+                decoration: InputDecoration(
+                  labelText: dialogContext.l10n('common.url'),
+                ),
               ),
             ],
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('取消'),
+              child: Text(dialogContext.l10n('common.cancel')),
             ),
             TextButton(
               onPressed: () {
@@ -2150,7 +2168,7 @@ class _BrowserPageState extends State<BrowserPage>
                 }
                 Navigator.pop(context);
               },
-              child: const Text('確定'),
+              child: Text(dialogContext.l10n('common.confirm')),
             ),
           ],
         );
@@ -2197,27 +2215,31 @@ class _BrowserPageState extends State<BrowserPage>
     final urlCtrlLocal = TextEditingController(text: defaultUrl);
     await showDialog(
       context: context,
-      builder: (_) {
+      builder: (dialogContext) {
         return AlertDialog(
-          title: const Text('新增捷徑到主頁'),
+          title: Text(dialogContext.l10n('browser.shortcuts.addShortcutTitle')),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               TextField(
                 controller: nameCtrl,
-                decoration: const InputDecoration(labelText: '名稱'),
+                decoration: InputDecoration(
+                  labelText: dialogContext.l10n('common.name'),
+                ),
               ),
               const SizedBox(height: 8),
               TextField(
                 controller: urlCtrlLocal,
-                decoration: const InputDecoration(labelText: '網址'),
+                decoration: InputDecoration(
+                  labelText: dialogContext.l10n('common.url'),
+                ),
               ),
             ],
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('取消'),
+              child: Text(dialogContext.l10n('common.cancel')),
             ),
             TextButton(
               onPressed: () {
@@ -2229,7 +2251,7 @@ class _BrowserPageState extends State<BrowserPage>
                 }
                 Navigator.pop(context);
               },
-              child: const Text('新增'),
+              child: Text(dialogContext.l10n('common.add')),
             ),
           ],
         );
@@ -2434,7 +2456,9 @@ class _BrowserPageState extends State<BrowserPage>
     if (fallbackScheme != null && fallbackScheme.isNotEmpty) {
       return fallbackScheme;
     }
-    return blocked.rawUrl.isEmpty ? '未知' : blocked.rawUrl;
+    return blocked.rawUrl.isEmpty
+        ? LanguageService.instance.translate('common.unknown')
+        : blocked.rawUrl;
   }
 
   void _showExternalAppBlockedSnackBar(
@@ -2455,10 +2479,19 @@ class _BrowserPageState extends State<BrowserPage>
     final bool fallbackToWeb = bypassedInWebView;
     final messageText =
         openedInNewTab
-            ? '已阻止網頁打開第三方 App($label)，已在新分頁開啟網頁內容'
+            ? context.l10n(
+              'browser.snack.blockExternal.openedNewTab',
+              params: {'app': label},
+            )
             : fallbackToWeb
-            ? '已阻止網頁打開第三方 App($label)，改以網頁顯示內容'
-            : '已阻止網頁打開第三方 App($label)';
+            ? context.l10n(
+              'browser.snack.blockExternal.webFallback',
+              params: {'app': label},
+            )
+            : context.l10n(
+              'browser.snack.blockExternal.blocked',
+              params: {'app': label},
+            );
     final bool canLaunch = blocked.rawUrl.isNotEmpty;
     final bool isDuplicateMessage =
         _blockedExternalSnackBarController != null &&
@@ -3995,7 +4028,9 @@ class _BrowserPageState extends State<BrowserPage>
                             debugPrint(
                               '[Popup] Blocked window.open for ${uri.toString()}',
                             );
-                            _showSnackBar('已阻擋彈出視窗');
+                            _showSnackBar(
+                              context.l10n('browser.snack.blockedPopup'),
+                            );
                             return true;
                           }
                           if (req != null) {
@@ -4228,7 +4263,9 @@ class _BrowserPageState extends State<BrowserPage>
                                         ),
                                         const SizedBox(width: 8),
                                         IconButton(
-                                          tooltip: '複製連結',
+                                          tooltip: context.l10n(
+                                            'browser.context.copyLink',
+                                          ),
                                           icon: const Icon(Icons.copy),
                                           onPressed: () async {
                                             await Clipboard.setData(
@@ -4242,7 +4279,11 @@ class _BrowserPageState extends State<BrowserPage>
                                                   duration: Duration(
                                                     seconds: 1,
                                                   ),
-                                                  content: Text('已複製連結'),
+                                                  content: Text(
+                                                    context.l10n(
+                                                      'browser.snack.copiedLink',
+                                                    ),
+                                                  ),
                                                 ),
                                               );
                                             }
@@ -4482,7 +4523,7 @@ class _BrowserPageState extends State<BrowserPage>
             // Add to home shortcut
             pad(
               IconButton(
-                tooltip: '加入主頁',
+                tooltip: context.l10n('browser.context.addHome'),
                 onPressed: () {
                   unawaited(_showAddToHomeDialog());
                 },
@@ -4729,7 +4770,11 @@ class _BrowserPageState extends State<BrowserPage>
             _blockExternalApp ? Theme.of(context).colorScheme.primary : null,
       ),
       const PopupMenuDivider(),
-      buildItem(_ToolbarMenuAction.addHome, Icons.add, '加入主頁'),
+      buildItem(
+        _ToolbarMenuAction.addHome,
+        Icons.add,
+        context.l10n('browser.context.addHome'),
+      ),
       buildItem(_ToolbarMenuAction.goHome, Icons.home, '主頁'),
       buildItem(_ToolbarMenuAction.help, Icons.help_outline, '說明 ?'),
     ];
@@ -5802,7 +5847,9 @@ class _BrowserPageState extends State<BrowserPage>
                             children: [
                               IconButton(
                                 icon: const Icon(Icons.link),
-                                tooltip: '複製連結',
+                                tooltip: context.l10n(
+                                  'browser.context.copyLink',
+                                ),
                                 onPressed: () async {
                                   await Clipboard.setData(
                                     ClipboardData(text: h.url),
@@ -5811,7 +5858,11 @@ class _BrowserPageState extends State<BrowserPage>
                                     ScaffoldMessenger.of(context).showSnackBar(
                                       const SnackBar(
                                         duration: Duration(seconds: 1),
-                                        content: Text('已複製連結'),
+                                        content: Text(
+                                          context.l10n(
+                                            'browser.snack.copiedLink',
+                                          ),
+                                        ),
                                       ),
                                     );
                                   }
@@ -5968,13 +6019,13 @@ class _BrowserPageState extends State<BrowserPage>
   /// reflects real-time updates via [_currentReceived] and by observing
   /// AppRepo notifications.
   String _folderNameForId(String? folderId) {
-    if (folderId == null) return _kDefaultFolderName;
+    if (folderId == null) return _defaultFolderName;
     for (final folder in repo.mediaFolders.value) {
       if (folder.id == folderId) {
         return folder.name;
       }
     }
-    return _kDefaultFolderName;
+    return _defaultFolderName;
   }
 
   Future<String?> _pickFolderForTask({
@@ -5991,7 +6042,7 @@ class _BrowserPageState extends State<BrowserPage>
     String formatName(String? id, String name) => '$name（${counts[id] ?? 0}）';
     final ids = <String?>[null, ...folders.map((f) => f.id)];
     final names = <String>[
-      formatName(null, _kDefaultFolderName),
+      formatName(null, _defaultFolderName),
       ...folders.map((f) => formatName(f.id, f.name)),
     ];
     final currentKey = currentId ?? _kFolderSheetDefaultKey;
@@ -6004,7 +6055,9 @@ class _BrowserPageState extends State<BrowserPage>
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const ListTile(title: Text('選擇資料夾')),
+                ListTile(
+                  title: Text(context.l10n('browser.dialog.selectFolder')),
+                ),
                 for (var i = 0; i < ids.length; i++)
                   ListTile(
                     leading: const Icon(Icons.folder),
@@ -6981,7 +7034,7 @@ class _TabManagerPageState extends State<_TabManagerPage>
           ],
           // 右上的新增分頁（保留）
           IconButton(
-            tooltip: '新增分頁',
+            tooltip: context.l10n('browser.tabManager.addTab'),
             iconSize: 30,
             icon: const Icon(Icons.add_box_outlined),
             onPressed: () {
@@ -6990,7 +7043,9 @@ class _TabManagerPageState extends State<_TabManagerPage>
               // Determine new index (= current local list length before append)
               final int newIndex = _localTabs.length;
               setState(() {
-                _localTabs.add(_TabInfo(title: '新分頁'));
+                _localTabs.add(
+                  _TabInfo(title: context.l10n('browser.tab.newTabTitle')),
+                );
               });
               // Switch to the newly created tab and close this manager
               widget.onSelect(newIndex);
@@ -7008,7 +7063,7 @@ class _TabManagerPageState extends State<_TabManagerPage>
                     widget.onAdd();
                     Navigator.of(context).pop();
                   },
-                  child: const Text('新增分頁'),
+                  child: Text(context.l10n('browser.tabManager.addTab')),
                 ),
               )
               : GridView.builder(
@@ -7027,7 +7082,11 @@ class _TabManagerPageState extends State<_TabManagerPage>
                         widget.onAdd();
                         final int newIndex = _localTabs.length;
                         setState(() {
-                          _localTabs.add(_TabInfo(title: '新分頁'));
+                          _localTabs.add(
+                            _TabInfo(
+                              title: context.l10n('browser.tab.newTabTitle'),
+                            ),
+                          );
                         });
                         widget.onSelect(newIndex);
                         Navigator.of(context).pop();
@@ -7040,10 +7099,10 @@ class _TabManagerPageState extends State<_TabManagerPage>
                         child: Center(
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
-                            children: const [
-                              Icon(Icons.add, size: 32),
-                              SizedBox(height: 8),
-                              Text('新增分頁'),
+                            children: [
+                              const Icon(Icons.add, size: 32),
+                              const SizedBox(height: 8),
+                              Text(context.l10n('browser.tabManager.addTab')),
                             ],
                           ),
                         ),
