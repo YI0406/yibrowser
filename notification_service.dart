@@ -115,26 +115,26 @@ class NotificationService {
         if (enabled ?? true) {
           return true;
         }
-        final granted = await androidPlugin.requestPermission();
+        final granted = await androidPlugin.requestNotificationsPermission();
         return granted ?? false;
       }
       return true;
     }
 
-    if (Platform.isIOS || Platform.isMacOS) {
-      final darwinPlugin =
+    if (Platform.isIOS) {
+      final iosPlugin =
           _plugin
               .resolvePlatformSpecificImplementation<
-                DarwinFlutterLocalNotificationsPlugin
+                IOSFlutterLocalNotificationsPlugin
               >();
-      if (darwinPlugin != null) {
-        final settings = await darwinPlugin.getNotificationSettings();
+      if (iosPlugin != null) {
+        final settings = await iosPlugin.getNotificationSettings();
         final status = settings.authorizationStatus;
-        if (status == AuthorizationStatus.authorized ||
-            status == AuthorizationStatus.provisional) {
+        if (status == DarwinNotificationPermissionStatus.authorized ||
+            status == DarwinNotificationPermissionStatus.provisional) {
           return true;
         }
-        final granted = await darwinPlugin.requestPermissions(
+        final granted = await iosPlugin.requestPermissions(
           alert: true,
           badge: true,
           sound: true,
@@ -142,10 +142,39 @@ class NotificationService {
         if (!granted) {
           return false;
         }
-        final updated = await darwinPlugin.getNotificationSettings();
+        final updated = await iosPlugin.getNotificationSettings();
         final updatedStatus = updated.authorizationStatus;
-        return updatedStatus == AuthorizationStatus.authorized ||
-            updatedStatus == AuthorizationStatus.provisional;
+        return updatedStatus == DarwinNotificationPermissionStatus.authorized ||
+            updatedStatus == DarwinNotificationPermissionStatus.provisional;
+      }
+      return false;
+    }
+
+    if (Platform.isMacOS) {
+      final macPlugin =
+          _plugin
+              .resolvePlatformSpecificImplementation<
+                MacOSFlutterLocalNotificationsPlugin
+              >();
+      if (macPlugin != null) {
+        final settings = await macPlugin.getNotificationSettings();
+        final status = settings.authorizationStatus;
+        if (status == DarwinNotificationPermissionStatus.authorized ||
+            status == DarwinNotificationPermissionStatus.provisional) {
+          return true;
+        }
+        final granted = await macPlugin.requestPermissions(
+          alert: true,
+          badge: true,
+          sound: true,
+        );
+        if (!granted) {
+          return false;
+        }
+        final updated = await macPlugin.getNotificationSettings();
+        final updatedStatus = updated.authorizationStatus;
+        return updatedStatus == DarwinNotificationPermissionStatus.authorized ||
+            updatedStatus == DarwinNotificationPermissionStatus.provisional;
       }
       return false;
     }
@@ -170,13 +199,22 @@ class NotificationService {
       await androidPlugin?.openNotificationSettings();
       return;
     }
-    if (Platform.isIOS || Platform.isMacOS) {
-      final darwinPlugin =
+    if (Platform.isIOS) {
+      final iosPlugin =
           _plugin
               .resolvePlatformSpecificImplementation<
-                DarwinFlutterLocalNotificationsPlugin
+                IOSFlutterLocalNotificationsPlugin
               >();
-      await darwinPlugin?.openNotificationSettings();
+      await iosPlugin?.openNotificationSettings();
+      return;
+    }
+    if (Platform.isMacOS) {
+      final macPlugin =
+          _plugin
+              .resolvePlatformSpecificImplementation<
+                MacOSFlutterLocalNotificationsPlugin
+              >();
+      await macPlugin?.openNotificationSettings();
     }
   }
 }
