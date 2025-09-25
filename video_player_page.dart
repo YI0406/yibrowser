@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
 import 'package:volume_controller/volume_controller.dart';
-
+import 'app_localizations.dart';
 import 'native_player.dart';
 import 'soure.dart';
 
@@ -31,7 +31,7 @@ class VideoPlayerPage extends StatefulWidget {
 }
 
 class _VideoPlayerPageState extends State<VideoPlayerPage>
-    with WidgetsBindingObserver {
+    with WidgetsBindingObserver, LanguageAwareState<VideoPlayerPage> {
   final NativePlayerController _player = NativePlayerController();
   final VolumeController _systemVolume = VolumeController.instance;
   final GlobalKey _surfaceKey = GlobalKey();

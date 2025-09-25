@@ -6,15 +6,20 @@ import 'package:share_plus/share_plus.dart';
 import 'app_localizations.dart';
 
 /// Displays a local image with pinch-to-zoom support and an option to share.
-class ImagePreviewPage extends StatelessWidget {
+class ImagePreviewPage extends StatefulWidget {
   const ImagePreviewPage({super.key, required this.filePath, this.title});
 
   final String filePath;
   final String? title;
+  @override
+  State<ImagePreviewPage> createState() => _ImagePreviewPageState();
+}
 
+class _ImagePreviewPageState extends State<ImagePreviewPage>
+    with LanguageAwareState<ImagePreviewPage> {
   @override
   Widget build(BuildContext context) {
-    final displayName = title ?? path.basename(filePath);
+    final displayName = widget.title ?? path.basename(widget.filePath);
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
@@ -30,8 +35,8 @@ class ImagePreviewPage extends StatelessWidget {
                 featureName: context.l10n('feature.export'),
               );
               if (!ok) return;
-              if (!File(filePath).existsSync()) return;
-              await Share.shareXFiles([XFile(filePath)]);
+              if (!File(widget.filePath).existsSync()) return;
+              await Share.shareXFiles([XFile(widget.filePath)]);
             },
           ),
         ],
@@ -41,7 +46,7 @@ class ImagePreviewPage extends StatelessWidget {
           maxScale: 4,
           minScale: 0.5,
           child: Image.file(
-            File(filePath),
+            File(widget.filePath),
             fit: BoxFit.contain,
             errorBuilder:
                 (_, __, ___) => const Icon(

@@ -512,3 +512,35 @@ extension LocalizationBuildContext on BuildContext {
     return LanguageService.instance.translate(key, params: params);
   }
 }
+
+/// Mixin that allows a [StatefulWidget] to automatically rebuild whenever the
+/// user changes the application language from settings. Pages that display
+/// localized text should apply this mixin so that strings update immediately
+/// after the preference switches.
+mixin LanguageAwareState<T extends StatefulWidget> on State<T> {
+  @protected
+  void onLanguageChanged() {}
+
+  void _handleLanguageChanged() {
+    if (!mounted) {
+      return;
+    }
+    setState(onLanguageChanged);
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    LanguageService.instance.languageListenable.addListener(
+      _handleLanguageChanged,
+    );
+  }
+
+  @override
+  void dispose() {
+    LanguageService.instance.languageListenable.removeListener(
+      _handleLanguageChanged,
+    );
+    super.dispose();
+  }
+}

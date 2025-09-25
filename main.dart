@@ -129,7 +129,7 @@ class RootNav extends StatefulWidget {
   State<RootNav> createState() => _RootNavState();
 }
 
-class _RootNavState extends State<RootNav> {
+class _RootNavState extends State<RootNav> with LanguageAwareState<RootNav> {
   // Index of the selected tab.
   // Start on home tab by default (index 1).
   int index = 1;

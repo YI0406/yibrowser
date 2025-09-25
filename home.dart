@@ -19,7 +19,7 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, LanguageAwareState<HomePage> {
   bool _didDragSinceLongPress = false;
   int _draggingIndex = -1;
   int? _hoverIndex;

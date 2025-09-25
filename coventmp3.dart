@@ -12,6 +12,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:video_player/video_player.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'app_localizations.dart';
 
 enum _DragHandle { none, start, end }
 
@@ -156,7 +157,8 @@ class MediaSegmentExportPage extends StatefulWidget {
   State<MediaSegmentExportPage> createState() => _MediaSegmentExportPageState();
 }
 
-class _MediaSegmentExportPageState extends State<MediaSegmentExportPage> {
+class _MediaSegmentExportPageState extends State<MediaSegmentExportPage>
+    with LanguageAwareState<MediaSegmentExportPage> {
   static const double _kMinSelectableSeconds = 0.1;
   static const double _kPlaybackHitSlop = 12.0;
   late final TextEditingController _nameController;

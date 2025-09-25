@@ -64,7 +64,7 @@ class MediaPage extends StatefulWidget {
 }
 
 class _MediaPageState extends State<MediaPage>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, LanguageAwareState<MediaPage> {
   late final TabController _tab = TabController(length: 3, vsync: this);
   static const String _kFolderSheetDefaultKey = '__default_media_folder__';
 

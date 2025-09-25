@@ -150,7 +150,8 @@ enum _LinkContextMenuAction {
   addHome,
 }
 
-class _BrowserPageState extends State<BrowserPage> {
+class _BrowserPageState extends State<BrowserPage>
+    with LanguageAwareState<BrowserPage> {
   static final RegExp _kHttpUrlPattern = RegExp(
     r'''https?:\/\/[^\s'"<>]+''',
     caseSensitive: false,
@@ -6572,7 +6573,8 @@ class HistoryPage extends StatefulWidget {
   State<HistoryPage> createState() => _HistoryPageState();
 }
 
-class _HistoryPageState extends State<HistoryPage> {
+class _HistoryPageState extends State<HistoryPage>
+    with LanguageAwareState<HistoryPage> {
   final TextEditingController _searchController = TextEditingController();
   String _query = '';
 
@@ -6905,7 +6907,8 @@ class _TabManagerPage extends StatefulWidget {
   State<_TabManagerPage> createState() => _TabManagerPageState();
 }
 
-class _TabManagerPageState extends State<_TabManagerPage> {
+class _TabManagerPageState extends State<_TabManagerPage>
+    with LanguageAwareState<_TabManagerPage> {
   late List<_TabInfo> _localTabs;
   bool _selectMode = false; // 是否進入選擇模式
   final Set<int> _selected = {}; // 已選索引集合

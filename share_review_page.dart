@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 import 'package:video_player/video_player.dart';
 import 'package:open_filex/open_filex.dart';
+import 'app_localizations.dart';
 
 class IncomingShare {
   const IncomingShare({
@@ -59,7 +60,8 @@ class ShareReviewPage extends StatefulWidget {
   State<ShareReviewPage> createState() => _ShareReviewPageState();
 }
 
-class _ShareReviewPageState extends State<ShareReviewPage> {
+class _ShareReviewPageState extends State<ShareReviewPage>
+    with LanguageAwareState<ShareReviewPage> {
   late final PageController _pageController;
   final List<IncomingShare> _items = [];
   final List<IncomingShare> _removedItems = [];
