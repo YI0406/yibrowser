@@ -525,6 +525,7 @@ class DownloadTask {
 
   /// Construct a task from persisted JSON. Unknown fields are ignored.
   factory DownloadTask.fromJson(Map<String, dynamic> json) {
+    final rawProgressUnit = json['progressUnit'] as String?;
     return DownloadTask(
       url: json['url'] as String,
       savePath: json['savePath'] as String,
@@ -547,7 +548,7 @@ class DownloadTask {
               ? Duration(milliseconds: json['duration'] as int)
               : null,
       paused: json['paused'] as bool? ?? false,
-      progressUnit: json['progressUnit'] as String?,
+      progressUnit: rawProgressUnit == 'time-ms' ? null : rawProgressUnit,
     );
   }
 
@@ -684,7 +685,6 @@ class AppRepo extends ChangeNotifier {
   /// timestamps (milliseconds since epoch) which instantly jump far beyond the
   /// media duration. To convert those into relative progress we remember the
   /// first observed timestamp per task and subtract it from subsequent updates.
-  final Map<DownloadTask, int> _hlsTimeBaseMs = {};
 
   /// Initialise the repository. Must be called before using [AppRepo.I].
   /// It loads previously persisted state from disk and prepares directories.
@@ -3064,7 +3064,6 @@ class AppRepo extends ChangeNotifier {
         t.paused = true;
         t.state = 'paused';
         _lastHlsSize.remove(t);
-        _hlsTimeBaseMs.remove(t);
       }
     } catch (_) {
       // ignore
@@ -3118,7 +3117,7 @@ class AppRepo extends ChangeNotifier {
       final uaArg = ua.isNotEmpty ? "-user_agent '${ua}'" : '';
       final cmd =
           "-y -protocol_whitelist file,http,https,tcp,tls,crypto $uaArg $headerArg -i '${t.url}' -c copy -bsf:a aac_adtstoasc '${t.savePath}'";
-      _hlsTimeBaseMs.remove(t);
+
       final session = await FFmpegKit.executeAsync(
         cmd,
         (session) async {
@@ -3126,8 +3125,17 @@ class AppRepo extends ChangeNotifier {
           if (rc != null && rc.isValueSuccess()) {
             t.state = 'done';
             _normalizeTaskType(t);
+            try {
+              final f = File(t.savePath);
+              if (await f.exists()) {
+                final len = await f.length();
+                t.received = len;
+                t.total = len;
+              }
+            } catch (_) {}
+            t.progressUnit = 'bytes';
             _lastHlsSize.remove(t);
-            _hlsTimeBaseMs.remove(t);
+
             // propagate update to downloads list
             _notifyDownloadsUpdated();
             notifyListeners();
@@ -3145,7 +3153,6 @@ class AppRepo extends ChangeNotifier {
               _notifyDownloadsUpdated();
               notifyListeners();
               _lastHlsSize.remove(t);
-              _hlsTimeBaseMs.remove(t);
             }
           }
           await _saveState();
@@ -3445,28 +3452,13 @@ class AppRepo extends ChangeNotifier {
             }
           } catch (_) {}
         }
-        // Pre-calc total duration for progress: sum EXTINF durations if present
-        try {
-          int totalMs = 0;
-          for (final rawLine in probeTxt.split('\n')) {
-            final l = rawLine.trim();
-            if (l.startsWith('#EXTINF')) {
-              final part = l.split(':').skip(1).join(':');
-              final v = part.split(',').first.trim();
-              final sec = double.tryParse(v);
-              if (sec != null && sec > 0) {
-                totalMs += (sec * 1000).round();
-              }
-            }
-          }
-          if (totalMs > 0) {
-            t.total = totalMs;
-            t.received = 0;
-            t.progressUnit = 'time-ms';
-            _notifyDownloadsUpdated();
-            notifyListeners();
-          }
-        } catch (_) {}
+        // Reset counters so progress reflects the accumulated output size.
+        t.received = 0;
+        t.total = null;
+        t.progressUnit = 'bytes';
+        _lastHlsSize.remove(t);
+        _notifyDownloadsUpdated();
+        notifyListeners();
 
         // Determine if this playlist contains jpeg/png/webp image segments and no TS segments.
         bool jpegish = false;
@@ -3526,7 +3518,7 @@ class AppRepo extends ChangeNotifier {
           "-rw_timeout 15000000 -timeout 15000000 -analyzeduration 0 -probesize 500000 "
           "$uaArg $headerArg -i '${inputUrl}' -map 0:v:0? -map 0:a:0? -c copy -movflags +faststart -bsf:a aac_adtstoasc '${t.savePath}'";
       _lastHlsSize.remove(t);
-      _hlsTimeBaseMs.remove(t);
+
       final session = await FFmpegKit.executeAsync(
         cmd,
         (session) async {
@@ -3535,8 +3527,17 @@ class AppRepo extends ChangeNotifier {
           if (rc != null && rc.isValueSuccess()) {
             t.state = 'done';
             _normalizeTaskType(t);
+            try {
+              final f = File(t.savePath);
+              if (await f.exists()) {
+                final len = await f.length();
+                t.received = len;
+                t.total = len;
+              }
+            } catch (_) {}
+            t.progressUnit = 'bytes';
             _lastHlsSize.remove(t);
-            _hlsTimeBaseMs.remove(t);
+
             // propagate update to downloads list
             _notifyDownloadsUpdated();
             notifyListeners();
@@ -3561,7 +3562,7 @@ class AppRepo extends ChangeNotifier {
               _notifyDownloadsUpdated();
               notifyListeners();
               _lastHlsSize.remove(t);
-              _hlsTimeBaseMs.remove(t);
+
               try {
                 await FirebaseAnalytics.instance.logEvent(
                   name: 'download_error',
@@ -3603,10 +3604,19 @@ class AppRepo extends ChangeNotifier {
                     if (rc2 != null && rc2.isValueSuccess()) {
                       t.state = 'done';
                       _normalizeTaskType(t);
+                      try {
+                        final f = File(t.savePath);
+                        if (await f.exists()) {
+                          final len = await f.length();
+                          t.received = len;
+                          t.total = len;
+                        }
+                      } catch (_) {}
+                      t.progressUnit = 'bytes';
                       _notifyDownloadsUpdated();
                       notifyListeners();
                       _lastHlsSize.remove(t);
-                      _hlsTimeBaseMs.remove(t);
+
                       await _generatePreview(t);
                       if (autoSave.value) {
                         try {
@@ -3625,20 +3635,21 @@ class AppRepo extends ChangeNotifier {
         },
         (log) {},
         (stat) async {
-          // During HLS conversion, refresh the UI based on the output file size.
-          // FFmpeg statistics callbacks occur frequently. To provide a responsive
-          // progress indicator in the UI, trigger a notifier update whenever the
-          // output file grows by at least 16 KB. We do not mutate t.received here
-          // because it represents the segment count for HLS tasks; instead we
-          // store the last known file size in [_lastHlsSize].
+          // Refresh UI updates using the accumulated output size. Trigger a
+          // notification whenever the MP4 grows by at least 16 KB so progress
+          // and speed can be derived from bytes instead of segment counts.
           try {
             final f = File(t.savePath);
             if (await f.exists()) {
               final len = await f.length();
               final last = _lastHlsSize[t] ?? 0;
-              // Throttle notifications to when the file has grown noticeably.
-              if (len >= last + (16 * 1024)) {
+              if (len > last && (len - last >= (16 * 1024) || last == 0)) {
                 _lastHlsSize[t] = len;
+                t.received = len;
+                t.progressUnit = 'bytes';
+                if (t.total != null && len > t.total!) {
+                  t.total = len;
+                }
                 _notifyDownloadsUpdated();
                 notifyListeners();
               }
@@ -3646,38 +3657,6 @@ class AppRepo extends ChangeNotifier {
           } catch (_) {
             // Ignore probing errors
           }
-          // Update time-based progress if available
-          try {
-            final ms = stat.getTime();
-            if (ms != null &&
-                (t.progressUnit == 'time-ms') &&
-                (t.total ?? 0) > 0) {
-              final total = t.total!;
-              int base;
-              if (!_hlsTimeBaseMs.containsKey(t)) {
-                if (ms > total * 2) {
-                  _hlsTimeBaseMs[t] = ms;
-                  base = ms;
-                } else {
-                  _hlsTimeBaseMs[t] = 0;
-                  base = 0;
-                }
-              } else {
-                base = _hlsTimeBaseMs[t] ?? 0;
-                if (base != 0 && ms < base) {
-                  _hlsTimeBaseMs[t] = ms;
-                  base = ms;
-                }
-              }
-              int relative = ms - base;
-              if (relative < 0) relative = 0;
-              if (relative > total) relative = total;
-              if (relative > t.received) {
-                t.received = relative;
-                _notifyDownloadsUpdated();
-              }
-            }
-          } catch (_) {}
         },
       );
       final id = await session.getSessionId();
@@ -3688,7 +3667,6 @@ class AppRepo extends ChangeNotifier {
         _notifyDownloadsUpdated();
         notifyListeners();
         _lastHlsSize.remove(t);
-        _hlsTimeBaseMs.remove(t);
 
         await _saveState();
       }
