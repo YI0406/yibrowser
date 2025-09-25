@@ -2432,7 +2432,7 @@ class _BrowserPageState extends State<BrowserPage>
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         duration: const Duration(seconds: 1),
-         content: Text(
+        content: Text(
           next
               ? context.l10n('browser.snack.blockExternalApp.enabled')
               : context.l10n('browser.snack.blockExternalApp.disabled'),
@@ -2533,7 +2533,7 @@ class _BrowserPageState extends State<BrowserPage>
         action:
             canLaunch
                 ? SnackBarAction(
-                     label: context.l10n('common.open'),
+                  label: context.l10n('common.open'),
                   onPressed: () {
                     messenger.hideCurrentSnackBar();
                     unawaited(_launchExternalApp(blocked.rawUrl));
@@ -2573,11 +2573,10 @@ class _BrowserPageState extends State<BrowserPage>
   void _showExternalAppLaunchError() {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-       SnackBar(
+      SnackBar(
         duration: const Duration(seconds: 1),
-        content: Text(
-          context.l10n('browser.error.openExternalApp'),
-        ),
+        content: Text(context.l10n('browser.error.openExternalApp')),
+      ),
     );
   }
 
@@ -3664,14 +3663,13 @@ class _BrowserPageState extends State<BrowserPage>
                     textInputAction: TextInputAction.go,
                     decoration: InputDecoration(
                       border: InputBorder.none,
-                    hintText: context.l10n('browser.urlField.hint'),
+                      hintText: context.l10n('browser.urlField.hint'),
                       suffixIcon: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           if (_showPaste)
                             IconButton(
-                          tooltip:
-                                  context.l10n('browser.urlField.paste'),
+                              tooltip: context.l10n('browser.urlField.paste'),
                               icon: const Icon(Icons.content_paste),
                               onPressed: () async {
                                 try {
@@ -3694,8 +3692,7 @@ class _BrowserPageState extends State<BrowserPage>
                               _tabs[_currentTabIndex].urlCtrl.text.isNotEmpty &&
                               _urlFocus.hasFocus)
                             IconButton(
-                               tooltip:
-                                  context.l10n('browser.urlField.clear'),
+                              tooltip: context.l10n('browser.urlField.clear'),
                               icon: const Icon(Icons.clear),
                               onPressed: () {
                                 if (_tabs.isNotEmpty) {
@@ -3729,9 +3726,10 @@ class _BrowserPageState extends State<BrowserPage>
                         isFav ? Icons.favorite : Icons.favorite_border,
                       ),
                       color: isFav ? Colors.redAccent : null,
-                       tooltip: isFav
-                          ? context.l10n('browser.toolbar.favorite.remove')
-                          : context.l10n('browser.toolbar.favorite.add'),
+                      tooltip:
+                          isFav
+                              ? context.l10n('browser.toolbar.favorite.remove')
+                              : context.l10n('browser.toolbar.favorite.add'),
                       visualDensity: VisualDensity.compact,
                       onPressed:
                           currentUrl == null
@@ -3746,7 +3744,7 @@ class _BrowserPageState extends State<BrowserPage>
                 if (_tabs.isEmpty ||
                     _currentTabIndex < 0 ||
                     _currentTabIndex >= _tabs.length)
-                IconButton(
+                  IconButton(
                     icon: const Icon(Icons.refresh),
                     tooltip: context.l10n('browser.toolbar.reload'),
                     visualDensity: VisualDensity.compact,
@@ -3759,9 +3757,10 @@ class _BrowserPageState extends State<BrowserPage>
                       final tab = _tabs[_currentTabIndex];
                       return IconButton(
                         icon: Icon(loading ? Icons.close : Icons.refresh),
-                        tooltip: loading
-                            ? context.l10n('browser.toolbar.stop')
-                            : context.l10n('browser.toolbar.reload'),
+                        tooltip:
+                            loading
+                                ? context.l10n('browser.toolbar.stop')
+                                : context.l10n('browser.toolbar.reload'),
                         visualDensity: VisualDensity.compact,
                         onPressed: () {
                           final controller = tab.controller;
@@ -4252,7 +4251,7 @@ class _BrowserPageState extends State<BrowserPage>
                             context: context,
                             builder: (_) {
                               return AlertDialog(
-                              title: Text(
+                                title: Text(
                                   context.l10n(
                                     'browser.detectMedia.dialog.title',
                                   ),
@@ -4271,11 +4270,8 @@ class _BrowserPageState extends State<BrowserPage>
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
                                         Chip(
-                                        label: Text(
-                                            _localizedMediaType(
-                                              context,
-                                              type,
-                                            ),
+                                          label: Text(
+                                            _localizedMediaType(context, type),
                                           ),
                                           visualDensity: VisualDensity.compact,
                                           materialTapTargetSize:
@@ -4295,7 +4291,7 @@ class _BrowserPageState extends State<BrowserPage>
                                               ScaffoldMessenger.of(
                                                 context,
                                               ).showSnackBar(
-                                            SnackBar(
+                                                SnackBar(
                                                   duration: const Duration(
                                                     seconds: 1,
                                                   ),
@@ -4316,16 +4312,12 @@ class _BrowserPageState extends State<BrowserPage>
                                 actions: [
                                   TextButton(
                                     onPressed: () => Navigator.pop(context),
-                                 child: Text(
-                                      context.l10n('common.cancel'),
-                                    ),
+                                    child: Text(context.l10n('common.cancel')),
                                   ),
                                   if (type != 'image')
                                     TextButton.icon(
                                       icon: const Icon(Icons.play_arrow),
-                                      label: Text(
-                                        context.l10n('common.play'),
-                                      ),
+                                      label: Text(context.l10n('common.play')),
                                       onPressed: () {
                                         Navigator.pop(context);
                                         _playMedia(resolvedLink);
@@ -4446,14 +4438,14 @@ class _BrowserPageState extends State<BrowserPage>
             pad(
               IconButton(
                 icon: const Icon(Icons.arrow_back),
-                 tooltip: context.l10n('browser.toolbar.back'),
+                tooltip: context.l10n('browser.toolbar.back'),
                 onPressed: () => _navigateHistoryDelta(-1),
               ),
             ),
             pad(
               IconButton(
                 icon: const Icon(Icons.arrow_forward),
-          tooltip: context.l10n('browser.toolbar.forward'),
+                tooltip: context.l10n('browser.toolbar.forward'),
                 onPressed: () => _navigateHistoryDelta(1),
               ),
             ),
@@ -4569,11 +4561,11 @@ class _BrowserPageState extends State<BrowserPage>
                           .length;
                   return IconButton(
                     tooltip:
- downloadCount > 0
+                        downloadCount > 0
                             ? context.l10n(
-                                'browser.downloadList.titleWithCount',
-                                params: {'count': downloadCount.toString()},
-                              )
+                              'browser.downloadList.titleWithCount',
+                              params: {'count': downloadCount.toString()},
+                            )
                             : context.l10n('browser.downloadList.title'),
                     onPressed: _openDownloadsSheet,
                     visualDensity: VisualDensity.compact,
@@ -4597,24 +4589,18 @@ class _BrowserPageState extends State<BrowserPage>
                   context: context,
                   builder: (context) {
                     return AlertDialog(
-                     title: Text(
-                        context.l10n('browser.tabs.closeAll.title'),
-                      ),
+                      title: Text(context.l10n('browser.tabs.closeAll.title')),
                       content: Text(
                         context.l10n('browser.tabs.closeAll.message'),
                       ),
                       actions: [
                         TextButton(
                           onPressed: () => Navigator.of(context).pop(false),
-                        child: Text(
-                            context.l10n('common.cancel'),
-                          ),
+                          child: Text(context.l10n('common.cancel')),
                         ),
                         FilledButton(
                           onPressed: () => Navigator.of(context).pop(true),
-                          child: Text(
-                            context.l10n('common.close'),
-                          ),
+                          child: Text(context.l10n('common.close')),
                         ),
                       ],
                     );
@@ -4707,7 +4693,7 @@ class _BrowserPageState extends State<BrowserPage>
       builder: (context, _) {
         return IconButton(
           key: _menuButtonKey,
-           tooltip: context.l10n('browser.toolbar.menu'),
+          tooltip: context.l10n('browser.toolbar.menu'),
           padding: EdgeInsets.zero,
           constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
           onPressed: _showToolbarMenu,
@@ -4774,29 +4760,29 @@ class _BrowserPageState extends State<BrowserPage>
       buildItem(
         _ToolbarMenuAction.openFavorites,
         Icons.favorite,
-           favoriteCount > 0
+        favoriteCount > 0
             ? context.l10n(
-                'browser.menu.favoritesWithCount',
-                params: {'count': favoriteCount.toString()},
-              )
+              'browser.menu.favoritesWithCount',
+              params: {'count': favoriteCount.toString()},
+            )
             : context.l10n('browser.menu.favorites'),
         iconColor: favoriteCount > 0 ? Colors.redAccent : null,
       ),
       buildItem(
         _ToolbarMenuAction.openHistory,
         Icons.history,
-         historyCount > 0
+        historyCount > 0
             ? context.l10n(
-                'browser.menu.historyWithCount',
-                params: {'count': historyCount.toString()},
-              )
+              'browser.menu.historyWithCount',
+              params: {'count': historyCount.toString()},
+            )
             : context.l10n('browser.menu.history'),
         iconColor: historyCount > 0 ? colorScheme.primary : null,
       ),
       buildItem(
         _ToolbarMenuAction.clearBrowsingData,
         Icons.cleaning_services,
-      context.l10n('browser.menu.clearBrowsingData'),
+        context.l10n('browser.menu.clearBrowsingData'),
         iconColor: colorScheme.error,
       ),
       const PopupMenuDivider(),
@@ -4810,7 +4796,7 @@ class _BrowserPageState extends State<BrowserPage>
       buildItem(
         _ToolbarMenuAction.toggleBlockPopup,
         blockPopupOn ? Icons.toggle_on : Icons.toggle_off,
-         context.l10n('browser.menu.blockPopups'),
+        context.l10n('browser.menu.blockPopups'),
         iconColor: blockPopupOn ? Colors.redAccent : null,
       ),
       buildItem(
@@ -4826,7 +4812,7 @@ class _BrowserPageState extends State<BrowserPage>
         Icons.add,
         context.l10n('browser.context.addHome'),
       ),
-       buildItem(
+      buildItem(
         _ToolbarMenuAction.goHome,
         Icons.home,
         context.l10n('browser.menu.home'),
@@ -4988,11 +4974,9 @@ class _BrowserPageState extends State<BrowserPage>
     repo.toggleFavoriteUrl(url);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-     SnackBar(
+      SnackBar(
         duration: const Duration(seconds: 1),
-        content: Text(
-          context.l10n('browser.snack.favorites.updated'),
-        ),
+        content: Text(context.l10n('browser.snack.favorites.updated')),
       ),
     );
   }
@@ -5020,7 +5004,7 @@ class _BrowserPageState extends State<BrowserPage>
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         duration: const Duration(seconds: 1),
-         content: Text(
+        content: Text(
           next
               ? context.l10n('browser.snack.sniffer.enabled')
               : context.l10n('browser.snack.sniffer.disabled'),
@@ -5072,28 +5056,21 @@ class _BrowserPageState extends State<BrowserPage>
       context: context,
       builder:
           (_) => AlertDialog(
-          title: Text(
-                  context.l10n('browser.dialog.clearBrowsingData.title'),
-                ),
-                content: Text(
-                  context.l10n('browser.dialog.clearBrowsingData.message'),
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.of(context).pop(false),
-                    child: Text(
-                      context.l10n('common.cancel'),
-                    ),
-                  ),
-                  TextButton(
-                    onPressed: () => Navigator.of(context).pop(true),
-                    child: Text(
-                      context.l10n('common.clear'),
-                    ),
-                  ),
-                ],
+            title: Text(context.l10n('browser.dialog.clearBrowsingData.title')),
+            content: Text(
+              context.l10n('browser.dialog.clearBrowsingData.message'),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: Text(context.l10n('common.cancel')),
               ),
-         
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: Text(context.l10n('common.clear')),
+              ),
+            ],
+          ),
     );
 
     if (confirm != true) {
@@ -5120,11 +5097,9 @@ class _BrowserPageState extends State<BrowserPage>
 
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-     SnackBar(
+      SnackBar(
         duration: const Duration(seconds: 1),
-        content: Text(
-          context.l10n('browser.snack.browsingDataCleared'),
-        ),
+        content: Text(context.l10n('browser.snack.browsingDataCleared')),
       ),
     );
   }
@@ -5161,7 +5136,7 @@ class _BrowserPageState extends State<BrowserPage>
 
         return StatefulBuilder(
           builder: (context, setState) {
-           Widget checkbox(String profile) {
+            Widget checkbox(String profile) {
               final checked = tempSelection.contains(profile);
               return CheckboxListTile(
                 value: checked,
@@ -5177,19 +5152,15 @@ class _BrowserPageState extends State<BrowserPage>
                           });
                         }
                         : null,
-             title: Text(
-                  context.l10n(
-                    'browser.dialog.adblocker.checkbox.$profile',
-                  ),
+                title: Text(
+                  context.l10n('browser.dialog.adblocker.checkbox.$profile'),
                 ),
               );
             }
 
             final canConfirm = !enabled || tempSelection.isNotEmpty;
             return AlertDialog(
-             title: Text(
-                context.l10n('browser.dialog.adblocker.title'),
-              ),
+              title: Text(context.l10n('browser.dialog.adblocker.title')),
               content: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -5202,23 +5173,23 @@ class _BrowserPageState extends State<BrowserPage>
                           enabled = value;
                         });
                       },
-                     title: Text(
+                      title: Text(
                         context.l10n('browser.dialog.adblocker.enableTitle'),
                       ),
                     ),
                     const SizedBox(height: 8),
                     Text(
-                       context.l10n('browser.dialog.adblocker.enableSubtitle'),
+                      context.l10n('browser.dialog.adblocker.enableSubtitle'),
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
-                   checkbox('lite'),
+                    checkbox('lite'),
                     checkbox('plus'),
                     checkbox('privacy'),
                     if (enabled && tempSelection.isEmpty)
                       Padding(
                         padding: const EdgeInsets.only(top: 8),
                         child: Text(
-                       context.l10n(
+                          context.l10n(
                             'browser.dialog.adblocker.selectAtLeastOne',
                           ),
                           style: Theme.of(
@@ -5234,9 +5205,7 @@ class _BrowserPageState extends State<BrowserPage>
               actions: [
                 TextButton(
                   onPressed: () => Navigator.of(context).pop(),
-               child: Text(
-                    context.l10n('common.cancel'),
-                  ),
+                  child: Text(context.l10n('common.cancel')),
                 ),
                 FilledButton(
                   onPressed:
@@ -5250,9 +5219,7 @@ class _BrowserPageState extends State<BrowserPage>
                             );
                           }
                           : null,
-                 child: Text(
-                    context.l10n('common.apply'),
-                  ),
+                  child: Text(context.l10n('common.apply')),
                 ),
               ],
             );
@@ -5271,7 +5238,7 @@ class _BrowserPageState extends State<BrowserPage>
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         duration: const Duration(seconds: 1),
-           content: Text(
+        content: Text(
           enabled
               ? context.l10n('browser.snack.adblocker.enabled')
               : context.l10n('browser.snack.adblocker.disabled'),
@@ -5287,7 +5254,7 @@ class _BrowserPageState extends State<BrowserPage>
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         duration: const Duration(seconds: 1),
-      content: Text(
+        content: Text(
           next
               ? context.l10n('browser.snack.blockPopups.enabled')
               : context.l10n('browser.snack.blockPopups.disabled'),
@@ -5342,7 +5309,7 @@ class _BrowserPageState extends State<BrowserPage>
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-       bullet(context.l10n('browser.dialog.adblocker.bullet1')),
+        bullet(context.l10n('browser.dialog.adblocker.bullet1')),
         bullet(context.l10n('browser.dialog.adblocker.bullet2')),
         bullet(context.l10n('browser.dialog.adblocker.bullet3')),
         bullet(context.l10n('browser.dialog.adblocker.bullet4')),
@@ -5403,14 +5370,14 @@ class _BrowserPageState extends State<BrowserPage>
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                           context.l10n('common.help'),
+                              context.l10n('common.help'),
                               style: textTheme.titleLarge?.copyWith(
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
                             const SizedBox(height: 4),
                             Text(
-                        context.l10n(
+                              context.l10n(
                                 'browser.dialog.adblocker.helpSubtitle',
                               ),
                               style: textTheme.bodySmall?.copyWith(
@@ -5444,9 +5411,7 @@ class _BrowserPageState extends State<BrowserPage>
                     alignment: Alignment.centerRight,
                     child: FilledButton(
                       onPressed: () => Navigator.of(context).pop(true),
-                     child: Text(
-                        context.l10n('common.gotIt'),
-                      ),
+                      child: Text(context.l10n('common.gotIt')),
                     ),
                   ),
                 ],
@@ -5465,7 +5430,7 @@ class _BrowserPageState extends State<BrowserPage>
 
   String _adBlockerMenuLabel(bool enabled, Set<String> profiles) {
     if (!enabled) {
-   return context.l10n('browser.menu.adblockerDisabled');
+      return context.l10n('browser.menu.adblockerDisabled');
     }
     String displayName(String key) {
       switch (key) {
@@ -5481,7 +5446,7 @@ class _BrowserPageState extends State<BrowserPage>
 
     final names = profiles.map(displayName).toList()..sort();
     final joined = names.join('、');
-     return context.l10n(
+    return context.l10n(
       'browser.menu.adblockerEnabled',
       params: {'status': joined},
     );
@@ -5496,7 +5461,7 @@ class _BrowserPageState extends State<BrowserPage>
             context: context,
             builder:
                 (_) => AlertDialog(
-               title: Text(
+                  title: Text(
                     context.l10n('browser.dialog.downloadMedia.title'),
                   ),
                   content: Text(
@@ -5507,15 +5472,11 @@ class _BrowserPageState extends State<BrowserPage>
                   actions: [
                     TextButton(
                       onPressed: () => Navigator.pop(context, false),
-                      child: Text(
-                        context.l10n('common.cancel'),
-                      ),
+                      child: Text(context.l10n('common.cancel')),
                     ),
                     FilledButton(
                       onPressed: () => Navigator.pop(context, true),
-                       child: Text(
-                        context.l10n('common.download'),
-                      ),
+                      child: Text(context.l10n('common.download')),
                     ),
                   ],
                 ),
@@ -5526,11 +5487,9 @@ class _BrowserPageState extends State<BrowserPage>
     await AppRepo.I.enqueueDownload(url);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-       SnackBar(
+      SnackBar(
         duration: const Duration(seconds: 1),
-        content: Text(
-          context.l10n('browser.snack.addedToQueue'),
-        ),
+        content: Text(context.l10n('browser.snack.addedToQueue')),
       ),
     );
   }
@@ -5582,16 +5541,12 @@ class _BrowserPageState extends State<BrowserPage>
       context: context,
       builder: (_) {
         return AlertDialog(
-       title: Text(
-            context.l10n('browser.dialog.detectDownloadable.title'),
-          ),
+          title: Text(context.l10n('browser.dialog.detectDownloadable.title')),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-         Text(
-                context.l10n('browser.dialog.detectDownloadable.message'),
-              ),
+              Text(context.l10n('browser.dialog.detectDownloadable.message')),
               const SizedBox(height: 12),
               Text(
                 url,
@@ -5604,15 +5559,11 @@ class _BrowserPageState extends State<BrowserPage>
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, false),
-             child: Text(
-                context.l10n('common.cancel'),
-              ),
+              child: Text(context.l10n('common.cancel')),
             ),
             FilledButton(
               onPressed: () => Navigator.pop(context, true),
-                child: Text(
-                context.l10n('common.download'),
-              ),
+              child: Text(context.l10n('common.download')),
             ),
           ],
         );
@@ -5696,9 +5647,7 @@ class _BrowserPageState extends State<BrowserPage>
                   children: [
                     TextButton.icon(
                       icon: const Icon(Icons.play_arrow),
-                       label: Text(
-                        context.l10n('common.play'),
-                      ),
+                      label: Text(context.l10n('common.play')),
                       onPressed: () {
                         Navigator.pop(context);
                         // 使用內建播放器播放（支援 iOS 子母畫面 PiP）。
@@ -5708,9 +5657,7 @@ class _BrowserPageState extends State<BrowserPage>
                     const SizedBox(width: 8),
                     FilledButton.icon(
                       icon: const Icon(Icons.download),
-                    label: Text(
-                        context.l10n('common.download'),
-                      ),
+                      label: Text(context.l10n('common.download')),
                       onPressed: () {
                         Navigator.pop(context);
                         _confirmDownload(h.url);
@@ -5743,7 +5690,7 @@ class _BrowserPageState extends State<BrowserPage>
             valueListenable: repo.hits,
             builder: (_, list, __) {
               if (list.isEmpty) {
-                 return Padding(
+                return Padding(
                   padding: const EdgeInsets.all(16),
                   child: Text(
                     context.l10n('browser.mediaDetection.emptyState'),
@@ -5761,9 +5708,7 @@ class _BrowserPageState extends State<BrowserPage>
                     ),
                     trailing: TextButton.icon(
                       icon: const Icon(Icons.delete_sweep),
-                      label: Text(
-                        context.l10n('common.clearAll'),
-                      ),
+                      label: Text(context.l10n('common.clearAll')),
                       onPressed: () {
                         repo.hits.value = [];
                         Navigator.pop(context);
@@ -5895,15 +5840,15 @@ class _BrowserPageState extends State<BrowserPage>
                                                 borderRadius:
                                                     BorderRadius.circular(4),
                                               ),
-                                               child: Text(
-                                            context.l10n(
-                                              'browser.media.statusResolving',
-                                            ),
-                                            style: const TextStyle(
-                                              fontSize: 10,
-                                              color: Colors.white,
-                                            ),
-                                          ),
+                                              child: Text(
+                                                context.l10n(
+                                                  'browser.media.statusResolving',
+                                                ),
+                                                style: const TextStyle(
+                                                  fontSize: 10,
+                                                  color: Colors.white,
+                                                ),
+                                              ),
                                             ),
                                           ),
                                       ],
@@ -5981,16 +5926,17 @@ class _BrowserPageState extends State<BrowserPage>
                               if (h.type != 'image')
                                 Text(
                                   h.durationSeconds != null
-                                     ? context.l10n(
-                                          'browser.media.durationLabel',
-                                          params: {
-                                            'duration':
-                                                _fmtDur(h.durationSeconds!),
-                                          },
-                                        )
+                                      ? context.l10n(
+                                        'browser.media.durationLabel',
+                                        params: {
+                                          'duration': _fmtDur(
+                                            h.durationSeconds!,
+                                          ),
+                                        },
+                                      )
                                       : context.l10n(
-                                          'browser.media.durationResolving',
-                                        ),
+                                        'browser.media.durationResolving',
+                                      ),
                                   style: const TextStyle(fontSize: 12),
                                 ),
                             ],
@@ -6065,7 +6011,7 @@ class _BrowserPageState extends State<BrowserPage>
   }
 
   _RateSnapshot _snapNow(int bytes) => _RateSnapshot(bytes, DateTime.now());
-String _localizedMediaType(BuildContext context, String type) {
+  String _localizedMediaType(BuildContext context, String type) {
     switch (type.toLowerCase()) {
       case 'image':
         return context.l10n('browser.mediaType.image');
@@ -6077,6 +6023,7 @@ String _localizedMediaType(BuildContext context, String type) {
         return context.l10n('browser.mediaType.unknown');
     }
   }
+
   /// Computes speed in B/s based on previous snapshot.
   /// Returns null if not enough data yet.
   double? _computeSpeed(String key, int bytesNow) {
