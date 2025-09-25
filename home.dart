@@ -66,12 +66,12 @@ class _HomePageState extends State<HomePage>
                           _dismissMenu();
                           _editItem(item);
                         },
-                        child: const Padding(
-                          padding: EdgeInsets.symmetric(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
                             horizontal: 12,
                             vertical: 10,
                           ),
-                          child: Text('編輯'),
+                          child: Text(context.l10n('common.edit')),
                         ),
                       ),
                       InkWell(
@@ -82,12 +82,12 @@ class _HomePageState extends State<HomePage>
                             AppRepo.I.removeHomeItemAt(idx);
                           }
                         },
-                        child: const Padding(
-                          padding: EdgeInsets.symmetric(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
                             horizontal: 12,
                             vertical: 10,
                           ),
-                          child: Text('刪除'),
+                          child: Text(context.l10n('common.delete')),
                         ),
                       ),
                     ],
@@ -173,9 +173,12 @@ class _HomePageState extends State<HomePage>
     final selected = await showMenu<String>(
       context: context,
       position: RelativeRect.fromLTRB(pos.dx, pos.dy, pos.dx, pos.dy),
-      items: const [
-        PopupMenuItem(value: 'edit', child: Text('編輯')),
-        PopupMenuItem(value: 'delete', child: Text('刪除')),
+      items: [
+        PopupMenuItem(value: 'edit', child: Text(context.l10n('common.edit'))),
+        PopupMenuItem(
+          value: 'delete',
+          child: Text(context.l10n('common.delete')),
+        ),
       ],
     );
     if (selected == null) return;
@@ -197,14 +200,17 @@ class _HomePageState extends State<HomePage>
     final repo = AppRepo.I;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('主頁'),
+        title: Text(context.l10n('home.title')),
         actions: [
           // Toggle between edit (reorder) mode and normal mode. In edit mode
           // the user can drag tiles to reorder. In normal mode long press
           // shows a context menu.
           IconButton(
             icon: Icon(_editMode ? Icons.check : Icons.edit),
-            tooltip: _editMode ? '完成' : '編輯',
+            tooltip:
+                _editMode
+                    ? context.l10n('common.done')
+                    : context.l10n('common.edit'),
             onPressed: () {
               setState(() {
                 _editMode = !_editMode;
@@ -220,7 +226,7 @@ class _HomePageState extends State<HomePage>
           ),
           IconButton(
             icon: const Icon(Icons.add),
-            tooltip: '新增捷徑',
+            tooltip: context.l10n('home.action.addShortcut'),
             onPressed: _handleAddShortcut,
           ),
         ],
@@ -229,9 +235,9 @@ class _HomePageState extends State<HomePage>
         valueListenable: repo.homeItems,
         builder: (context, items, _) {
           if (items.isEmpty) {
-            return const Center(
+            return Center(
               child: Text(
-                '尚未添加任何捷徑\n使用 + 按鈕新增網址到主頁',
+                context.l10n('home.emptyState'),
                 textAlign: TextAlign.center,
               ),
             );
@@ -809,25 +815,29 @@ class _HomePageState extends State<HomePage>
       context: context,
       builder: (_) {
         return AlertDialog(
-          title: const Text('新增捷徑'),
+          title: Text(context.l10n('home.dialog.addTitle')),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               TextField(
                 controller: nameCtrl,
-                decoration: const InputDecoration(labelText: '名稱'),
+                decoration: InputDecoration(
+                  labelText: context.l10n('common.name'),
+                ),
               ),
               const SizedBox(height: 8),
               TextField(
                 controller: urlCtrl,
-                decoration: const InputDecoration(labelText: '網址'),
+                decoration: InputDecoration(
+                  labelText: context.l10n('common.url'),
+                ),
               ),
             ],
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('取消'),
+              child: Text(context.l10n('common.cancel')),
             ),
             TextButton(
               onPressed: () {
@@ -838,7 +848,7 @@ class _HomePageState extends State<HomePage>
                 }
                 Navigator.pop(context);
               },
-              child: const Text('新增'),
+              child: Text(context.l10n('common.add')),
             ),
           ],
         );
@@ -864,25 +874,29 @@ class _HomePageState extends State<HomePage>
       context: context,
       builder: (_) {
         return AlertDialog(
-          title: const Text('編輯捷徑'),
+          title: Text(context.l10n('home.dialog.editTitle')),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               TextField(
                 controller: nameCtrl,
-                decoration: const InputDecoration(labelText: '名稱'),
+                decoration: InputDecoration(
+                  labelText: context.l10n('common.name'),
+                ),
               ),
               const SizedBox(height: 8),
               TextField(
                 controller: urlCtrl,
-                decoration: const InputDecoration(labelText: '網址'),
+                decoration: InputDecoration(
+                  labelText: context.l10n('common.url'),
+                ),
               ),
             ],
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('取消'),
+              child: Text(context.l10n('common.cancel')),
             ),
             TextButton(
               onPressed: () {
@@ -894,7 +908,7 @@ class _HomePageState extends State<HomePage>
                 }
                 Navigator.pop(context);
               },
-              child: const Text('確定'),
+              child: Text(context.l10n('common.confirm')),
             ),
           ],
         );
@@ -918,7 +932,7 @@ class _HomePageState extends State<HomePage>
                 ),
                 ListTile(
                   leading: const Icon(Icons.edit),
-                  title: const Text('編輯'),
+                  title: Text(context.l10n('common.edit')),
                   onTap: () {
                     Navigator.pop(context);
                     _editItem(item);
@@ -926,7 +940,7 @@ class _HomePageState extends State<HomePage>
                 ),
                 ListTile(
                   leading: const Icon(Icons.delete),
-                  title: const Text('刪除'),
+                  title: Text(context.l10n('common.delete')),
                   onTap: () {
                     Navigator.pop(context);
                     AppRepo.I.removeHomeItemAt(index);

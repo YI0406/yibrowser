@@ -15,7 +15,8 @@ import 'coventmp3.dart';
 import 'iap.dart';
 import 'app_localizations.dart';
 
-const String _kDefaultFolderName = '我的下載';
+String _defaultFolderName() =>
+    LanguageService.instance.translate('media.folder.defaultName');
 
 String formatDuration(Duration d) {
   final h = d.inHours;
@@ -144,7 +145,9 @@ class _MediaPageState extends State<MediaPage>
         }
       }
 
-      final result = await Locker.unlock(reason: '解鎖以查看隱藏媒體');
+      final result = await Locker.unlock(
+        reason: context.l10n('media.unlock.reasonHidden'),
+      );
       if (!mounted) return;
       if (result.success) {
         setState(() {
@@ -171,19 +174,19 @@ class _MediaPageState extends State<MediaPage>
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text('需要 Face ID / Touch ID 權限'),
-          content: const Text('請在系統設定中允許 Face ID 或 Touch ID 權限，以解鎖隱藏媒體。'),
+          title: Text(context.l10n('media.unlock.permissionTitle')),
+          content: Text(context.l10n('media.unlock.permissionDescription')),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(),
-              child: const Text('稍後'),
+              child: Text(context.l10n('common.later')),
             ),
             FilledButton(
               onPressed: () {
                 Navigator.of(context).pop();
                 unawaited(_openDeviceSettings());
               },
-              child: const Text('前往設定'),
+              child: Text(context.l10n('common.goToSettings')),
             ),
           ],
         );
@@ -327,14 +330,14 @@ class _MediaPageState extends State<MediaPage>
                     controller: _tab,
                     isScrollable: true,
                     tabs: [
-                      const Tab(text: '媒體'),
-                      const Tab(text: '收藏'),
+                      Tab(text: context.l10n('media.tab.media')),
+                      Tab(text: context.l10n('media.tab.favorites')),
                       Tab(
                         icon: Icon(
                           _hiddenUnlocked
                               ? Icons.visibility
                               : Icons.visibility_off_outlined,
-                          semanticLabel: '已隱藏',
+                          semanticLabel: context.l10n('media.hidden.badge'),
                         ),
                       ),
                     ],
@@ -400,8 +403,12 @@ class _MediaPageState extends State<MediaPage>
                                                   ),
                                               child: Text(
                                                 _search.isEmpty
-                                                    ? '此資料夾尚無媒體'
-                                                    : '沒有符合搜尋的媒體',
+                                                    ? context.l10n(
+                                                      'media.empty.folder',
+                                                    )
+                                                    : context.l10n(
+                                                      'media.empty.search',
+                                                    ),
                                                 style:
                                                     Theme.of(
                                                       context,
@@ -462,7 +469,7 @@ class _MediaPageState extends State<MediaPage>
               TextButton.icon(
                 onPressed: () => _promptCreateFolder(context),
                 icon: const Icon(Icons.create_new_folder_outlined),
-                label: const Text('新增收納'),
+                label: Text(context.l10n('media.action.addFolder')),
               )
             else
               TextButton(
@@ -471,7 +478,7 @@ class _MediaPageState extends State<MediaPage>
                     _isEditing = true;
                   });
                 },
-                child: const Text('編輯'),
+                child: Text(context.l10n('common.edit')),
               ),
             const SizedBox(width: 8),
             TextButton(
@@ -481,11 +488,16 @@ class _MediaPageState extends State<MediaPage>
                 );
                 if (mounted) setState(() {});
               },
-              child: const Text('重新掃描'),
+              child: Text(context.l10n('media.action.rescan')),
             ),
             if (_isEditing && _selected.isNotEmpty) ...[
               const SizedBox(width: 12),
-              Text('已選取 ${_selected.length} 項'),
+              Text(
+                context.l10n(
+                  'media.selection.count',
+                  params: {'count': '${_selected.length}'},
+                ),
+              ),
             ],
             const Spacer(),
             if (_isEditing)
@@ -496,7 +508,7 @@ class _MediaPageState extends State<MediaPage>
                     _selected.clear();
                   });
                 },
-                child: const Text('完成'),
+                child: Text(context.l10n('common.done')),
               ),
           ],
         ),
@@ -528,7 +540,7 @@ class _MediaPageState extends State<MediaPage>
                   },
                   decoration: InputDecoration(
                     isDense: true,
-                    hintText: '搜尋名稱/檔名',
+                    hintText: context.l10n('media.search.placeholder'),
                     prefixIcon: const Icon(Icons.search, size: 18),
                     suffixIcon:
                         _search.isNotEmpty
@@ -573,7 +585,11 @@ class _MediaPageState extends State<MediaPage>
                   }
                 });
               },
-              child: Text(_hiddenEditing ? '完成' : '編輯'),
+              child: Text(
+                _hiddenEditing
+                    ? context.l10n('common.done')
+                    : context.l10n('common.edit'),
+              ),
             ),
             const SizedBox(width: 8),
             TextButton(
@@ -583,11 +599,16 @@ class _MediaPageState extends State<MediaPage>
                 );
                 if (mounted) setState(() {});
               },
-              child: const Text('重新掃描'),
+              child: Text(context.l10n('media.action.rescan')),
             ),
             if (_hiddenEditing && _hiddenSelected.isNotEmpty) ...[
               const SizedBox(width: 12),
-              Text('已選取 ${_hiddenSelected.length} 項'),
+              Text(
+                context.l10n(
+                  'media.selection.count',
+                  params: {'count': '${_hiddenSelected.length}'},
+                ),
+              ),
             ],
           ],
         ),
@@ -619,7 +640,7 @@ class _MediaPageState extends State<MediaPage>
                   },
                   decoration: InputDecoration(
                     isDense: true,
-                    hintText: '搜尋名稱/檔名',
+                    hintText: context.l10n('media.search.placeholder'),
                     prefixIcon: const Icon(Icons.search, size: 18),
                     suffixIcon:
                         _hiddenSearch.isNotEmpty
@@ -652,13 +673,13 @@ class _MediaPageState extends State<MediaPage>
           children: [
             const Icon(Icons.lock_outline, size: 48),
             const SizedBox(height: 12),
-            const Text('請使用 Face ID 或 Touch ID 解鎖'),
+            Text(context.l10n('media.hidden.unlockPrompt')),
             const SizedBox(height: 16),
             ElevatedButton(
               onPressed: () {
                 unawaited(_attemptUnlockHidden(revertOnFail: false));
               },
-              child: const Text('解鎖'),
+              child: Text(context.l10n('common.unlock')),
             ),
           ],
         ),
@@ -673,7 +694,7 @@ class _MediaPageState extends State<MediaPage>
         Expanded(
           child:
               hiddenTasks.isEmpty
-                  ? const Center(child: Text('尚無隱藏媒體'))
+                  ? Center(child: Text(context.l10n('media.hidden.empty')))
                   : ListView.separated(
                     padding: const EdgeInsets.symmetric(vertical: 8),
                     itemCount: hiddenTasks.length,
@@ -721,7 +742,7 @@ class _MediaPageState extends State<MediaPage>
                 children: [
                   IconButton(
                     icon: const Icon(Icons.arrow_upward),
-                    tooltip: '上移',
+                    tooltip: context.l10n('media.reorder.up'),
                     onPressed:
                         _canMoveFolder(folder.id, -1)
                             ? () => _moveFolder(folder.id, -1)
@@ -729,7 +750,7 @@ class _MediaPageState extends State<MediaPage>
                   ),
                   IconButton(
                     icon: const Icon(Icons.arrow_downward),
-                    tooltip: '下移',
+                    tooltip: context.l10n('media.reorder.down'),
                     onPressed:
                         _canMoveFolder(folder.id, 1)
                             ? () => _moveFolder(folder.id, 1)
@@ -737,12 +758,12 @@ class _MediaPageState extends State<MediaPage>
                   ),
                   IconButton(
                     icon: const Icon(Icons.edit),
-                    tooltip: '重新命名',
+                    tooltip: context.l10n('common.rename'),
                     onPressed: () => _promptRenameFolder(context, folder),
                   ),
                   IconButton(
                     icon: const Icon(Icons.delete_outline),
-                    tooltip: '刪除',
+                    tooltip: context.l10n('common.delete'),
                     onPressed: () => _confirmDeleteFolder(context, folder),
                   ),
                 ],
@@ -820,9 +841,20 @@ class _MediaPageState extends State<MediaPage>
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(status),
-          if (displayBytes > 0) Text('大小: ${_fmtSize(displayBytes)}'),
+          if (displayBytes > 0)
+            Text(
+              context.l10n(
+                'media.details.size',
+                params: {'size': _fmtSize(displayBytes)},
+              ),
+            ),
           if (task.duration != null)
-            Text('時長: ${formatDuration(task.duration!)}'),
+            Text(
+              context.l10n(
+                'media.details.duration',
+                params: {'duration': formatDuration(task.duration!)},
+              ),
+            ),
         ],
       ),
       onTap: () {
@@ -846,40 +878,40 @@ class _MediaPageState extends State<MediaPage>
                   children: [
                     ListTile(
                       leading: const Icon(Icons.edit),
-                      title: const Text('編輯名稱'),
+                      title: Text(context.l10n('media.action.editName')),
                       onTap: () => Navigator.pop(context, 'rename'),
                     ),
                     if (!hiddenContext)
                       ListTile(
                         leading: const Icon(Icons.folder_open),
-                        title: const Text('移動到...'),
+                        title: Text(context.l10n('media.action.moveTo')),
                         onTap: () => Navigator.pop(context, 'move'),
                       ),
                     ListTile(
                       leading: const Icon(Icons.content_cut),
-                      title: const Text('編輯導出...'),
+                      title: Text(context.l10n('media.action.editExport')),
                       onTap: () => Navigator.pop(context, 'edit-export'),
                     ),
                     ListTile(
                       leading: const Icon(Icons.share),
-                      title: const Text('匯出...'),
+                      title: Text(context.l10n('media.action.export')),
                       onTap: () => Navigator.pop(context, 'share'),
                     ),
                     if (hiddenContext)
                       ListTile(
                         leading: const Icon(Icons.visibility),
-                        title: const Text('取消隱藏'),
+                        title: Text(context.l10n('media.action.unhide')),
                         onTap: () => Navigator.pop(context, 'unhide'),
                       )
                     else
                       ListTile(
                         leading: const Icon(Icons.visibility_off),
-                        title: const Text('隱藏'),
+                        title: Text(context.l10n('media.action.hide')),
                         onTap: () => Navigator.pop(context, 'hide'),
                       ),
                     ListTile(
                       leading: const Icon(Icons.delete),
-                      title: const Text('刪除'),
+                      title: Text(context.l10n('common.delete')),
                       onTap: () => Navigator.pop(context, 'delete'),
                     ),
                   ],
@@ -898,9 +930,11 @@ class _MediaPageState extends State<MediaPage>
           if (!ok) return;
           if (!_fileHasContent(task.savePath)) {
             if (!mounted) return;
-            ScaffoldMessenger.of(
-              context,
-            ).showSnackBar(const SnackBar(content: Text('檔案尚未完成或已損毀')));
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(context.l10n('media.error.incompleteFile')),
+              ),
+            );
             return;
           }
           if (!mounted) return;
@@ -927,9 +961,9 @@ class _MediaPageState extends State<MediaPage>
           if (File(task.savePath).existsSync()) {
             await Share.shareXFiles([XFile(task.savePath)]);
           } else if (mounted) {
-            ScaffoldMessenger.of(
-              context,
-            ).showSnackBar(const SnackBar(content: Text('檔案已不存在')));
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(context.l10n('media.error.missingFile'))),
+            );
           }
         } else if (action == 'hide') {
           _hideTasks(context, [task]);
@@ -950,7 +984,10 @@ class _MediaPageState extends State<MediaPage>
                   task.favorite ? Icons.favorite : Icons.favorite_border,
                   color: task.favorite ? Colors.redAccent : null,
                 ),
-                tooltip: task.favorite ? '取消收藏' : '加入收藏',
+                tooltip:
+                    task.favorite
+                        ? context.l10n('media.action.unfavorite')
+                        : context.l10n('media.action.favorite'),
                 onPressed: () => _toggleFavorite(task),
               ),
     );
@@ -965,10 +1002,11 @@ class _MediaPageState extends State<MediaPage>
       final key = task.folderId;
       grouped.putIfAbsent(key, () => []).add(task);
     }
+    final defaultFolderName = _defaultFolderName();
     final sections = <_FolderSection>[
       _FolderSection(
         id: null,
-        name: _kDefaultFolderName,
+        name: defaultFolderName,
         tasks: grouped[null] ?? [],
       ),
     ];
@@ -988,21 +1026,33 @@ class _MediaPageState extends State<MediaPage>
 
   String _stateLabel(DownloadTask t) {
     final isHls = t.kind == 'hls';
-    if (t.state == 'paused' || t.paused) return '已暫停';
-    if (t.state == 'error') return '失敗';
-    if (t.state == 'done') return '已完成';
+    final l10n = LanguageService.instance;
+    if (t.state == 'paused' || t.paused) {
+      return l10n.translate('media.state.paused');
+    }
+    if (t.state == 'error') {
+      return l10n.translate('media.state.error');
+    }
+    if (t.state == 'done') {
+      return l10n.translate('media.state.done');
+    }
     if (isHls) {
       final total = t.total ?? 0;
       if (t.state == 'downloading') {
         if (total > 0 && t.received >= total) {
-          return '轉換中';
+          return l10n.translate('media.state.converting');
         }
-        return '下載中';
+        return l10n.translate('media.state.downloading');
       }
-      return '排隊中';
+      return l10n.translate('media.state.queued');
     }
-    if (t.state == 'downloading') return '下載中';
-    if (t.state == 'queued') return '排隊中';
+    if (t.state == 'downloading') {
+      return l10n.translate('media.state.downloading');
+    }
+    if (t.state == 'queued') {
+      return l10n.translate('media.state.queued');
+    }
+
     return t.state;
   }
 
@@ -1088,9 +1138,10 @@ class _MediaPageState extends State<MediaPage>
     }
     counts.putIfAbsent(null, () => 0);
     String formatName(String? id, String name) => '$name（${counts[id] ?? 0}）';
+    final defaultFolderName = context.l10n('media.folder.defaultName');
     final ids = <String?>[null, ...folders.map((f) => f.id)];
     final names = <String>[
-      formatName(null, _kDefaultFolderName),
+      formatName(null, defaultFolderName),
       ...folders.map((f) => formatName(f.id, f.name)),
     ];
     final currentKey = currentId ?? _kFolderSheetDefaultKey;
@@ -1101,7 +1152,7 @@ class _MediaPageState extends State<MediaPage>
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const ListTile(title: Text('選擇資料夾')),
+              ListTile(title: Text(context.l10n('media.folder.select'))),
               for (var i = 0; i < ids.length; i++)
                 ListTile(
                   leading: const Icon(Icons.folder),
@@ -1133,7 +1184,9 @@ class _MediaPageState extends State<MediaPage>
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         duration: const Duration(seconds: 1),
-        content: Text('已移動到 $folderName'),
+        content: Text(
+          context.l10n('media.snack.moved', params: {'folder': folderName}),
+        ),
       ),
     );
   }
@@ -1144,16 +1197,22 @@ class _MediaPageState extends State<MediaPage>
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text('刪除已選取的檔案'),
-          content: Text('確定要刪除 ${_selected.length} 項嗎？'),
+          title: Text(context.l10n('media.dialog.deleteSelected.title')),
+          content: Text(
+            context.l10n(
+              'media.dialog.deleteSelected.message',
+              params: {'count': '${_selected.length}'},
+            ),
+          ),
+
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('取消'),
+              child: Text(context.l10n('common.cancel')),
             ),
             TextButton(
               onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('刪除'),
+              child: Text(context.l10n('common.delete')),
             ),
           ],
         );
@@ -1175,16 +1234,21 @@ class _MediaPageState extends State<MediaPage>
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text('刪除已選取的檔案'),
-          content: Text('確定要刪除 ${_hiddenSelected.length} 項嗎？'),
+          title: Text(context.l10n('media.dialog.deleteSelected.title')),
+          content: Text(
+            context.l10n(
+              'media.dialog.deleteSelected.message',
+              params: {'count': '${_hiddenSelected.length}'},
+            ),
+          ),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('取消'),
+              child: Text(context.l10n('common.cancel')),
             ),
             TextButton(
               onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('刪除'),
+              child: Text(context.l10n('common.delete')),
             ),
           ],
         );
@@ -1206,24 +1270,24 @@ class _MediaPageState extends State<MediaPage>
   ) {
     OutlinedButton buildSelectAllButton() => OutlinedButton(
       onPressed: visibleTasks.isEmpty ? null : () => _selectAll(visibleTasks),
-      child: const Text('全選'),
+      child: Text(context.l10n('media.action.selectAll')),
     );
     OutlinedButton buildDeleteButton() => OutlinedButton(
       onPressed: _selected.isEmpty ? null : () => _deleteSelected(),
-      child: const Text('刪除'),
+      child: Text(context.l10n('common.delete')),
     );
     OutlinedButton buildHideButton() => OutlinedButton(
       onPressed: _selected.isEmpty ? null : () => _hideSelected(context),
-      child: const Text('隱藏'),
+      child: Text(context.l10n('media.action.hide')),
     );
     OutlinedButton buildMoveButton() => OutlinedButton(
       onPressed:
           _selected.isEmpty ? null : () => _moveSelectedToFolder(context),
-      child: const Text('移動到...'),
+      child: Text(context.l10n('media.action.moveTo')),
     );
     OutlinedButton buildExportButton() => OutlinedButton(
       onPressed: _selected.isEmpty ? null : () => _exportSelected(context),
-      child: const Text('匯出...'),
+      child: Text(context.l10n('media.action.export')),
     );
 
     return LayoutBuilder(
@@ -1261,21 +1325,21 @@ class _MediaPageState extends State<MediaPage>
     OutlinedButton buildSelectAllButton() => OutlinedButton(
       onPressed:
           hiddenTasks.isEmpty ? null : () => _selectAllHidden(hiddenTasks),
-      child: const Text('全選'),
+      child: Text(context.l10n('media.action.selectAll')),
     );
     OutlinedButton buildDeleteButton() => OutlinedButton(
       onPressed: _hiddenSelected.isEmpty ? null : () => _deleteHiddenSelected(),
-      child: const Text('刪除'),
+      child: Text(context.l10n('common.delete')),
     );
     OutlinedButton buildUnhideButton() => OutlinedButton(
       onPressed:
           _hiddenSelected.isEmpty ? null : () => _unhideSelected(context),
-      child: const Text('取消隱藏'),
+      child: Text(context.l10n('media.action.unhide')),
     );
     OutlinedButton buildExportButton() => OutlinedButton(
       onPressed:
           _hiddenSelected.isEmpty ? null : () => _exportHiddenSelected(context),
-      child: const Text('匯出...'),
+      child: Text(context.l10n('media.action.export')),
     );
 
     return LayoutBuilder(
@@ -1326,7 +1390,7 @@ class _MediaPageState extends State<MediaPage>
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           duration: Duration(seconds: 1),
-          content: Text('沒有可匯出的檔案'),
+          content: Text(context.l10n('media.snack.noExportable')),
         ),
       );
       return false;
@@ -1372,7 +1436,12 @@ class _MediaPageState extends State<MediaPage>
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         duration: const Duration(seconds: 1),
-        content: Text('已隱藏 ${tasks.length} 項'),
+        content: Text(
+          context.l10n(
+            'media.snack.hiddenCount',
+            params: {'count': '${tasks.length}'},
+          ),
+        ),
       ),
     );
   }
@@ -1388,7 +1457,12 @@ class _MediaPageState extends State<MediaPage>
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         duration: const Duration(seconds: 1),
-        content: Text('已取消隱藏 ${tasks.length} 項'),
+        content: Text(
+          context.l10n(
+            'media.snack.unhiddenCount',
+            params: {'count': '${tasks.length}'},
+          ),
+        ),
       ),
     );
   }
@@ -1409,16 +1483,18 @@ class _MediaPageState extends State<MediaPage>
       context: context,
       builder: (_) {
         return AlertDialog(
-          title: const Text('重新命名'),
+          title: Text(context.l10n('common.rename')),
           content: TextField(
             controller: controller,
             autofocus: true,
-            decoration: const InputDecoration(hintText: '輸入新的名稱'),
+            decoration: InputDecoration(
+              hintText: context.l10n('media.prompt.enterNewName'),
+            ),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('取消'),
+              child: Text(context.l10n('common.cancel')),
             ),
             TextButton(
               onPressed: () {
@@ -1428,7 +1504,7 @@ class _MediaPageState extends State<MediaPage>
                 }
                 Navigator.pop(context);
               },
-              child: const Text('儲存'),
+              child: Text(context.l10n('common.save')),
             ),
           ],
         );
@@ -1445,7 +1521,10 @@ class _MediaPageState extends State<MediaPage>
     if (!File(task.savePath).existsSync()) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(duration: Duration(seconds: 1), content: Text('檔案已不存在')),
+        SnackBar(
+          duration: const Duration(seconds: 1),
+          content: Text(context.l10n('media.error.missingFile')),
+        ),
       );
       return;
     }
@@ -1460,7 +1539,10 @@ class _MediaPageState extends State<MediaPage>
     if (!File(task.savePath).existsSync()) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(duration: Duration(seconds: 1), content: Text('檔案已不存在')),
+        SnackBar(
+          duration: const Duration(seconds: 1),
+          content: Text(context.l10n('media.error.missingFile')),
+        ),
       );
       return;
     }
@@ -1502,9 +1584,9 @@ class _MediaPageState extends State<MediaPage>
       if (!_fileHasContent(task.savePath)) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            duration: Duration(seconds: 1),
-            content: Text('檔案尚未完成或已損毀'),
+          SnackBar(
+            duration: const Duration(seconds: 1),
+            content: Text(context.l10n('media.error.incompleteFile')),
           ),
         );
         return;
@@ -1559,16 +1641,18 @@ class _MediaPageState extends State<MediaPage>
       context: context,
       builder: (_) {
         return AlertDialog(
-          title: const Text('重新命名資料夾'),
+          title: Text(context.l10n('media.dialog.renameFolder.title')),
           content: TextField(
             controller: controller,
             autofocus: true,
-            decoration: const InputDecoration(hintText: '輸入新的名稱'),
+            decoration: InputDecoration(
+              hintText: context.l10n('media.prompt.enterNewName'),
+            ),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('取消'),
+              child: Text(context.l10n('common.cancel')),
             ),
             TextButton(
               onPressed: () {
@@ -1578,7 +1662,7 @@ class _MediaPageState extends State<MediaPage>
                 }
                 Navigator.pop(context);
               },
-              child: const Text('儲存'),
+              child: Text(context.l10n('common.save')),
             ),
           ],
         );
@@ -1593,19 +1677,23 @@ class _MediaPageState extends State<MediaPage>
     final confirm = await showDialog<bool>(
       context: context,
       builder: (_) {
+        final defaultFolderName = _defaultFolderName();
         return AlertDialog(
-          title: const Text('刪除資料夾'),
+          title: Text(context.l10n('media.dialog.deleteFolder.title')),
           content: Text(
-            '確定要刪除「${folder.name}」嗎？其中的檔案會移至${_kDefaultFolderName}。',
+            context.l10n(
+              'media.dialog.deleteFolder.message',
+              params: {'name': folder.name, 'defaultFolder': defaultFolderName},
+            ),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, false),
-              child: const Text('取消'),
+              child: Text(context.l10n('common.cancel')),
             ),
             TextButton(
               onPressed: () => Navigator.pop(context, true),
-              child: const Text('刪除'),
+              child: Text(context.l10n('common.delete')),
             ),
           ],
         );
@@ -1625,22 +1713,24 @@ class _MediaPageState extends State<MediaPage>
       context: context,
       builder: (_) {
         return AlertDialog(
-          title: const Text('新增資料夾'),
+          title: Text(context.l10n('media.dialog.createFolder.title')),
           content: TextField(
             controller: controller,
             autofocus: true,
-            decoration: const InputDecoration(hintText: '輸入資料夾名稱'),
+            decoration: InputDecoration(
+              hintText: context.l10n('media.prompt.folderName'),
+            ),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('取消'),
+              child: Text(context.l10n('common.cancel')),
             ),
             TextButton(
               onPressed: () {
                 Navigator.pop(context, controller.text.trim());
               },
-              child: const Text('建立'),
+              child: Text(context.l10n('common.create')),
             ),
           ],
         );
@@ -1656,11 +1746,11 @@ class _MediaPageState extends State<MediaPage>
 
   String _folderNameForId(String? id, {List<MediaFolder>? folders}) {
     final list = folders ?? AppRepo.I.mediaFolders.value;
-    if (id == null) return _kDefaultFolderName;
+    if (id == null) return _defaultFolderName();
     for (final folder in list) {
       if (folder.id == id) return folder.name;
     }
-    return _kDefaultFolderName;
+    return _defaultFolderName();
   }
 }
 
@@ -1688,7 +1778,10 @@ class _MyFavorites extends StatelessWidget {
     if (!ok) return;
     if (!File(task.savePath).existsSync()) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(duration: Duration(seconds: 1), content: Text('檔案已不存在')),
+        SnackBar(
+          duration: const Duration(seconds: 1),
+          content: Text(context.l10n('media.error.missingFile')),
+        ),
       );
       return;
     }
@@ -1702,7 +1795,10 @@ class _MyFavorites extends StatelessWidget {
   }) async {
     if (!File(task.savePath).existsSync()) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(duration: Duration(seconds: 1), content: Text('檔案已不存在')),
+        SnackBar(
+          duration: const Duration(seconds: 1),
+          content: Text(context.l10n('media.error.missingFile')),
+        ),
       );
       return;
     }
@@ -1743,9 +1839,9 @@ class _MyFavorites extends StatelessWidget {
     } else if (resolvedType == 'image') {
       if (!_fileHasContent(task.savePath)) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            duration: Duration(seconds: 1),
-            content: Text('檔案尚未完成或已損毀'),
+          SnackBar(
+            duration: const Duration(seconds: 1),
+            content: Text(context.l10n('media.error.incompleteFile')),
           ),
         );
         return;
@@ -1762,7 +1858,7 @@ class _MyFavorites extends StatelessWidget {
     } else {
       final ok = await PurchaseService().ensurePremium(
         context: context,
-        featureName: '匯出',
+        featureName: context.l10n('feature.export'),
       );
       if (!ok) return;
       await Share.shareXFiles([XFile(task.savePath)]);
@@ -1779,7 +1875,7 @@ class _MyFavorites extends StatelessWidget {
             tasks.where((t) => t.favorite && !t.hidden).toList()
               ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
         if (favs.isEmpty) {
-          return const Center(child: Text('尚無收藏'));
+          return Center(child: Text(context.l10n('media.empty.favorites')));
         }
         return ListView.separated(
           padding: const EdgeInsets.symmetric(vertical: 8),
@@ -1837,16 +1933,31 @@ class _MyFavorites extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(task.state == 'done' ? '已完成' : task.state),
-                  if (sizeBytes > 0) Text('大小: ${formatFileSize(sizeBytes)}'),
+                  Text(
+                    task.state == 'done'
+                        ? context.l10n('media.state.done')
+                        : task.state,
+                  ),
+                  if (sizeBytes > 0)
+                    Text(
+                      context.l10n(
+                        'media.details.size',
+                        params: {'size': formatFileSize(sizeBytes)},
+                      ),
+                    ),
                   if (task.duration != null)
-                    Text('時長: ${formatDuration(task.duration!)}'),
+                    Text(
+                      context.l10n(
+                        'media.details.duration',
+                        params: {'duration': formatDuration(task.duration!)},
+                      ),
+                    ),
                 ],
               ),
               onTap: () => _handleOpen(context, task, candidates: favs),
               trailing: IconButton(
                 icon: const Icon(Icons.favorite, color: Colors.redAccent),
-                tooltip: '取消收藏',
+                tooltip: context.l10n('media.action.unfavorite'),
                 onPressed: () => repo.setFavorite(task, false),
               ),
               onLongPress: () async {
@@ -1859,28 +1970,32 @@ class _MyFavorites extends StatelessWidget {
                           children: [
                             ListTile(
                               leading: const Icon(Icons.edit),
-                              title: const Text('編輯名稱'),
+                              title: Text(
+                                context.l10n('media.action.editName'),
+                              ),
                               onTap: () => Navigator.pop(context, 'rename'),
                             ),
                             ListTile(
                               leading: const Icon(Icons.content_cut),
-                              title: const Text('編輯導出...'),
+                              title: Text(
+                                context.l10n('media.action.editExport'),
+                              ),
                               onTap:
                                   () => Navigator.pop(context, 'edit-export'),
                             ),
                             ListTile(
                               leading: const Icon(Icons.share),
-                              title: const Text('匯出...'),
-                              onTap: () => Navigator.pop(context, 'share'),
+
+                              title: Text(context.l10n('media.action.export')),
                             ),
                             ListTile(
                               leading: const Icon(Icons.visibility_off),
-                              title: const Text('隱藏'),
+                              title: Text(context.l10n('media.action.hide')),
                               onTap: () => Navigator.pop(context, 'hide'),
                             ),
                             ListTile(
                               leading: const Icon(Icons.delete),
-                              title: const Text('刪除'),
+                              title: Text(context.l10n('common.delete')),
                               onTap: () => Navigator.pop(context, 'delete'),
                             ),
                           ],
@@ -1895,18 +2010,20 @@ class _MyFavorites extends StatelessWidget {
                     context: context,
                     builder:
                         (_) => AlertDialog(
-                          title: const Text('重新命名'),
+                          title: Text(context.l10n('common.rename')),
                           content: TextField(
                             controller: controller,
                             autofocus: true,
-                            decoration: const InputDecoration(
-                              hintText: '輸入新的名稱',
+                            decoration: InputDecoration(
+                              hintText: context.l10n(
+                                'media.prompt.enterNewName',
+                              ),
                             ),
                           ),
                           actions: [
                             TextButton(
                               onPressed: () => Navigator.pop(context),
-                              child: const Text('取消'),
+                              child: Text(context.l10n('common.cancel')),
                             ),
                             TextButton(
                               onPressed: () {
@@ -1916,7 +2033,7 @@ class _MyFavorites extends StatelessWidget {
                                 }
                                 Navigator.pop(context);
                               },
-                              child: const Text('儲存'),
+                              child: Text(context.l10n('common.save')),
                             ),
                           ],
                         ),
@@ -1928,9 +2045,13 @@ class _MyFavorites extends StatelessWidget {
                   );
                   if (!ok) return;
                   if (!_fileHasContent(task.savePath)) {
-                    ScaffoldMessenger.of(
-                      context,
-                    ).showSnackBar(const SnackBar(content: Text('檔案尚未完成或已損毀')));
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          context.l10n('media.error.incompleteFile'),
+                        ),
+                      ),
+                    );
                     return;
                   }
                   await Navigator.of(context).push(
@@ -1957,7 +2078,12 @@ class _MyFavorites extends StatelessWidget {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
                       duration: Duration(seconds: 1),
-                      content: Text('已隱藏 1 項'),
+                      content: Text(
+                        context.l10n(
+                          'media.snack.hiddenCount',
+                          params: {'count': '1'},
+                        ),
+                      ),
                     ),
                   );
                 } else if (action == 'delete') {

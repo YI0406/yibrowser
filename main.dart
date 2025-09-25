@@ -215,9 +215,16 @@ class _RootNavState extends State<RootNav> with LanguageAwareState<RootNav> {
       try {
         // Register dynamic shortcuts on BOTH Android and iOS.
         // iOS: this coexists with static UIApplicationShortcutItems in Info.plist.
-        await _quickActions.setShortcutItems(const <ShortcutItem>[
-          ShortcutItem(type: _quickActionNewTab, localizedTitle: '新分頁'),
-          ShortcutItem(type: _quickActionMedia, localizedTitle: '媒體'),
+        final language = LanguageService.instance;
+        await _quickActions.setShortcutItems(<ShortcutItem>[
+          ShortcutItem(
+            type: _quickActionNewTab,
+            localizedTitle: language.translate('main.quickAction.newTab'),
+          ),
+          ShortcutItem(
+            type: _quickActionMedia,
+            localizedTitle: language.translate('main.quickAction.media'),
+          ),
         ]);
       } catch (_) {
         // Quick actions are optional enhancements; ignore platform errors.
@@ -551,18 +558,37 @@ class _RootNavState extends State<RootNav> with LanguageAwareState<RootNav> {
       if (imported.length == 1) {
         message =
             failureCount > 0
-                ? '已匯入：$firstName（另有 $failureCount 個失敗）'
-                : '已匯入：$firstName';
+                ? context.l10n(
+                  'main.snack.import.singleSuccessWithFailures',
+                  params: {'name': firstName, 'count': '$failureCount'},
+                )
+                : context.l10n(
+                  'main.snack.import.singleSuccess',
+                  params: {'name': firstName},
+                );
       } else {
-        message = '已匯入 ${imported.length} 個項目';
         if (failureCount > 0) {
-          message = '$message，$failureCount 個失敗';
+          message = context.l10n(
+            'main.snack.import.multiSuccessWithFailures',
+            params: {
+              'count': '${imported.length}',
+              'failures': '$failureCount',
+            },
+          );
+        } else {
+          message = context.l10n(
+            'main.snack.import.multiSuccess',
+            params: {'count': '${imported.length}'},
+          );
         }
       }
     } else if (failureCount > 0) {
-      message = '匯入失敗：$failureCount 個項目未能存入';
+      message = context.l10n(
+        'main.snack.import.failure',
+        params: {'count': '$failureCount'},
+      );
     } else {
-      message = '沒有可匯入的項目';
+      message = context.l10n('main.snack.import.none');
     }
 
     return ShareReviewResult(
@@ -585,7 +611,13 @@ class _RootNavState extends State<RootNav> with LanguageAwareState<RootNav> {
     }
     await _cleanupIncomingShares(items);
     final count = items.length;
-    final message = count > 1 ? '已丟棄 $count 個分享的項目' : '已丟棄分享的項目';
+    final message =
+        count > 1
+            ? context.l10n(
+              'main.snack.discarded.multiple',
+              params: {'count': '$count'},
+            )
+            : context.l10n('main.snack.discarded.single');
     return ShareReviewResult(
       imported: false,
       message: message,
@@ -708,27 +740,27 @@ class _RootNavState extends State<RootNav> with LanguageAwareState<RootNav> {
             ),
             labelBehavior: NavigationDestinationLabelBehavior.alwaysHide,
             selectedIndex: index,
-            destinations: const [
+            destinations: [
               // order: Media, Home, Browser, Settings
               NavigationDestination(
                 icon: Icon(Icons.video_library_outlined),
                 selectedIcon: Icon(Icons.video_library_rounded),
-                label: '媒體',
+                label: context.l10n('main.nav.media'),
               ),
               NavigationDestination(
                 icon: Icon(Icons.home_outlined),
                 selectedIcon: Icon(Icons.home_rounded),
-                label: '主頁',
+                label: context.l10n('main.nav.home'),
               ),
               NavigationDestination(
                 icon: Icon(Icons.public_outlined),
                 selectedIcon: Icon(Icons.public),
-                label: '瀏覽器',
+                label: context.l10n('main.nav.browser'),
               ),
               NavigationDestination(
                 icon: Icon(Icons.settings_outlined),
                 selectedIcon: Icon(Icons.settings),
-                label: '設定',
+                label: context.l10n('main.nav.settings'),
               ),
             ],
             onDestinationSelected: (i) => setState(() => index = i),
@@ -949,7 +981,7 @@ class _MiniPlayerWidgetState extends State<MiniPlayerWidget> {
                             Icons.fullscreen,
                             color: Colors.white,
                           ),
-                          tooltip: '放大',
+                          tooltip: context.l10n('miniPlayer.tooltip.expand'),
                           onPressed: () {
                             // Capture the current playback position before closing
                             final pos = _vc.value.position;
@@ -969,7 +1001,7 @@ class _MiniPlayerWidgetState extends State<MiniPlayerWidget> {
                         ),
                         IconButton(
                           icon: const Icon(Icons.close, color: Colors.white),
-                          tooltip: '關閉',
+                          tooltip: context.l10n('miniPlayer.tooltip.close'),
                           onPressed: () {
                             AppRepo.I.closeMiniPlayer();
                           },

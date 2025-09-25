@@ -115,6 +115,76 @@ final Map<String, Map<AppLanguage, String>> _translations = {
     AppLanguage.zhHans: '未设置',
     AppLanguage.en: 'Not set',
   },
+  'common.edit': {
+    AppLanguage.zhHant: '編輯',
+    AppLanguage.zhHans: '编辑',
+    AppLanguage.en: 'Edit',
+  },
+  'common.delete': {
+    AppLanguage.zhHant: '刪除',
+    AppLanguage.zhHans: '删除',
+    AppLanguage.en: 'Delete',
+  },
+  'common.done': {
+    AppLanguage.zhHant: '完成',
+    AppLanguage.zhHans: '完成',
+    AppLanguage.en: 'Done',
+  },
+  'common.cancel': {
+    AppLanguage.zhHant: '取消',
+    AppLanguage.zhHans: '取消',
+    AppLanguage.en: 'Cancel',
+  },
+  'common.canceling': {
+    AppLanguage.zhHant: '取消中…',
+    AppLanguage.zhHans: '取消中…',
+    AppLanguage.en: 'Canceling…',
+  },
+  'common.add': {
+    AppLanguage.zhHant: '新增',
+    AppLanguage.zhHans: '新增',
+    AppLanguage.en: 'Add',
+  },
+  'common.confirm': {
+    AppLanguage.zhHant: '確定',
+    AppLanguage.zhHans: '确定',
+    AppLanguage.en: 'Confirm',
+  },
+  'common.name': {
+    AppLanguage.zhHant: '名稱',
+    AppLanguage.zhHans: '名称',
+    AppLanguage.en: 'Name',
+  },
+  'common.url': {
+    AppLanguage.zhHant: '網址',
+    AppLanguage.zhHans: '网址',
+    AppLanguage.en: 'URL',
+  },
+  'common.play': {
+    AppLanguage.zhHant: '播放',
+    AppLanguage.zhHans: '播放',
+    AppLanguage.en: 'Play',
+  },
+  'common.pause': {
+    AppLanguage.zhHant: '暫停',
+    AppLanguage.zhHans: '暂停',
+    AppLanguage.en: 'Pause',
+  },
+  'common.open': {
+    AppLanguage.zhHant: '打開',
+    AppLanguage.zhHans: '打开',
+    AppLanguage.en: 'Open',
+  },
+  'common.unknown': {
+    AppLanguage.zhHant: '未知',
+    AppLanguage.zhHans: '未知',
+    AppLanguage.en: 'Unknown',
+  },
+  'common.unknownError': {
+    AppLanguage.zhHant: '未知錯誤',
+    AppLanguage.zhHans: '未知错误',
+    AppLanguage.en: 'Unknown error',
+  },
   'settings.requiresPremiumSuffix': {
     AppLanguage.zhHant: '（需高級版）',
     AppLanguage.zhHans: '（需高级版）',
@@ -377,6 +447,511 @@ final Map<String, Map<AppLanguage, String>> _translations = {
     AppLanguage.zhHans: '隐藏功能',
     AppLanguage.en: 'Hidden feature',
   },
+  'home.title': {
+    AppLanguage.zhHant: '主頁',
+    AppLanguage.zhHans: '主页',
+    AppLanguage.en: 'Home',
+  },
+  'home.emptyState': {
+    AppLanguage.zhHant: '尚未添加任何捷徑\n使用 + 按鈕新增網址到主頁',
+    AppLanguage.zhHans: '尚未添加任何捷径\n使用 + 按钮新增网址到主页',
+    AppLanguage.en:
+        'No shortcuts yet.\nUse the + button to add one to the home page.',
+  },
+  'home.action.addShortcut': {
+    AppLanguage.zhHant: '新增捷徑',
+    AppLanguage.zhHans: '新增捷径',
+    AppLanguage.en: 'Add shortcut',
+  },
+  'home.dialog.addTitle': {
+    AppLanguage.zhHant: '新增捷徑',
+    AppLanguage.zhHans: '新增捷径',
+    AppLanguage.en: 'Add shortcut',
+  },
+  'home.dialog.editTitle': {
+    AppLanguage.zhHant: '編輯捷徑',
+    AppLanguage.zhHans: '编辑捷径',
+    AppLanguage.en: 'Edit shortcut',
+  },
+  'shareReview.snack.importFailed': {
+    AppLanguage.zhHant: '匯入失敗：{error}',
+    AppLanguage.zhHans: '导入失败：{error}',
+    AppLanguage.en: 'Import failed: {error}',
+  },
+  'shareReview.snack.cancelFailed': {
+    AppLanguage.zhHant: '取消匯入失敗：{error}',
+    AppLanguage.zhHans: '取消导入失败：{error}',
+    AppLanguage.en: 'Failed to cancel import: {error}',
+  },
+  'shareReview.snack.allDiscarded': {
+    AppLanguage.zhHant: '所有項目已丟棄',
+    AppLanguage.zhHans: '所有项目已丢弃',
+    AppLanguage.en: 'All items discarded',
+  },
+  'shareReview.snack.itemDiscarded': {
+    AppLanguage.zhHant: '已丟棄 {name}',
+    AppLanguage.zhHans: '已丢弃 {name}',
+    AppLanguage.en: 'Discarded {name}',
+  },
+  'shareReview.dialog.title': {
+    AppLanguage.zhHant: '匯入預覽',
+    AppLanguage.zhHans: '导入预览',
+    AppLanguage.en: 'Import preview',
+  },
+  'shareReview.dialog.confirm': {
+    AppLanguage.zhHant: '匯入',
+    AppLanguage.zhHans: '导入',
+    AppLanguage.en: 'Import',
+  },
+  'shareReview.carousel.hintMultiple': {
+    AppLanguage.zhHant: '左右滑動以檢視所有項目',
+    AppLanguage.zhHans: '左右滑动以检视所有项目',
+    AppLanguage.en: 'Swipe sideways to view all items',
+  },
+  'shareReview.carousel.hintSingle': {
+    AppLanguage.zhHant: '預覽內容',
+    AppLanguage.zhHans: '预览内容',
+    AppLanguage.en: 'Preview',
+  },
+  'shareReview.tooltip.discardItem': {
+    AppLanguage.zhHant: '丟棄此項目',
+    AppLanguage.zhHans: '丢弃此项目',
+    AppLanguage.en: 'Discard this item',
+  },
+  'shareReview.status.saving': {
+    AppLanguage.zhHant: '保存中…',
+    AppLanguage.zhHans: '保存中…',
+    AppLanguage.en: 'Saving…',
+  },
+  'shareReview.empty.title': {
+    AppLanguage.zhHant: '沒有可匯入的項目',
+    AppLanguage.zhHans: '没有可导入的项目',
+    AppLanguage.en: 'No items to import',
+  },
+  'shareReview.empty.subtitle': {
+    AppLanguage.zhHant: '請返回並重新選擇分享的內容。',
+    AppLanguage.zhHans: '请返回并重新选择分享的内容。',
+    AppLanguage.en: 'Go back and choose the content to share again.',
+  },
+  'shareReview.error.audioLoad': {
+    AppLanguage.zhHant: '音訊載入失敗',
+    AppLanguage.zhHans: '音频载入失败',
+    AppLanguage.en: 'Failed to load audio',
+  },
+  'shareReview.error.videoLoad': {
+    AppLanguage.zhHant: '影片載入失敗',
+    AppLanguage.zhHans: '视频载入失败',
+    AppLanguage.en: 'Failed to load video',
+  },
+  'shareReview.error.fileNotFound': {
+    AppLanguage.zhHant: '找不到檔案',
+    AppLanguage.zhHans: '找不到文件',
+    AppLanguage.en: 'File not found',
+  },
+  'shareReview.error.openFile': {
+    AppLanguage.zhHant: '無法開啟檔案：{error}',
+    AppLanguage.zhHans: '无法打开文件：{error}',
+    AppLanguage.en: 'Unable to open file: {error}',
+  },
+  'main.quickAction.newTab': {
+    AppLanguage.zhHant: '新分頁',
+    AppLanguage.zhHans: '新标签页',
+    AppLanguage.en: 'New tab',
+  },
+  'main.quickAction.media': {
+    AppLanguage.zhHant: '媒體',
+    AppLanguage.zhHans: '媒体',
+    AppLanguage.en: 'Media',
+  },
+  'main.nav.media': {
+    AppLanguage.zhHant: '媒體',
+    AppLanguage.zhHans: '媒体',
+    AppLanguage.en: 'Media',
+  },
+  'main.nav.home': {
+    AppLanguage.zhHant: '主頁',
+    AppLanguage.zhHans: '主页',
+    AppLanguage.en: 'Home',
+  },
+  'main.nav.browser': {
+    AppLanguage.zhHant: '瀏覽器',
+    AppLanguage.zhHans: '浏览器',
+    AppLanguage.en: 'Browser',
+  },
+  'main.nav.settings': {
+    AppLanguage.zhHant: '設定',
+    AppLanguage.zhHans: '设置',
+    AppLanguage.en: 'Settings',
+  },
+  'main.snack.import.singleSuccess': {
+    AppLanguage.zhHant: '已匯入：{name}',
+    AppLanguage.zhHans: '已导入：{name}',
+    AppLanguage.en: 'Imported: {name}',
+  },
+  'main.snack.import.singleSuccessWithFailures': {
+    AppLanguage.zhHant: '已匯入：{name}（另有 {count} 個失敗）',
+    AppLanguage.zhHans: '已导入：{name}（另有 {count} 个失败）',
+    AppLanguage.en: 'Imported: {name} ({count} failed)',
+  },
+  'main.snack.import.multiSuccess': {
+    AppLanguage.zhHant: '已匯入 {count} 個項目',
+    AppLanguage.zhHans: '已导入 {count} 个项目',
+    AppLanguage.en: 'Imported {count} items',
+  },
+  'main.snack.import.multiSuccessWithFailures': {
+    AppLanguage.zhHant: '已匯入 {count} 個項目，{failures} 個失敗',
+    AppLanguage.zhHans: '已导入 {count} 个项目，{failures} 个失败',
+    AppLanguage.en: 'Imported {count} items, {failures} failed',
+  },
+  'main.snack.import.failure': {
+    AppLanguage.zhHant: '匯入失敗：{count} 個項目未能存入',
+    AppLanguage.zhHans: '导入失败：{count} 个项目未能存入',
+    AppLanguage.en: 'Import failed: {count} items could not be saved',
+  },
+  'main.snack.import.none': {
+    AppLanguage.zhHant: '沒有可匯入的項目',
+    AppLanguage.zhHans: '没有可导入的项目',
+    AppLanguage.en: 'No items to import',
+  },
+  'main.snack.discarded.single': {
+    AppLanguage.zhHant: '已丟棄分享的項目',
+    AppLanguage.zhHans: '已丢弃分享的项目',
+    AppLanguage.en: 'Shared item discarded',
+  },
+  'main.snack.discarded.multiple': {
+    AppLanguage.zhHant: '已丟棄 {count} 個分享的項目',
+    AppLanguage.zhHans: '已丢弃 {count} 个分享的项目',
+    AppLanguage.en: 'Discarded {count} shared items',
+  },
+  'miniPlayer.tooltip.expand': {
+    AppLanguage.zhHant: '放大',
+    AppLanguage.zhHans: '放大',
+    AppLanguage.en: 'Expand',
+  },
+  'miniPlayer.tooltip.close': {
+    AppLanguage.zhHant: '關閉',
+    AppLanguage.zhHans: '关闭',
+    AppLanguage.en: 'Close',
+  },
+  'videoPlayer.defaultTitle': {
+    AppLanguage.zhHant: '播放器',
+    AppLanguage.zhHans: '播放器',
+    AppLanguage.en: 'Player',
+  },
+  'videoPlayer.action.playbackSpeed': {
+    AppLanguage.zhHant: '播放速度',
+    AppLanguage.zhHans: '播放速度',
+    AppLanguage.en: 'Playback speed',
+  },
+  'converter.format.mp3': {
+    AppLanguage.zhHant: 'MP3 (音訊)',
+    AppLanguage.zhHans: 'MP3 (音频)',
+    AppLanguage.en: 'MP3 (audio)',
+  },
+  'converter.format.m4a': {
+    AppLanguage.zhHant: 'M4A (AAC 音訊)',
+    AppLanguage.zhHans: 'M4A (AAC 音频)',
+    AppLanguage.en: 'M4A (AAC audio)',
+  },
+  'converter.format.aac': {
+    AppLanguage.zhHant: 'AAC',
+    AppLanguage.zhHans: 'AAC',
+    AppLanguage.en: 'AAC',
+  },
+  'converter.format.wav': {
+    AppLanguage.zhHant: 'WAV (PCM)',
+    AppLanguage.zhHans: 'WAV (PCM)',
+    AppLanguage.en: 'WAV (PCM)',
+  },
+  'converter.format.jpg': {
+    AppLanguage.zhHant: 'JPG (圖片)',
+    AppLanguage.zhHans: 'JPG (图片)',
+    AppLanguage.en: 'JPG (image)',
+  },
+  'converter.format.png': {
+    AppLanguage.zhHant: 'PNG (圖片)',
+    AppLanguage.zhHans: 'PNG (图片)',
+    AppLanguage.en: 'PNG (image)',
+  },
+  'converter.format.gif': {
+    AppLanguage.zhHant: 'GIF (圖片)',
+    AppLanguage.zhHans: 'GIF (图片)',
+    AppLanguage.en: 'GIF (image)',
+  },
+  'converter.format.bmp': {
+    AppLanguage.zhHant: 'BMP (圖片)',
+    AppLanguage.zhHans: 'BMP (图片)',
+    AppLanguage.en: 'BMP (image)',
+  },
+  'converter.format.svg': {
+    AppLanguage.zhHant: 'SVG (圖片)',
+    AppLanguage.zhHans: 'SVG (图片)',
+    AppLanguage.en: 'SVG (image)',
+  },
+  'converter.format.tiff': {
+    AppLanguage.zhHant: 'TIFF (圖片)',
+    AppLanguage.zhHans: 'TIFF (图片)',
+    AppLanguage.en: 'TIFF (image)',
+  },
+  'converter.format.pdf': {
+    AppLanguage.zhHant: 'PDF (圖片)',
+    AppLanguage.zhHans: 'PDF (图片)',
+    AppLanguage.en: 'PDF (image)',
+  },
+  'converter.format.mp4H264': {
+    AppLanguage.zhHant: 'MP4 (H.264 + AAC)',
+    AppLanguage.zhHans: 'MP4 (H.264 + AAC)',
+    AppLanguage.en: 'MP4 (H.264 + AAC)',
+  },
+  'converter.format.movH264': {
+    AppLanguage.zhHant: 'MOV (H.264 + AAC)',
+    AppLanguage.zhHans: 'MOV (H.264 + AAC)',
+    AppLanguage.en: 'MOV (H.264 + AAC)',
+  },
+  'converter.format.mkvH264': {
+    AppLanguage.zhHant: 'MKV (H.264 + AAC)',
+    AppLanguage.zhHans: 'MKV (H.264 + AAC)',
+    AppLanguage.en: 'MKV (H.264 + AAC)',
+  },
+  'converter.format.webmVp9': {
+    AppLanguage.zhHant: 'WebM (VP9 + Opus)',
+    AppLanguage.zhHans: 'WebM (VP9 + Opus)',
+    AppLanguage.en: 'WebM (VP9 + Opus)',
+  },
+  'converter.error.missingSourceFile': {
+    AppLanguage.zhHant: '找不到來源檔案',
+    AppLanguage.zhHans: '找不到来源文件',
+    AppLanguage.en: 'Source file not found',
+  },
+  'converter.error.previewLoad': {
+    AppLanguage.zhHant: '預覽無法載入：{error}',
+    AppLanguage.zhHans: '预览无法载入：{error}',
+    AppLanguage.en: 'Preview failed to load: {error}',
+  },
+  'converter.info.mediaTypeImage': {
+    AppLanguage.zhHant: '媒體類型: 圖片',
+    AppLanguage.zhHans: '媒体类型: 图片',
+    AppLanguage.en: 'Media type: Image',
+  },
+  'converter.info.sourceDuration': {
+    AppLanguage.zhHant: '來源長度: {duration}',
+    AppLanguage.zhHans: '来源长度: {duration}',
+    AppLanguage.en: 'Source length: {duration}',
+  },
+  'converter.info.sourcePath': {
+    AppLanguage.zhHant: '來源路徑: {path}',
+    AppLanguage.zhHans: '来源路径: {path}',
+    AppLanguage.en: 'Source path: {path}',
+  },
+  'converter.action.exporting': {
+    AppLanguage.zhHant: '匯出中…',
+    AppLanguage.zhHans: '导出中…',
+    AppLanguage.en: 'Exporting…',
+  },
+  'converter.error.imagePreviewUnavailable': {
+    AppLanguage.zhHant: '無法顯示圖片預覽',
+    AppLanguage.zhHans: '无法显示图片预览',
+    AppLanguage.en: 'Unable to display image preview',
+  },
+  'converter.error.previewUnavailable': {
+    AppLanguage.zhHant: '無法預覽，仍可進行匯出',
+    AppLanguage.zhHans: '无法预览，仍可进行导出',
+    AppLanguage.en: 'Preview unavailable, export still possible',
+  },
+  'converter.tooltip.rewind10': {
+    AppLanguage.zhHant: '倒退 10 秒',
+    AppLanguage.zhHans: '倒退 10 秒',
+    AppLanguage.en: 'Rewind 10 seconds',
+  },
+  'converter.tooltip.forward10': {
+    AppLanguage.zhHant: '快轉 10 秒',
+    AppLanguage.zhHans: '快进 10 秒',
+    AppLanguage.en: 'Forward 10 seconds',
+  },
+  'converter.hint.waveformLongPress': {
+    AppLanguage.zhHant: '提示：長按波形並拖曳可預覽時間（顯示毫秒）',
+    AppLanguage.zhHans: '提示：长按波形并拖曳可预览时间（显示毫秒）',
+    AppLanguage.en:
+        'Tip: long-press the waveform and drag to preview (shows milliseconds)',
+  },
+  'converter.waveform.notReady': {
+    AppLanguage.zhHant: '波形圖尚未就緒',
+    AppLanguage.zhHans: '波形图尚未就绪',
+    AppLanguage.en: 'Waveform not ready yet',
+  },
+  'converter.waveform.regenerate': {
+    AppLanguage.zhHant: '重新產生波形',
+    AppLanguage.zhHans: '重新产生波形',
+    AppLanguage.en: 'Regenerate waveform',
+  },
+  'converter.waveform.error.generic': {
+    AppLanguage.zhHant: '波形圖產生失敗，請重試。',
+    AppLanguage.zhHans: '波形图产生失败，请重试。',
+    AppLanguage.en: 'Failed to generate waveform. Please try again.',
+  },
+  'converter.waveform.error.withReason': {
+    AppLanguage.zhHant: '波形圖產生失敗：{error}',
+    AppLanguage.zhHans: '波形图产生失败：{error}',
+    AppLanguage.en: 'Waveform generation failed: {error}',
+  },
+  'converter.info.imageConversionNote': {
+    AppLanguage.zhHant: '此圖片會完整轉換為選擇的輸出格式。',
+    AppLanguage.zhHans: '此图片会完整转换为选择的输出格式。',
+    AppLanguage.en:
+        'This image will be fully converted to the selected output format.',
+  },
+  'converter.info.noDuration': {
+    AppLanguage.zhHant: '無法取得媒體長度，請直接匯出整段。',
+    AppLanguage.zhHans: '无法取得媒体长度，请直接导出整段。',
+    AppLanguage.en:
+        'Unable to determine media length. Export the full range instead.',
+  },
+  'converter.section.selection': {
+    AppLanguage.zhHant: '選取範圍',
+    AppLanguage.zhHans: '选取范围',
+    AppLanguage.en: 'Selection',
+  },
+  'converter.selection.start': {
+    AppLanguage.zhHant: '起點：{time}',
+    AppLanguage.zhHans: '起点：{time}',
+    AppLanguage.en: 'Start: {time}',
+  },
+  'converter.selection.end': {
+    AppLanguage.zhHant: '終點：{time}',
+    AppLanguage.zhHans: '终点：{time}',
+    AppLanguage.en: 'End: {time}',
+  },
+  'converter.selection.length': {
+    AppLanguage.zhHant: '長度：{time}（{seconds} 秒）',
+    AppLanguage.zhHans: '长度：{time}（{seconds} 秒）',
+    AppLanguage.en: 'Length: {time} ({seconds} s)',
+  },
+  'converter.selection.useCurrentAsStart': {
+    AppLanguage.zhHant: '以目前時間為起點',
+    AppLanguage.zhHans: '以目前时间为起点',
+    AppLanguage.en: 'Use current time as start',
+  },
+  'converter.selection.useCurrentAsEnd': {
+    AppLanguage.zhHant: '以目前時間為終點',
+    AppLanguage.zhHans: '以目前时间为终点',
+    AppLanguage.en: 'Use current time as end',
+  },
+  'converter.selection.preview': {
+    AppLanguage.zhHant: '預覽選取範圍',
+    AppLanguage.zhHans: '预览选取范围',
+    AppLanguage.en: 'Preview selection',
+  },
+  'converter.section.output': {
+    AppLanguage.zhHant: '輸出設定',
+    AppLanguage.zhHans: '输出设定',
+    AppLanguage.en: 'Output settings',
+  },
+  'converter.field.outputFormat': {
+    AppLanguage.zhHant: '輸出格式',
+    AppLanguage.zhHans: '输出格式',
+    AppLanguage.en: 'Output format',
+  },
+  'converter.field.outputFileName': {
+    AppLanguage.zhHant: '輸出檔名',
+    AppLanguage.zhHans: '输出档名',
+    AppLanguage.en: 'Output file name',
+  },
+  'converter.hint.outputLocation': {
+    AppLanguage.zhHant: '檔案將儲存到與原始檔案相同的資料夾（副檔名會使用 .{extension}）',
+    AppLanguage.zhHans: '文件将存到与原始文件相同的文件夹（扩展名会使用 .{extension}）',
+    AppLanguage.en:
+        'The file will be saved in the same folder as the original (with .{extension}).',
+  },
+  'converter.error.missingSourceImage': {
+    AppLanguage.zhHant: '找不到來源圖片',
+    AppLanguage.zhHans: '找不到来源图片',
+    AppLanguage.en: 'Source image not found',
+  },
+  'converter.error.decodeImageFailed': {
+    AppLanguage.zhHant: '無法解析來源圖片',
+    AppLanguage.zhHans: '无法解析来源图片',
+    AppLanguage.en: 'Unable to decode source image',
+  },
+  'converter.error.unsupportedOutputFormat': {
+    AppLanguage.zhHant: '不支援的輸出格式',
+    AppLanguage.zhHans: '不支持的输出格式',
+    AppLanguage.en: 'Unsupported output format',
+  },
+  'converter.dialog.exportCompleted': {
+    AppLanguage.zhHant: '匯出完成：{file}',
+    AppLanguage.zhHans: '导出完成：{file}',
+    AppLanguage.en: 'Export complete: {file}',
+  },
+  'converter.error.noDuration': {
+    AppLanguage.zhHant: '無法取得媒體長度',
+    AppLanguage.zhHans: '无法取得媒体长度',
+    AppLanguage.en: 'Unable to determine media length',
+  },
+  'converter.error.invalidRange': {
+    AppLanguage.zhHant: '請選擇有效的時間範圍',
+    AppLanguage.zhHans: '请选择有效的时间范围',
+    AppLanguage.en: 'Please select a valid time range',
+  },
+  'converter.error.imageConversionFailed': {
+    AppLanguage.zhHant: '圖片轉檔失敗：{error}',
+    AppLanguage.zhHans: '图片转档失败：{error}',
+    AppLanguage.en: 'Image conversion failed: {error}',
+  },
+  'converter.status.exportCancelled': {
+    AppLanguage.zhHant: '已取消匯出',
+    AppLanguage.zhHans: '已取消导出',
+    AppLanguage.en: 'Export canceled',
+  },
+  'converter.error.exportFailed': {
+    AppLanguage.zhHant: '匯出失敗，請稍後再試',
+    AppLanguage.zhHans: '导出失败，请稍后再试',
+    AppLanguage.en: 'Export failed. Please try again later.',
+  },
+  'converter.error.startExportFailed': {
+    AppLanguage.zhHant: '啟動轉檔失敗：{error}',
+    AppLanguage.zhHans: '启动转档失败：{error}',
+    AppLanguage.en: 'Failed to start conversion: {error}',
+  },
+  'converter.error.cancelFailed': {
+    AppLanguage.zhHant: '取消失敗，請稍後再試',
+    AppLanguage.zhHans: '取消失败，请稍后再试',
+    AppLanguage.en: 'Cancel failed. Please try again later.',
+  },
+  'converter.action.exportImage': {
+    AppLanguage.zhHant: '匯出轉檔圖片',
+    AppLanguage.zhHans: '导出转换图片',
+    AppLanguage.en: 'Export converted image',
+  },
+  'converter.action.exportSelected': {
+    AppLanguage.zhHant: '匯出選取的{type}',
+    AppLanguage.zhHans: '导出选取的{type}',
+    AppLanguage.en: 'Export selected {type}',
+  },
+  'converter.mediaType.video': {
+    AppLanguage.zhHant: '視訊',
+    AppLanguage.zhHans: '视频',
+    AppLanguage.en: 'video',
+  },
+  'converter.mediaType.audio': {
+    AppLanguage.zhHant: '音訊',
+    AppLanguage.zhHans: '音频',
+    AppLanguage.en: 'audio',
+  },
+  'converter.snack.exportSaved': {
+    AppLanguage.zhHant: '已匯出到：{path}',
+    AppLanguage.zhHans: '已导出到：{path}',
+    AppLanguage.en: 'Exported to: {path}',
+  },
+  'converter.error.openFileWithReason': {
+    AppLanguage.zhHant: '無法開啟檔案（{error}）',
+    AppLanguage.zhHans: '无法打开文件（{error}）',
+    AppLanguage.en: 'Unable to open file ({error})',
+  },
+  'converter.error.openFileFailed': {
+    AppLanguage.zhHant: '開啟檔案失敗：{error}',
+    AppLanguage.zhHans: '打开文件失败：{error}',
+    AppLanguage.en: 'Failed to open file: {error}',
+  },
   'browser.sniffer.tooltip.enabled': {
     AppLanguage.zhHant: '嗅探',
     AppLanguage.zhHans: '嗅探',
@@ -401,6 +976,449 @@ final Map<String, Map<AppLanguage, String>> _translations = {
     AppLanguage.zhHant: '資源（需高級版）',
     AppLanguage.zhHans: '资源（需高级版）',
     AppLanguage.en: 'Resources (Premium required)',
+  },
+  'common.cancel': {
+    AppLanguage.zhHant: '取消',
+    AppLanguage.zhHans: '取消',
+    AppLanguage.en: 'Cancel',
+  },
+  'common.done': {
+    AppLanguage.zhHant: '完成',
+    AppLanguage.zhHans: '完成',
+    AppLanguage.en: 'Done',
+  },
+  'common.edit': {
+    AppLanguage.zhHant: '編輯',
+    AppLanguage.zhHans: '编辑',
+    AppLanguage.en: 'Edit',
+  },
+  'common.delete': {
+    AppLanguage.zhHant: '刪除',
+    AppLanguage.zhHans: '删除',
+    AppLanguage.en: 'Delete',
+  },
+  'common.save': {
+    AppLanguage.zhHant: '儲存',
+    AppLanguage.zhHans: '保存',
+    AppLanguage.en: 'Save',
+  },
+  'common.create': {
+    AppLanguage.zhHant: '建立',
+    AppLanguage.zhHans: '创建',
+    AppLanguage.en: 'Create',
+  },
+  'common.rename': {
+    AppLanguage.zhHant: '重新命名',
+    AppLanguage.zhHans: '重新命名',
+    AppLanguage.en: 'Rename',
+  },
+  'common.later': {
+    AppLanguage.zhHant: '稍後',
+    AppLanguage.zhHans: '稍后',
+    AppLanguage.en: 'Later',
+  },
+  'common.unlock': {
+    AppLanguage.zhHant: '解鎖',
+    AppLanguage.zhHans: '解锁',
+    AppLanguage.en: 'Unlock',
+  },
+  'common.play': {
+    AppLanguage.zhHant: '播放',
+    AppLanguage.zhHans: '播放',
+    AppLanguage.en: 'Play',
+  },
+  'common.pause': {
+    AppLanguage.zhHant: '暫停',
+    AppLanguage.zhHans: '暂停',
+    AppLanguage.en: 'Pause',
+  },
+  'common.open': {
+    AppLanguage.zhHant: '打開',
+    AppLanguage.zhHans: '打开',
+    AppLanguage.en: 'Open',
+  },
+  'common.unknownError': {
+    AppLanguage.zhHant: '未知錯誤',
+    AppLanguage.zhHans: '未知错误',
+    AppLanguage.en: 'Unknown error',
+  },
+  'media.folder.defaultName': {
+    AppLanguage.zhHant: '我的下載',
+    AppLanguage.zhHans: '我的下载',
+    AppLanguage.en: 'My downloads',
+  },
+  'media.folder.unnamed': {
+    AppLanguage.zhHant: '未命名資料夾',
+    AppLanguage.zhHans: '未命名文件夹',
+    AppLanguage.en: 'Untitled folder',
+  },
+  'media.folder.newDefault': {
+    AppLanguage.zhHant: '新資料夾',
+    AppLanguage.zhHans: '新文件夹',
+    AppLanguage.en: 'New folder',
+  },
+  'media.folder.select': {
+    AppLanguage.zhHant: '選擇資料夾',
+    AppLanguage.zhHans: '选择文件夹',
+    AppLanguage.en: 'Choose folder',
+  },
+  'media.unlock.reasonHidden': {
+    AppLanguage.zhHant: '解鎖以查看隱藏媒體',
+    AppLanguage.zhHans: '解锁以查看隐藏媒体',
+    AppLanguage.en: 'Unlock to view hidden media',
+  },
+  'media.unlock.permissionTitle': {
+    AppLanguage.zhHant: '需要 Face ID / Touch ID 權限',
+    AppLanguage.zhHans: '需要 Face ID / Touch ID 权限',
+    AppLanguage.en: 'Face ID / Touch ID permission required',
+  },
+  'media.unlock.permissionDescription': {
+    AppLanguage.zhHant: '請在系統設定中允許 Face ID 或 Touch ID 權限，以解鎖隱藏媒體。',
+    AppLanguage.zhHans: '请在系统设置中允许 Face ID 或 Touch ID 权限，以解锁隐藏媒体。',
+    AppLanguage.en:
+        'Please allow Face ID or Touch ID in system settings to unlock hidden media.',
+  },
+  'media.tab.media': {
+    AppLanguage.zhHant: '媒體',
+    AppLanguage.zhHans: '媒体',
+    AppLanguage.en: 'Media',
+  },
+  'media.tab.favorites': {
+    AppLanguage.zhHant: '收藏',
+    AppLanguage.zhHans: '收藏',
+    AppLanguage.en: 'Favorites',
+  },
+  'media.hidden.badge': {
+    AppLanguage.zhHant: '已隱藏',
+    AppLanguage.zhHans: '已隐藏',
+    AppLanguage.en: 'Hidden',
+  },
+  'media.hidden.unlockPrompt': {
+    AppLanguage.zhHant: '請使用 Face ID 或 Touch ID 解鎖',
+    AppLanguage.zhHans: '请使用 Face ID 或 Touch ID 解锁',
+    AppLanguage.en: 'Use Face ID or Touch ID to unlock',
+  },
+  'media.hidden.empty': {
+    AppLanguage.zhHant: '尚無隱藏媒體',
+    AppLanguage.zhHans: '尚无隐藏媒体',
+    AppLanguage.en: 'No hidden media yet',
+  },
+  'media.empty.folder': {
+    AppLanguage.zhHant: '此資料夾尚無媒體',
+    AppLanguage.zhHans: '此文件夹尚无媒体',
+    AppLanguage.en: 'This folder has no media yet',
+  },
+  'media.empty.search': {
+    AppLanguage.zhHant: '沒有符合搜尋的媒體',
+    AppLanguage.zhHans: '没有符合搜索的媒体',
+    AppLanguage.en: 'No media matches your search',
+  },
+  'media.empty.favorites': {
+    AppLanguage.zhHant: '尚無收藏',
+    AppLanguage.zhHans: '尚无收藏',
+    AppLanguage.en: 'No favorites yet',
+  },
+  'media.action.addFolder': {
+    AppLanguage.zhHant: '新增收納',
+    AppLanguage.zhHans: '新增文件夹',
+    AppLanguage.en: 'Add folder',
+  },
+  'media.action.rescan': {
+    AppLanguage.zhHant: '重新掃描',
+    AppLanguage.zhHans: '重新扫描',
+    AppLanguage.en: 'Rescan',
+  },
+  'media.action.selectAll': {
+    AppLanguage.zhHant: '全選',
+    AppLanguage.zhHans: '全选',
+    AppLanguage.en: 'Select all',
+  },
+  'media.action.editName': {
+    AppLanguage.zhHant: '編輯名稱',
+    AppLanguage.zhHans: '编辑名称',
+    AppLanguage.en: 'Edit name',
+  },
+  'media.action.moveTo': {
+    AppLanguage.zhHant: '移動到...',
+    AppLanguage.zhHans: '移动到...',
+    AppLanguage.en: 'Move to...',
+  },
+  'media.action.editExport': {
+    AppLanguage.zhHant: '編輯導出...',
+    AppLanguage.zhHans: '编辑导出...',
+    AppLanguage.en: 'Edit export...',
+  },
+  'media.action.export': {
+    AppLanguage.zhHant: '匯出...',
+    AppLanguage.zhHans: '导出...',
+    AppLanguage.en: 'Export...',
+  },
+  'media.action.hide': {
+    AppLanguage.zhHant: '隱藏',
+    AppLanguage.zhHans: '隐藏',
+    AppLanguage.en: 'Hide',
+  },
+  'media.action.unhide': {
+    AppLanguage.zhHant: '取消隱藏',
+    AppLanguage.zhHans: '取消隐藏',
+    AppLanguage.en: 'Unhide',
+  },
+  'media.action.favorite': {
+    AppLanguage.zhHant: '加入收藏',
+    AppLanguage.zhHans: '加入收藏',
+    AppLanguage.en: 'Add to favorites',
+  },
+  'media.action.unfavorite': {
+    AppLanguage.zhHant: '取消收藏',
+    AppLanguage.zhHans: '取消收藏',
+    AppLanguage.en: 'Remove favorite',
+  },
+  'media.selection.count': {
+    AppLanguage.zhHant: '已選取 {count} 項',
+    AppLanguage.zhHans: '已选取 {count} 项',
+    AppLanguage.en: 'Selected {count} item(s)',
+  },
+  'media.search.placeholder': {
+    AppLanguage.zhHant: '搜尋名稱/檔名',
+    AppLanguage.zhHans: '搜索名称/文件名',
+    AppLanguage.en: 'Search name / filename',
+  },
+  'media.details.size': {
+    AppLanguage.zhHant: '大小: {size}',
+    AppLanguage.zhHans: '大小: {size}',
+    AppLanguage.en: 'Size: {size}',
+  },
+  'media.details.duration': {
+    AppLanguage.zhHant: '時長: {duration}',
+    AppLanguage.zhHans: '时长: {duration}',
+    AppLanguage.en: 'Duration: {duration}',
+  },
+  'media.reorder.up': {
+    AppLanguage.zhHant: '上移',
+    AppLanguage.zhHans: '上移',
+    AppLanguage.en: 'Move up',
+  },
+  'media.reorder.down': {
+    AppLanguage.zhHant: '下移',
+    AppLanguage.zhHans: '下移',
+    AppLanguage.en: 'Move down',
+  },
+  'media.state.paused': {
+    AppLanguage.zhHant: '已暫停',
+    AppLanguage.zhHans: '已暂停',
+    AppLanguage.en: 'Paused',
+  },
+  'media.state.error': {
+    AppLanguage.zhHant: '失敗',
+    AppLanguage.zhHans: '失败',
+    AppLanguage.en: 'Failed',
+  },
+  'media.state.done': {
+    AppLanguage.zhHant: '已完成',
+    AppLanguage.zhHans: '已完成',
+    AppLanguage.en: 'Completed',
+  },
+  'media.state.converting': {
+    AppLanguage.zhHant: '轉換中',
+    AppLanguage.zhHans: '转换中',
+    AppLanguage.en: 'Converting',
+  },
+  'media.state.downloading': {
+    AppLanguage.zhHant: '下載中',
+    AppLanguage.zhHans: '下载中',
+    AppLanguage.en: 'Downloading',
+  },
+  'media.state.queued': {
+    AppLanguage.zhHant: '排隊中',
+    AppLanguage.zhHans: '排队中',
+    AppLanguage.en: 'Queued',
+  },
+  'media.error.incompleteFile': {
+    AppLanguage.zhHant: '檔案尚未完成或已損毀',
+    AppLanguage.zhHans: '文件尚未完成或已损坏',
+    AppLanguage.en: 'File is incomplete or corrupted',
+  },
+  'media.error.missingFile': {
+    AppLanguage.zhHant: '檔案已不存在',
+    AppLanguage.zhHans: '文件已不存在',
+    AppLanguage.en: 'File no longer exists',
+  },
+  'media.error.photoPermissionDenied': {
+    AppLanguage.zhHant: '相簿權限被拒絕',
+    AppLanguage.zhHans: '相册权限被拒绝',
+    AppLanguage.en: 'Photo access was denied',
+  },
+  'media.snack.moved': {
+    AppLanguage.zhHant: '已移動到 {folder}',
+    AppLanguage.zhHans: '已移动到 {folder}',
+    AppLanguage.en: 'Moved to {folder}',
+  },
+  'media.snack.noExportable': {
+    AppLanguage.zhHant: '沒有可匯出的檔案',
+    AppLanguage.zhHans: '没有可导出的文件',
+    AppLanguage.en: 'No files available to export',
+  },
+  'media.snack.hiddenCount': {
+    AppLanguage.zhHant: '已隱藏 {count} 項',
+    AppLanguage.zhHans: '已隐藏 {count} 项',
+    AppLanguage.en: 'Hidden {count} item(s)',
+  },
+  'media.snack.unhiddenCount': {
+    AppLanguage.zhHant: '已取消隱藏 {count} 項',
+    AppLanguage.zhHans: '已取消隐藏 {count} 项',
+    AppLanguage.en: 'Unhid {count} item(s)',
+  },
+  'media.dialog.deleteSelected.title': {
+    AppLanguage.zhHant: '刪除已選取的檔案',
+    AppLanguage.zhHans: '删除已选取的文件',
+    AppLanguage.en: 'Delete selected files',
+  },
+  'media.dialog.deleteSelected.message': {
+    AppLanguage.zhHant: '確定要刪除 {count} 項嗎？',
+    AppLanguage.zhHans: '确定要删除 {count} 项吗？',
+    AppLanguage.en: 'Delete {count} item(s)?',
+  },
+  'media.dialog.renameFolder.title': {
+    AppLanguage.zhHant: '重新命名資料夾',
+    AppLanguage.zhHans: '重新命名文件夹',
+    AppLanguage.en: 'Rename folder',
+  },
+  'media.dialog.deleteFolder.title': {
+    AppLanguage.zhHant: '刪除資料夾',
+    AppLanguage.zhHans: '删除文件夹',
+    AppLanguage.en: 'Delete folder',
+  },
+  'media.dialog.deleteFolder.message': {
+    AppLanguage.zhHant: '確定要刪除「{name}」嗎？其中的檔案會移至{defaultFolder}。',
+    AppLanguage.zhHans: '确定要删除「{name}」吗？其中的文件会移至{defaultFolder}。',
+    AppLanguage.en:
+        'Delete “{name}”? Files inside will be moved to {defaultFolder}.',
+  },
+  'media.dialog.createFolder.title': {
+    AppLanguage.zhHant: '新增資料夾',
+    AppLanguage.zhHans: '新增文件夹',
+    AppLanguage.en: 'Create folder',
+  },
+  'media.prompt.enterNewName': {
+    AppLanguage.zhHant: '輸入新的名稱',
+    AppLanguage.zhHans: '输入新的名称',
+    AppLanguage.en: 'Enter a new name',
+  },
+  'media.prompt.folderName': {
+    AppLanguage.zhHant: '輸入資料夾名稱',
+    AppLanguage.zhHans: '输入文件夹名称',
+    AppLanguage.en: 'Enter folder name',
+  },
+  'media.youtube.audioOption': {
+    AppLanguage.zhHant: '音訊 {kbps}kbps {codec}',
+    AppLanguage.zhHans: '音讯 {kbps}kbps {codec}',
+    AppLanguage.en: 'Audio {kbps}kbps {codec}',
+  },
+  'download.error.playFirst': {
+    AppLanguage.zhHant: '無法下載：請先播放幾秒讓嗅探到串流網址。',
+    AppLanguage.zhHans: '无法下载：请先播放几秒让嗅探到串流网址。',
+    AppLanguage.en:
+        'Unable to download. Play the video for a few seconds so the stream URL can be detected.',
+  },
+  'download.error.enqueueFailed': {
+    AppLanguage.zhHant: '加入佇列失敗：{error}',
+    AppLanguage.zhHans: '加入队列失败：{error}',
+    AppLanguage.en: 'Failed to queue download: {error}',
+  },
+  'download.progress.sanitizingHls': {
+    AppLanguage.zhHant: '準備中：清洗 HLS…',
+    AppLanguage.zhHans: '准备中：清洗 HLS…',
+    AppLanguage.en: 'Preparing: sanitising HLS…',
+  },
+  'locker.reason.privateMedia': {
+    AppLanguage.zhHant: '解鎖以查看私人影片',
+    AppLanguage.zhHans: '解锁以查看私人影片',
+    AppLanguage.en: 'Unlock to view private videos',
+  },
+  'share.importPreview.title': {
+    AppLanguage.zhHant: '匯入預覽',
+    AppLanguage.zhHans: '导入预览',
+    AppLanguage.en: 'Import preview',
+  },
+  'share.importPreview.action.import': {
+    AppLanguage.zhHant: '匯入',
+    AppLanguage.zhHans: '导入',
+    AppLanguage.en: 'Import',
+  },
+  'share.importPreview.snack.discarded': {
+    AppLanguage.zhHant: '已丟棄 {name}',
+    AppLanguage.zhHans: '已丢弃 {name}',
+    AppLanguage.en: 'Discarded {name}',
+  },
+  'share.importPreview.snack.allDiscarded': {
+    AppLanguage.zhHant: '所有項目已丟棄',
+    AppLanguage.zhHans: '所有项目已丢弃',
+    AppLanguage.en: 'All items discarded',
+  },
+  'share.importPreview.hint.swipe': {
+    AppLanguage.zhHant: '左右滑動以檢視所有項目',
+    AppLanguage.zhHans: '左右滑动以检视所有项目',
+    AppLanguage.en: 'Swipe left or right to view all items',
+  },
+  'share.importPreview.hint.preview': {
+    AppLanguage.zhHant: '預覽內容',
+    AppLanguage.zhHans: '预览内容',
+    AppLanguage.en: 'Preview',
+  },
+  'share.importPreview.action.discard': {
+    AppLanguage.zhHant: '丟棄此項目',
+    AppLanguage.zhHans: '丢弃此项目',
+    AppLanguage.en: 'Discard this item',
+  },
+  'share.importPreview.status.saving': {
+    AppLanguage.zhHant: '保存中...',
+    AppLanguage.zhHans: '保存中...',
+    AppLanguage.en: 'Saving…',
+  },
+  'share.importPreview.status.cancelling': {
+    AppLanguage.zhHant: '取消中...',
+    AppLanguage.zhHans: '取消中...',
+    AppLanguage.en: 'Cancelling…',
+  },
+  'share.importPreview.empty': {
+    AppLanguage.zhHant: '沒有可匯入的項目',
+    AppLanguage.zhHans: '没有可导入的项目',
+    AppLanguage.en: 'Nothing available to import',
+  },
+  'share.importPreview.emptyDescription': {
+    AppLanguage.zhHant: '請返回並重新選擇分享的內容。',
+    AppLanguage.zhHans: '请返回并重新选择分享的内容。',
+    AppLanguage.en: 'Go back and choose content to share again.',
+  },
+  'share.importPreview.error.importFailed': {
+    AppLanguage.zhHant: '匯入失敗：{error}',
+    AppLanguage.zhHans: '导入失败：{error}',
+    AppLanguage.en: 'Import failed: {error}',
+  },
+  'share.importPreview.error.cancelFailed': {
+    AppLanguage.zhHant: '取消匯入失敗：{error}',
+    AppLanguage.zhHans: '取消导入失败：{error}',
+    AppLanguage.en: 'Failed to cancel import: {error}',
+  },
+  'share.importPreview.audioLoadFailed': {
+    AppLanguage.zhHant: '音訊載入失敗',
+    AppLanguage.zhHans: '音讯载入失败',
+    AppLanguage.en: 'Failed to load audio',
+  },
+  'share.importPreview.videoLoadFailed': {
+    AppLanguage.zhHant: '影片載入失敗',
+    AppLanguage.zhHans: '影片载入失败',
+    AppLanguage.en: 'Failed to load video',
+  },
+  'share.importPreview.error.fileNotFound': {
+    AppLanguage.zhHant: '找不到檔案',
+    AppLanguage.zhHans: '找不到档案',
+    AppLanguage.en: 'File not found',
+  },
+  'share.importPreview.error.openFile': {
+    AppLanguage.zhHant: '無法開啟檔案：{message}',
+    AppLanguage.zhHans: '无法开启档案：{message}',
+    AppLanguage.en: 'Unable to open file: {message}',
   },
 };
 

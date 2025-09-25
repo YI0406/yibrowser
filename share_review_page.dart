@@ -129,9 +129,16 @@ class _ShareReviewPageState extends State<ShareReviewPage>
     } catch (err) {
       if (!mounted) return;
       setState(() => _processing = null);
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('匯入失敗：$err')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            context.l10n(
+              'shareReview.snack.importFailed',
+              params: {'error': '$err'},
+            ),
+          ),
+        ),
+      );
       return;
     }
     if (!mounted) return;
@@ -151,9 +158,16 @@ class _ShareReviewPageState extends State<ShareReviewPage>
     } catch (err) {
       if (!mounted) return;
       setState(() => _processing = null);
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('取消匯入失敗：$err')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            context.l10n(
+              'shareReview.snack.cancelFailed',
+              params: {'error': '$err'},
+            ),
+          ),
+        ),
+      );
       return;
     }
     if (!mounted) return;
@@ -171,9 +185,9 @@ class _ShareReviewPageState extends State<ShareReviewPage>
       setState(() {
         _currentIndex = 0;
       });
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('所有項目已丟棄')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(context.l10n('shareReview.snack.allDiscarded'))),
+      );
       await _handleCancel();
       return;
     }
@@ -188,9 +202,16 @@ class _ShareReviewPageState extends State<ShareReviewPage>
     setState(() {
       _currentIndex = newIndex;
     });
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text('已丟棄 ${removed.effectiveName}')));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          context.l10n(
+            'shareReview.snack.itemDiscarded',
+            params: {'name': removed.effectiveName},
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -209,16 +230,16 @@ class _ShareReviewPageState extends State<ShareReviewPage>
       },
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('匯入預覽'),
+          title: Text(context.l10n('shareReview.dialog.title')),
           centerTitle: true,
           leading: TextButton(
             onPressed: _processing == null ? _handleCancel : null,
-            child: const Text('取消'),
+            child: Text(context.l10n('common.cancel'), softWrap: false),
           ),
           actions: [
             TextButton(
               onPressed: _processing == null ? _handleConfirm : null,
-              child: const Text('匯入'),
+              child: Text(context.l10n('share.importPreview.action.import')),
             ),
           ],
         ),
@@ -300,7 +321,9 @@ class _ShareReviewPageState extends State<ShareReviewPage>
                     Padding(
                       padding: const EdgeInsets.only(bottom: 20),
                       child: Text(
-                        items.length > 1 ? '左右滑動以檢視所有項目' : '預覽內容',
+                        items.length > 1
+                            ? context.l10n('shareReview.carousel.hintMultiple')
+                            : context.l10n('shareReview.carousel.hintSingle'),
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: theme.colorScheme.onSurfaceVariant,
                         ),
@@ -316,7 +339,7 @@ class _ShareReviewPageState extends State<ShareReviewPage>
                   child: IconButton.filled(
                     onPressed: _processing == null ? _discardCurrentItem : null,
                     icon: const Icon(Icons.delete_outline),
-                    tooltip: '丟棄此項目',
+                    tooltip: context.l10n('shareReview.tooltip.discardItem'),
                   ),
                 ),
               if (_processing != null)
@@ -331,8 +354,8 @@ class _ShareReviewPageState extends State<ShareReviewPage>
                           const SizedBox(height: 16),
                           Text(
                             _processing == _ShareReviewAction.confirm
-                                ? '保存中...'
-                                : '取消中...',
+                                ? context.l10n('shareReview.status.saving')
+                                : context.l10n('common.canceling'),
                             style:
                                 theme.textTheme.bodyMedium?.copyWith(
                                   color: Colors.white,
@@ -432,6 +455,7 @@ class _SharePreviewItemView extends StatelessWidget {
 
   Widget _buildPreview(BuildContext context) {
     final theme = Theme.of(context);
+
     final file = File(item.path);
     if (!file.existsSync()) {
       return _MissingPreview(name: item.effectiveName);
@@ -492,14 +516,14 @@ class _EmptySharePreview extends StatelessWidget {
           ),
           const SizedBox(height: 16),
           Text(
-            '沒有可匯入的項目',
+            context.l10n('shareReview.empty.title'),
             style: theme.textTheme.titleMedium?.copyWith(
               fontWeight: FontWeight.w600,
             ),
           ),
           const SizedBox(height: 8),
           Text(
-            '請返回並重新選擇分享的內容。',
+            context.l10n('shareReview.empty.subtitle'),
             style: theme.textTheme.bodyMedium?.copyWith(
               color: theme.colorScheme.onSurfaceVariant,
             ),
@@ -582,6 +606,7 @@ class _AudioPreviewState extends State<_AudioPreview> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
     if (_error != null) {
       return DecoratedBox(
         decoration: BoxDecoration(
@@ -601,7 +626,7 @@ class _AudioPreviewState extends State<_AudioPreview> {
                 ),
                 const SizedBox(height: 12),
                 Text(
-                  '音訊載入失敗',
+                  context.l10n('shareReview.error.audioLoad'),
                   style: theme.textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.w600,
                   ),
@@ -667,7 +692,11 @@ class _AudioPreviewState extends State<_AudioPreview> {
             FilledButton.icon(
               onPressed: _togglePlay,
               icon: Icon(isPlaying ? Icons.pause : Icons.play_arrow),
-              label: Text(isPlaying ? '暫停' : '播放'),
+              label: Text(
+                isPlaying
+                    ? context.l10n('common.pause')
+                    : context.l10n('common.play'),
+              ),
             ),
           ],
         ),
@@ -684,6 +713,7 @@ class _DocumentPreview extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
     final extension =
         p.extension(item.path).replaceFirst('.', '').toUpperCase();
     final label = extension.isNotEmpty ? extension : null;
@@ -730,15 +760,22 @@ class _DocumentPreview extends StatelessWidget {
               onPressed: () async {
                 final result = await OpenFilex.open(item.path);
                 if (result.type != ResultType.done) {
+                  final reason =
+                      result.message ?? context.l10n('common.unknownError');
                   messenger.showSnackBar(
                     SnackBar(
-                      content: Text('無法開啟檔案：${result.message ?? '未知錯誤'}'),
+                      content: Text(
+                        context.l10n(
+                          'shareReview.error.openFile',
+                          params: {'error': reason},
+                        ),
+                      ),
                     ),
                   );
                 }
               },
               icon: const Icon(Icons.open_in_new),
-              label: const Text('打開'),
+              label: Text(context.l10n('common.open')),
             ),
           ],
         ),
@@ -817,7 +854,7 @@ class _MissingPreview extends StatelessWidget {
               ),
               const SizedBox(height: 16),
               Text(
-                '找不到檔案',
+                context.l10n('shareReview.error.fileNotFound'),
                 style: theme.textTheme.titleMedium?.copyWith(
                   fontWeight: FontWeight.w600,
                 ),
@@ -907,7 +944,7 @@ class _VideoPreviewState extends State<_VideoPreview> {
               ),
               const SizedBox(height: 16),
               Text(
-                '影片載入失敗',
+                context.l10n('shareReview.error.videoLoad'),
                 style: theme.textTheme.titleMedium?.copyWith(
                   fontWeight: FontWeight.w600,
                 ),

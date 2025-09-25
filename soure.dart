@@ -19,6 +19,7 @@ import 'package:local_auth/local_auth.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'app_localizations.dart';
 import 'dart:math' as math;
 import 'package:video_player/video_player.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
@@ -589,7 +590,10 @@ class MediaFolder {
     final rawName = (json['name'] as String?)?.trim();
     return MediaFolder(
       id: json['id'] as String,
-      name: rawName == null || rawName.isEmpty ? '未命名資料夾' : rawName,
+      name:
+          rawName == null || rawName.isEmpty
+              ? LanguageService.instance.translate('media.folder.unnamed')
+              : rawName,
     );
   }
 
@@ -1389,7 +1393,10 @@ class AppRepo extends ChangeNotifier {
         final c = a.container.name; // m4a/webm
         final br = a.bitrate.bitsPerSecond;
         final kbps = (br / 1000).round();
-        final label = '音訊 ${kbps}kbps ${c.toUpperCase()}';
+        final label = LanguageService.instance.translate(
+          'media.youtube.audioOption',
+          params: {'kbps': kbps.toString(), 'codec': c.toUpperCase()},
+        );
         opts.add(
           YtOption(
             label: label,
@@ -2268,7 +2275,10 @@ class AppRepo extends ChangeNotifier {
   /// Create a new folder used to organise downloads on the media page.
   MediaFolder createMediaFolder(String name) {
     final trimmed = name.trim();
-    final folderName = trimmed.isEmpty ? '新資料夾' : trimmed;
+    final folderName =
+        trimmed.isEmpty
+            ? LanguageService.instance.translate('media.folder.newDefault')
+            : trimmed;
     final folder = MediaFolder(
       id: 'folder_${DateTime.now().microsecondsSinceEpoch}',
       name: folderName,
@@ -2875,7 +2885,9 @@ class AppRepo extends ChangeNotifier {
   Future<void> requestGalleryPerm() async {
     final perm = await PhotoManager.requestPermissionExtend();
     if (!perm.isAuth) {
-      throw Exception('相簿權限被拒絕');
+      throw Exception(
+        LanguageService.instance.translate('media.error.photoPermissionDenied'),
+      );
     }
   }
 
@@ -2927,7 +2939,9 @@ class AppRepo extends ChangeNotifier {
             kind: 'file',
             type: 'video',
             state: 'error',
-            name: '無法下載：請先播放幾秒，讓嗅探到 .m3u8 或 .ts（會自動轉為真正清單）',
+            name: LanguageService.instance.translate(
+              'download.error.playFirst',
+            ),
           );
           downloads.value = [...downloads.value, task];
           await _saveState();
@@ -2996,7 +3010,10 @@ class AppRepo extends ChangeNotifier {
         kind: 'file',
         type: _inferType(url),
         state: 'error',
-        name: '加入佇列失敗：${e.runtimeType}',
+        name: LanguageService.instance.translate(
+          'download.error.enqueueFailed',
+          params: {'error': '${e.runtimeType}'},
+        ),
       );
       downloads.value = [...downloads.value, task];
       await _saveState();
@@ -3210,7 +3227,9 @@ class AppRepo extends ChangeNotifier {
         progressTask.received = 0;
         progressTask.name =
             (progressTask.name == null || progressTask.name!.isEmpty)
-                ? '準備中：清洗 HLS…'
+                ? LanguageService.instance.translate(
+                  'download.progress.sanitizingHls',
+                )
                 : progressTask.name;
         _notifyDownloadsUpdated();
         notifyListeners();
@@ -4100,7 +4119,10 @@ class LockerResult {
 class Locker {
   static final _auth = LocalAuthentication();
 
-  static Future<LockerResult> unlock({String reason = '解鎖以查看私人影片'}) async {
+  static Future<LockerResult> unlock({String? reason}) async {
+    final unlockReason =
+        reason ??
+        LanguageService.instance.translate('locker.reason.privateMedia');
     try {
       final supported = await _auth.isDeviceSupported();
       if (!supported) {
@@ -4125,7 +4147,7 @@ class Locker {
     }
     try {
       final didAuthenticate = await _auth.authenticate(
-        localizedReason: reason,
+        localizedReason: unlockReason,
         options: const AuthenticationOptions(
           biometricOnly: false,
           stickyAuth: true,

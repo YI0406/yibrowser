@@ -12,7 +12,7 @@ import 'soure.dart';
 
 class VideoPlayerPage extends StatefulWidget {
   final String path;
-  final String title;
+  final String? title;
   final Duration? startAt;
   final List<DownloadTask>? playlist;
   final int? initialIndex;
@@ -20,7 +20,7 @@ class VideoPlayerPage extends StatefulWidget {
   const VideoPlayerPage({
     super.key,
     required this.path,
-    this.title = '播放器',
+    this.title,
     this.startAt,
     this.playlist,
     this.initialIndex,
@@ -78,7 +78,9 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _currentPath = widget.path;
-    _currentTitle = widget.title;
+    _currentTitle =
+        widget.title ??
+        LanguageService.instance.translate('videoPlayer.defaultTitle');
     _pendingStartAt = widget.startAt;
     if (widget.playlist != null && widget.playlist!.isNotEmpty) {
       _playlist = List<DownloadTask>.from(widget.playlist!);
@@ -245,6 +247,15 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
       _systemVolume.removeListener();
     } catch (_) {}
     super.dispose();
+  }
+
+  @override
+  void onLanguageChanged() {
+    if (widget.title == null) {
+      _currentTitle = LanguageService.instance.translate(
+        'videoPlayer.defaultTitle',
+      );
+    }
   }
 
   @override
@@ -810,7 +821,9 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                           Row(
                             children: [
                               PopupMenuButton<double>(
-                                tooltip: '播放速度',
+                                tooltip: context.l10n(
+                                  'videoPlayer.action.playbackSpeed',
+                                ),
                                 onSelected: _changeRate,
                                 itemBuilder:
                                     (_) => const [

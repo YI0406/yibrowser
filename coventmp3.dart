@@ -18,42 +18,44 @@ enum _DragHandle { none, start, end }
 
 class _ExportFormatOption {
   final String id;
-  final String label;
+  final String labelKey;
   final String extension;
   final String ffmpegArguments;
   final bool isVideo;
 
   const _ExportFormatOption({
     required this.id,
-    required this.label,
+    required this.labelKey,
     required this.extension,
     required this.ffmpegArguments,
     this.isVideo = false,
   });
+
+  String label(BuildContext context) => context.l10n(labelKey);
 }
 
 const List<_ExportFormatOption> _audioFormatOptions = [
   _ExportFormatOption(
     id: 'mp3',
-    label: 'MP3 (音訊)',
+    labelKey: 'converter.format.mp3',
     extension: 'mp3',
     ffmpegArguments: '-vn -c:a libmp3lame -qscale:a 2',
   ),
   _ExportFormatOption(
     id: 'm4a',
-    label: 'M4A (AAC 音訊)',
+    labelKey: 'converter.format.m4a',
     extension: 'm4a',
     ffmpegArguments: '-vn -c:a aac -b:a 192k',
   ),
   _ExportFormatOption(
     id: 'aac',
-    label: 'AAC',
+    labelKey: 'converter.format.aac',
     extension: 'aac',
     ffmpegArguments: '-vn -c:a aac -b:a 192k',
   ),
   _ExportFormatOption(
     id: 'wav',
-    label: 'WAV (PCM)',
+    labelKey: 'converter.format.wav',
     extension: 'wav',
     ffmpegArguments: '-vn -c:a pcm_s16le -ar 44100',
   ),
@@ -62,43 +64,43 @@ const List<_ExportFormatOption> _audioFormatOptions = [
 const List<_ExportFormatOption> _imageFormatOptions = [
   const _ExportFormatOption(
     id: 'jpg',
-    label: 'JPG (圖片)',
+    labelKey: 'converter.format.jpg',
     extension: 'jpg',
     ffmpegArguments: '',
   ),
   const _ExportFormatOption(
     id: 'png',
-    label: 'PNG (圖片)',
+    labelKey: 'converter.format.png',
     extension: 'png',
     ffmpegArguments: '',
   ),
   const _ExportFormatOption(
     id: 'gif',
-    label: 'GIF (圖片)',
+    labelKey: 'converter.format.gif',
     extension: 'gif',
     ffmpegArguments: '',
   ),
   const _ExportFormatOption(
     id: 'bmp',
-    label: 'BMP (圖片)',
+    labelKey: 'converter.format.bmp',
     extension: 'bmp',
     ffmpegArguments: '',
   ),
   const _ExportFormatOption(
     id: 'svg',
-    label: 'SVG (圖片)',
+    labelKey: 'converter.format.svg',
     extension: 'svg',
     ffmpegArguments: '',
   ),
   const _ExportFormatOption(
     id: 'tiff',
-    label: 'TIFF (圖片)',
+    labelKey: 'converter.format.tiff',
     extension: 'tiff',
     ffmpegArguments: '',
   ),
   const _ExportFormatOption(
     id: 'pdf',
-    label: 'PDF (圖片)',
+    labelKey: 'converter.format.pdf',
     extension: 'pdf',
     ffmpegArguments: '',
   ),
@@ -107,7 +109,7 @@ const List<_ExportFormatOption> _imageFormatOptions = [
 const List<_ExportFormatOption> _videoFormatOptions = [
   _ExportFormatOption(
     id: 'mp4_h264',
-    label: 'MP4 (H.264 + AAC)',
+    labelKey: 'converter.format.mp4H264',
     extension: 'mp4',
     ffmpegArguments:
         '-c:v libx264 -preset medium -crf 23 -pix_fmt yuv420p -c:a aac -b:a 192k',
@@ -115,7 +117,7 @@ const List<_ExportFormatOption> _videoFormatOptions = [
   ),
   _ExportFormatOption(
     id: 'mov_h264',
-    label: 'MOV (H.264 + AAC)',
+    labelKey: 'converter.format.movH264',
     extension: 'mov',
     ffmpegArguments:
         '-c:v libx264 -preset medium -crf 23 -pix_fmt yuv420p -c:a aac -b:a 192k',
@@ -123,7 +125,7 @@ const List<_ExportFormatOption> _videoFormatOptions = [
   ),
   _ExportFormatOption(
     id: 'mkv_h264',
-    label: 'MKV (H.264 + AAC)',
+    labelKey: 'converter.format.mkvH264',
     extension: 'mkv',
     ffmpegArguments:
         '-c:v libx264 -preset medium -crf 23 -pix_fmt yuv420p -c:a aac -b:a 192k',
@@ -131,7 +133,7 @@ const List<_ExportFormatOption> _videoFormatOptions = [
   ),
   _ExportFormatOption(
     id: 'webm_vp9',
-    label: 'WebM (VP9 + Opus)',
+    labelKey: 'converter.format.webmVp9',
     extension: 'webm',
     ffmpegArguments:
         '-c:v libvpx-vp9 -b:v 1.5M -pix_fmt yuv420p -c:a libopus -b:a 160k',
@@ -298,7 +300,9 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage>
     final file = File(widget.sourcePath);
     if (!await file.exists()) {
       setState(() {
-        _loadError = '找不到來源檔案';
+        _loadError = LanguageService.instance.translate(
+          'converter.error.missingSourceFile',
+        );
         _initializing = false;
       });
       return;
@@ -329,9 +333,13 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage>
         _generateWaveformPreview();
       }
     } catch (e) {
+      final message = LanguageService.instance.translate(
+        'converter.error.previewLoad',
+        params: {'error': '$e'},
+      );
       setState(() {
         _initializing = false;
-        _previewError = '預覽無法載入: $e';
+        _previewError = message;
       });
     }
   }
@@ -367,13 +375,15 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage>
     final theme = Theme.of(context);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('編輯導出'),
+        title: Text(context.l10n('feature.editExport')),
         actions: [
           if (_processing && _activeSessionId != null)
             TextButton(
               onPressed: _cancelRequested ? null : _cancelExport,
               child: Text(
-                _cancelRequested ? '取消中…' : '取消',
+                _cancelRequested
+                    ? context.l10n('common.canceling')
+                    : context.l10n('common.cancel'),
                 style: const TextStyle(color: Colors.white),
               ),
             ),
@@ -414,17 +424,25 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage>
                 children: [
                   const SizedBox(height: 4),
                   if (widget.mediaType == 'image')
-                    const Text('媒體類型: 圖片')
+                    Text(context.l10n('converter.info.mediaTypeImage'))
                   else
                     Text(
-                      '來源長度: ' +
-                          (_durationSeconds > 0
-                              ? _formatReadable(_mediaDuration)
-                              : '未知'),
+                      context.l10n(
+                        'converter.info.sourceDuration',
+                        params: {
+                          'duration':
+                              _durationSeconds > 0
+                                  ? _formatReadable(_mediaDuration)
+                                  : context.l10n('common.unknown'),
+                        },
+                      ),
                     ),
                   const SizedBox(height: 4),
                   Text(
-                    '來源路徑: ${widget.sourcePath}',
+                    context.l10n(
+                      'converter.info.sourcePath',
+                      params: {'path': widget.sourcePath},
+                    ),
                     style: theme.textTheme.bodySmall,
                   ),
                 ],
@@ -457,7 +475,11 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage>
           ElevatedButton.icon(
             onPressed: _processing ? null : _startExport,
             icon: const Icon(Icons.save_alt),
-            label: Text(_processing ? '匯出中…' : _exportButtonLabel()),
+            label: Text(
+              _processing
+                  ? context.l10n('converter.action.exporting')
+                  : _exportButtonLabel(context),
+            ),
           ),
           const SizedBox(height: 16),
           // Removed "最近匯出" card here.
@@ -491,10 +513,10 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage>
             return Column(
               mainAxisAlignment: MainAxisAlignment.center,
               mainAxisSize: MainAxisSize.min,
-              children: const [
-                Icon(Icons.broken_image, size: 48),
-                SizedBox(height: 8),
-                Text('無法顯示圖片預覽'),
+              children: [
+                const Icon(Icons.broken_image, size: 48),
+                const SizedBox(height: 8),
+                Text(context.l10n('converter.error.imagePreviewUnavailable')),
               ],
             );
           },
@@ -515,10 +537,10 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage>
         alignment: Alignment.center,
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
-          children: const [
-            Icon(Icons.music_note, size: 48),
-            SizedBox(height: 8),
-            Text('無法預覽，仍可進行匯出'),
+          children: [
+            const Icon(Icons.music_note, size: 48),
+            const SizedBox(height: 8),
+            Text(context.l10n('converter.error.previewUnavailable')),
           ],
         ),
       );
@@ -569,18 +591,21 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage>
           children: [
             IconButton(
               icon: const Icon(Icons.replay_10),
-              tooltip: '倒退 10 秒',
+              tooltip: context.l10n('converter.tooltip.rewind10'),
               onPressed: () => _seekRelative(const Duration(seconds: -10)),
             ),
             IconButton(
               icon: Icon(_isPlaying ? Icons.pause : Icons.play_arrow),
               iconSize: 40,
-              tooltip: _isPlaying ? '暫停' : '播放',
+              tooltip:
+                  _isPlaying
+                      ? context.l10n('common.pause')
+                      : context.l10n('common.play'),
               onPressed: _togglePlayback,
             ),
             IconButton(
               icon: const Icon(Icons.forward_10),
-              tooltip: '快轉 10 秒',
+              tooltip: context.l10n('converter.tooltip.forward10'),
               onPressed: () => _seekRelative(const Duration(seconds: 10)),
             ),
           ],
@@ -601,10 +626,10 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage>
         alignment: Alignment.center,
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
-          children: const [
-            Icon(Icons.audiotrack, size: 48),
-            SizedBox(height: 8),
-            Text('無法預覽，仍可進行匯出'),
+          children: [
+            const Icon(Icons.audiotrack, size: 48),
+            const SizedBox(height: 8),
+            Text(context.l10n('converter.error.previewUnavailable')),
           ],
         ),
       );
@@ -636,7 +661,7 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage>
             child: TextButton.icon(
               onPressed: _waveformGenerating ? null : _generateWaveformPreview,
               icon: const Icon(Icons.refresh),
-              label: const Text('重新產生波形'),
+              label: Text(context.l10n('converter.waveform.regenerate')),
             ),
           ),
         const SizedBox(height: 8),
@@ -668,24 +693,30 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage>
           children: [
             IconButton(
               icon: const Icon(Icons.replay_10),
-              tooltip: '倒退 10 秒',
+              tooltip: context.l10n('converter.tooltip.rewind10'),
               onPressed: () => _seekRelative(const Duration(seconds: -10)),
             ),
             IconButton(
               icon: Icon(_isPlaying ? Icons.pause : Icons.play_arrow),
               iconSize: 40,
-              tooltip: _isPlaying ? '暫停' : '播放',
+              tooltip:
+                  _isPlaying
+                      ? context.l10n('common.pause')
+                      : context.l10n('common.play'),
               onPressed: _togglePlayback,
             ),
             IconButton(
               icon: const Icon(Icons.forward_10),
-              tooltip: '快轉 10 秒',
+              tooltip: context.l10n('converter.tooltip.forward10'),
               onPressed: () => _seekRelative(const Duration(seconds: 10)),
             ),
           ],
         ),
         const SizedBox(height: 8),
-        Text('提示：長按波形並拖曳可預覽時間（顯示毫秒）', style: theme.textTheme.bodySmall),
+        Text(
+          context.l10n('converter.hint.waveformLongPress'),
+          style: theme.textTheme.bodySmall,
+        ),
       ],
     );
   }
@@ -995,7 +1026,7 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage>
         color: theme.colorScheme.surfaceVariant,
       ),
       alignment: Alignment.center,
-      child: const Text('波形圖尚未就緒'),
+      child: Text(context.l10n('converter.waveform.notReady')),
     );
   }
 
@@ -1140,7 +1171,9 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage>
         } catch (_) {}
         setState(() {
           _waveformDirectoryPath = null;
-          _waveformError = '波形圖產生失敗，請重試。';
+          _waveformError = LanguageService.instance.translate(
+            'converter.waveform.error.generic',
+          );
         });
       }
     } catch (e) {
@@ -1152,7 +1185,10 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage>
       if (mounted) {
         setState(() {
           _waveformDirectoryPath = null;
-          _waveformError = '波形圖產生失敗: $e';
+          _waveformError = LanguageService.instance.translate(
+            'converter.waveform.error.withReason',
+            params: {'error': '$e'},
+          );
         });
       }
     } finally {
@@ -1182,13 +1218,13 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage>
     if (widget.mediaType == 'image') {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: const [Text('此圖片會完整轉換為選擇的輸出格式。')],
+        children: [Text(context.l10n('converter.info.imageConversionNote'))],
       );
     }
     if (_durationSeconds <= 0) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: const [Text('無法取得媒體長度，請直接匯出整段。')],
+        children: [Text(context.l10n('converter.info.noDuration'))],
       );
     }
     final selection = _selection;
@@ -1200,10 +1236,32 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage>
     );
     final clipSeconds = math.max(0.0, end - start);
     final clipDuration = Duration(milliseconds: (clipSeconds * 1000).round());
+    final startLabelText = context.l10n(
+      'converter.selection.start',
+      params: {
+        'time': _formatPrecise(Duration(milliseconds: (start * 1000).round())),
+      },
+    );
+    final endLabelText = context.l10n(
+      'converter.selection.end',
+      params: {
+        'time': _formatPrecise(Duration(milliseconds: (end * 1000).round())),
+      },
+    );
+    final lengthLabelText = context.l10n(
+      'converter.selection.length',
+      params: {
+        'time': _formatPrecise(clipDuration),
+        'seconds': clipSeconds.toStringAsFixed(3),
+      },
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('選取範圍', style: theme.textTheme.titleMedium),
+        Text(
+          context.l10n('converter.section.selection'),
+          style: theme.textTheme.titleMedium,
+        ),
         const SizedBox(height: 8),
         SliderTheme(
           data: SliderTheme.of(context).copyWith(
@@ -1232,15 +1290,9 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage>
             },
           ),
         ),
-        Text(
-          '起點：${_formatPrecise(Duration(milliseconds: (start * 1000).round()))}',
-        ),
-        Text(
-          '終點：${_formatPrecise(Duration(milliseconds: (end * 1000).round()))}',
-        ),
-        Text(
-          '長度：${_formatPrecise(clipDuration)} (${clipSeconds.toStringAsFixed(3)} 秒)',
-        ),
+        Text(startLabelText),
+        Text(endLabelText),
+        Text(lengthLabelText),
         const SizedBox(height: 12),
         Wrap(
           spacing: 12,
@@ -1249,17 +1301,19 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage>
             OutlinedButton.icon(
               onPressed: _setStartFromCurrent,
               icon: const Icon(Icons.flag),
-              label: const Text('以目前時間為起點'),
+              label: Text(
+                context.l10n('converter.selection.useCurrentAsStart'),
+              ),
             ),
             OutlinedButton.icon(
               onPressed: _setEndFromCurrent,
               icon: const Icon(Icons.outlined_flag),
-              label: const Text('以目前時間為終點'),
+              label: Text(context.l10n('converter.selection.useCurrentAsEnd')),
             ),
             OutlinedButton.icon(
               onPressed: _previewSelection,
               icon: const Icon(Icons.play_circle_fill),
-              label: const Text('預覽選取範圍'),
+              label: Text(context.l10n('converter.selection.preview')),
             ),
           ],
         ),
@@ -1271,7 +1325,10 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('輸出設定', style: theme.textTheme.titleMedium),
+        Text(
+          context.l10n('converter.section.output'),
+          style: theme.textTheme.titleMedium,
+        ),
         const SizedBox(height: 12),
         DropdownButtonFormField<_ExportFormatOption>(
           value: _selectedFormatOption,
@@ -1280,7 +1337,7 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage>
                   .map(
                     (option) => DropdownMenuItem(
                       value: option,
-                      child: Text(option.label),
+                      child: Text(option.label(context)),
                     ),
                   )
                   .toList(),
@@ -1289,19 +1346,21 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage>
             setState(() => _selectedFormatOption = value);
             _updateSuggestedFileName();
           },
-          decoration: const InputDecoration(
-            labelText: '輸出格式',
-            border: OutlineInputBorder(),
+          decoration: InputDecoration(
+            labelText: context.l10n('converter.field.outputFormat'),
+            border: const OutlineInputBorder(),
           ),
         ),
         const SizedBox(height: 12),
         TextFormField(
           controller: _nameController,
           decoration: InputDecoration(
-            labelText: '輸出檔名',
+            labelText: context.l10n('converter.field.outputFileName'),
             border: const OutlineInputBorder(),
-            helperText:
-                '檔案將儲存到與原始檔案相同的資料夾（副檔名會使用 .${_selectedFormatOption.extension}）',
+            helperText: context.l10n(
+              'converter.hint.outputLocation',
+              params: {'extension': _selectedFormatOption.extension},
+            ),
           ),
         ),
       ],
@@ -1437,12 +1496,18 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage>
   ) async {
     final input = File(widget.sourcePath);
     if (!await input.exists()) {
-      throw Exception('找不到來源圖片');
+      throw Exception(
+        LanguageService.instance.translate(
+          'converter.error.missingSourceImage',
+        ),
+      );
     }
     final bytes = await input.readAsBytes();
     final decoded = img.decodeImage(bytes);
     if (decoded == null) {
-      throw Exception('無法解析來源圖片');
+      throw Exception(
+        LanguageService.instance.translate('converter.error.decodeImageFailed'),
+      );
     }
     final baked = img.bakeOrientation(decoded);
     List<int> data;
@@ -1490,7 +1555,11 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage>
         data = await doc.save();
         break;
       default:
-        throw Exception('不支援的輸出格式');
+        throw Exception(
+          LanguageService.instance.translate(
+            'converter.error.unsupportedOutputFormat',
+          ),
+        );
     }
     final outputFile = File(outputPath);
     await outputFile.writeAsBytes(data, flush: true);
@@ -1510,7 +1579,12 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage>
     messenger.showSnackBar(
       SnackBar(
         duration: const Duration(seconds: 1),
-        content: Text('匯出完成：${p.basename(outputPath)}'),
+        content: Text(
+          context.l10n(
+            'converter.dialog.exportCompleted',
+            params: {'file': p.basename(outputPath)},
+          ),
+        ),
       ),
     );
   }
@@ -1524,9 +1598,9 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage>
     if (widget.mediaType != 'image') {
       if (_durationSeconds <= 0) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            duration: Duration(seconds: 1),
-            content: Text('無法取得媒體長度'),
+          SnackBar(
+            duration: const Duration(seconds: 1),
+            content: Text(context.l10n('converter.error.noDuration')),
           ),
         );
         return;
@@ -1536,9 +1610,9 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage>
       clipDuration = end - start;
       if (clipDuration <= Duration.zero) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            duration: Duration(seconds: 1),
-            content: Text('請選擇有效的時間範圍'),
+          SnackBar(
+            duration: const Duration(seconds: 1),
+            content: Text(context.l10n('converter.error.invalidRange')),
           ),
         );
         return;
@@ -1598,7 +1672,12 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage>
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             duration: const Duration(seconds: 1),
-            content: Text('圖片轉檔失敗: $e'),
+            content: Text(
+              context.l10n(
+                'converter.error.imageConversionFailed',
+                params: {'error': '$e'},
+              ),
+            ),
           ),
         );
         try {
@@ -1646,9 +1725,11 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage>
             final messenger = ScaffoldMessenger.of(context);
             if (cancelled) {
               messenger.showSnackBar(
-                const SnackBar(
-                  duration: Duration(seconds: 1),
-                  content: Text('已取消匯出'),
+                SnackBar(
+                  duration: const Duration(seconds: 1),
+                  content: Text(
+                    context.l10n('converter.status.exportCancelled'),
+                  ),
                 ),
               );
               try {
@@ -1659,9 +1740,9 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage>
               } catch (_) {}
             } else {
               messenger.showSnackBar(
-                const SnackBar(
-                  duration: Duration(seconds: 1),
-                  content: Text('匯出失敗，請稍後再試'),
+                SnackBar(
+                  duration: const Duration(seconds: 1),
+                  content: Text(context.l10n('converter.error.exportFailed')),
                 ),
               );
               try {
@@ -1703,7 +1784,12 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage>
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             duration: const Duration(seconds: 1),
-            content: Text('啟動轉檔失敗: $e'),
+            content: Text(
+              context.l10n(
+                'converter.error.startExportFailed',
+                params: {'error': '$e'},
+              ),
+            ),
           ),
         );
       }
@@ -1721,26 +1807,38 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage>
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
+          SnackBar(
             duration: const Duration(seconds: 1),
-            content: Text('取消失敗，請稍後再試'),
+            content: Text(context.l10n('converter.error.cancelFailed')),
           ),
         );
       }
     }
   }
 
-  String _exportButtonLabel() {
+  String _exportButtonLabel(BuildContext context) {
     if (widget.mediaType == 'image') {
-      return '匯出轉檔圖片';
+      return context.l10n('converter.action.exportImage');
     }
-    return '匯出選取的${_selectedFormatOption.isVideo ? '視訊' : '音訊'}';
+    final typeKey =
+        _selectedFormatOption.isVideo
+            ? 'converter.mediaType.video'
+            : 'converter.mediaType.audio';
+    return context.l10n(
+      'converter.action.exportSelected',
+      params: {'type': context.l10n(typeKey)},
+    );
   }
 
   void _openOutputLocation(String path) {
     // Placeholder: on mobile we cannot directly open file explorer.
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(duration: Duration(seconds: 1), content: Text('已匯出到：$path')),
+      SnackBar(
+        duration: const Duration(seconds: 1),
+        content: Text(
+          context.l10n('converter.snack.exportSaved', params: {'path': path}),
+        ),
+      ),
     );
   }
 
@@ -1750,15 +1848,31 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage>
       if (mounted && result.type != ResultType.done) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            duration: Duration(seconds: 1),
-            content: Text('無法開啟檔案（${result.message}）'),
+            duration: const Duration(seconds: 1),
+            content: Text(
+              context.l10n(
+                'converter.error.openFileWithReason',
+                params: {
+                  'error':
+                      result.message ?? context.l10n('common.unknownError'),
+                },
+              ),
+            ),
           ),
         );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(duration: Duration(seconds: 1), content: Text('開啟檔案失敗：$e')),
+          SnackBar(
+            duration: const Duration(seconds: 1),
+            content: Text(
+              context.l10n(
+                'converter.error.openFileFailed',
+                params: {'error': '$e'},
+              ),
+            ),
+          ),
         );
       }
     }
