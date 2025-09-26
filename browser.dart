@@ -4951,6 +4951,9 @@ class _BrowserPageState extends State<BrowserPage>
     _ensureActiveTab();
     if (_tabs.isEmpty) return;
     final tab = _tabs[_currentTabIndex];
+    if (_blockExternalApp) {
+      _rememberTemporaryHostBypassFromUrl(dest);
+    }
     if (_looksLikeDirectDownloadUrl(dest)) {
       final handled = await _offerDownloadForDirectUrl(dest);
       if (handled) {

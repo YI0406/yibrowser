@@ -28,6 +28,7 @@ import receive_sharing_intent
       let messenger = registrar.messenger()
       PlayerEngine.shared.configureChannels(messenger: messenger)
       registrar.register(NativePlayerViewFactory(messenger: messenger), withId: "native-player-view")
+        registrar.register(AirPlayRoutePickerFactory(), withId: "airplay-route-picker")
     }
       SharedDownloadsManager.shared.syncHostMetadata()
 

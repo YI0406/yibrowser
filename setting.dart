@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:photo_manager/photo_manager.dart';
 import 'iap.dart';
 import 'app_localizations.dart';
+import 'notification_service.dart';
 
 /// SettingPage exposes preferences such as whether downloads are
 /// automatically saved to the photo album and provides a way to clear
@@ -519,6 +520,63 @@ class _SettingPageState extends State<SettingPage> {
                       }();
                     },
                   );
+                },
+              );
+            },
+          ),
+          ValueListenableBuilder<bool>(
+            valueListenable: repo.downloadNotificationsEnabled,
+            builder: (context, enabled, _) {
+              return SwitchListTile(
+                title: Text(
+                  context.l10n('settings.downloadNotifications.title'),
+                ),
+                subtitle: Text(
+                  context.l10n('settings.downloadNotifications.subtitle'),
+                ),
+                value: enabled,
+                onChanged: (value) {
+                  () async {
+                    if (value) {
+                      final granted =
+                          await NotificationService.instance
+                              .ensurePermissions();
+                      if (!granted) {
+                        repo.setDownloadNotificationsEnabled(false);
+                        if (!mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            duration: const Duration(seconds: 2),
+                            content: Text(
+                              context.l10n(
+                                'settings.downloadNotifications.permissionDenied',
+                              ),
+                            ),
+                            action: SnackBarAction(
+                              label: context.l10n('common.goToSettings'),
+                              onPressed: () {
+                                NotificationService.instance
+                                    .openNotificationSettings();
+                              },
+                            ),
+                          ),
+                        );
+                        return;
+                      }
+                    }
+                    repo.setDownloadNotificationsEnabled(value);
+                    if (!mounted) return;
+                    final snackKey =
+                        value
+                            ? 'settings.downloadNotifications.snack.enabled'
+                            : 'settings.downloadNotifications.snack.disabled';
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        duration: const Duration(seconds: 1),
+                        content: Text(context.l10n(snackKey)),
+                      ),
+                    );
+                  }();
                 },
               );
             },

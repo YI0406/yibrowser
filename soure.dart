@@ -21,6 +21,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'app_localizations.dart';
 import 'dart:math' as math;
+import 'package:crypto/crypto.dart';
 import 'package:video_player/video_player.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 import 'package:flutter_hls_parser/flutter_hls_parser.dart';
@@ -2870,7 +2871,10 @@ class AppRepo extends ChangeNotifier {
 
   /// Active FFmpeg session ids for HLS downloads (hls kind).
   final Map<DownloadTask, int> _ffmpegSessions = {};
-
+ /// Tracks the active output file path for HLS conversions. When a conversion
+  /// is resumed we write to a temporary chunk; this map lets progress probes
+  /// read the correct file instead of the final destination.
+  final Map<DownloadTask, String> _hlsActiveOutputs = {};
   /// Path to the JSON file used to persist app state (tasks, favourites, settings).
   late String _stateFilePath;
 
@@ -3395,7 +3399,158 @@ class AppRepo extends ChangeNotifier {
       return null;
     }
   }
+ String _hlsWorkspaceId(DownloadTask t) {
+    final input = utf8.encode('${t.url}|${t.savePath}');
+    return sha1.convert(input).toString();
+  }
 
+  Future<Directory> _ensureHlsWorkspace(DownloadTask t) async {
+    final docs = await getApplicationDocumentsDirectory();
+    final dir = Directory(p.join(docs.path, 'hls_resume', _hlsWorkspaceId(t)));
+    if (!await dir.exists()) {
+      await dir.create(recursive: true);
+    }
+    return dir;
+  }
+
+  File _hlsManifestFile(Directory dir) => File(p.join(dir.path, 'manifest.json'));
+
+  class _HlsResumeManifest {
+    _HlsResumeManifest({List<String>? parts, int? completedMs})
+        : parts = parts ?? <String>[],
+          completedMs = completedMs ?? 0;
+
+    final List<String> parts;
+    int completedMs;
+
+    Map<String, dynamic> toJson() => {
+          'version': 1,
+          'parts': parts,
+          'completedMs': completedMs,
+        };
+
+    static _HlsResumeManifest fromJson(Map<String, dynamic> json) {
+      final parts = (json['parts'] as List?)
+              ?.whereType<String>()
+              .toList(growable: true) ??
+          <String>[];
+      final completed = json['completedMs'] as int? ?? 0;
+      return _HlsResumeManifest(parts: parts, completedMs: completed);
+    }
+  }
+
+  Future<_HlsResumeManifest> _loadHlsManifest(DownloadTask t) async {
+    try {
+      final dir = await _ensureHlsWorkspace(t);
+      final file = _hlsManifestFile(dir);
+      if (!await file.exists()) {
+        return _HlsResumeManifest();
+      }
+      final raw = await file.readAsString();
+      if (raw.trim().isEmpty) return _HlsResumeManifest();
+      final data = jsonDecode(raw);
+      if (data is Map<String, dynamic>) {
+        return _HlsResumeManifest.fromJson(data);
+      }
+      return _HlsResumeManifest();
+    } catch (_) {
+      return _HlsResumeManifest();
+    }
+  }
+
+  Future<void> _saveHlsManifest(
+    DownloadTask t,
+    _HlsResumeManifest manifest,
+  ) async {
+    try {
+      final dir = await _ensureHlsWorkspace(t);
+      final file = _hlsManifestFile(dir);
+      await file.writeAsString(jsonEncode(manifest.toJson()), flush: true);
+    } catch (_) {}
+  }
+
+  Future<void> _clearHlsManifest(DownloadTask t) async {
+    try {
+      final dir = await _ensureHlsWorkspace(t);
+      final file = _hlsManifestFile(dir);
+      if (await file.exists()) {
+        await file.delete();
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _cleanupHlsWorkspace(DownloadTask t) async {
+    try {
+      final dir = await _ensureHlsWorkspace(t);
+      if (await dir.exists()) {
+        await dir.delete(recursive: true);
+      }
+    } catch (_) {}
+  }
+
+  Future<bool> _finalizeHlsParts(
+    DownloadTask t,
+    _HlsResumeManifest manifest,
+    String currentPartName,
+  ) async {
+    try {
+      final dir = await _ensureHlsWorkspace(t);
+      final seen = <String>{};
+      final ordered = <String>[];
+      for (final name in [...manifest.parts, currentPartName]) {
+        if (name.isEmpty || seen.contains(name)) continue;
+        final file = File(p.join(dir.path, name));
+        if (await file.exists()) {
+          seen.add(name);
+          ordered.add(name);
+        }
+      }
+      if (ordered.isEmpty) {
+        return false;
+      }
+      if (ordered.length == 1) {
+        final single = File(p.join(dir.path, ordered.first));
+        final dest = File(t.savePath);
+        try {
+          if (await dest.exists()) {
+            await dest.delete();
+          }
+        } catch (_) {}
+        await single.rename(dest.path);
+        await _clearHlsManifest(t);
+        await _cleanupHlsWorkspace(t);
+        return true;
+      }
+      final listFile = File(p.join(dir.path, 'concat.txt'));
+      final sb = StringBuffer();
+      for (final name in ordered) {
+        final path = p.join(dir.path, name);
+        sb.writeln("file '${path.replaceAll("'", "\\'")}'");
+      }
+      await listFile.writeAsString(sb.toString(), flush: true);
+      final cmd =
+          "-y -f concat -safe 0 -i '${listFile.path}' -c copy -movflags +faststart -bsf:a aac_adtstoasc '${t.savePath}'";
+      final session = await FFmpegKit.execute(cmd);
+      final rc = await session.getReturnCode();
+      if (rc != null && rc.isValueSuccess()) {
+        for (final name in ordered) {
+          try {
+            final f = File(p.join(dir.path, name));
+            if (await f.exists()) {
+              await f.delete();
+            }
+          } catch (_) {}
+        }
+        try {
+          if (await listFile.exists()) await listFile.delete();
+        } catch (_) {}
+        await _clearHlsManifest(t);
+        await _cleanupHlsWorkspace(t);
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  }
   Future<void> _runTaskHls(DownloadTask t) async {
     try {
       // Detect suspicious .jpeg segments and pre-sanitize if needed
@@ -3478,18 +3633,72 @@ class AppRepo extends ChangeNotifier {
       final headerArg =
           headerLines.isNotEmpty ? "-headers '${headerLines}\\r\\n'" : '';
       final uaArg = ua.isNotEmpty ? "-user_agent '${ua}'" : '';
+       final manifest = await _loadHlsManifest(t);
+      int resumeMs = manifest.completedMs;
+      if (t.total != null && t.total! > 0) {
+        resumeMs = resumeMs.clamp(0, t.total!) as int;
+      } else {
+        resumeMs = math.max(0, resumeMs);
+      }
+      if (resumeMs > 0) {
+        t.progressUnit ??= 'time-ms';
+        if (resumeMs > t.received) {
+          t.received = resumeMs;
+          _notifyDownloadsUpdated();
+        }
+      }
+      final workspace = await _ensureHlsWorkspace(t);
+      final partIndex = manifest.parts.length;
+      final partName = 'part_${partIndex.toString().padLeft(2, '0')}';
+      final outputPath = p.join(workspace.path, '$partName.mp4');
+      try {
+        final existing = File(outputPath);
+        if (await existing.exists()) {
+          await existing.delete();
+        }
+      } catch (_) {}
+      _hlsActiveOutputs[t] = outputPath;
+      Future<void> recordPartial() async {
+        final file = File(outputPath);
+        if (!await file.exists()) {
+          return;
+        }
+        if (!manifest.parts.contains('$partName.mp4')) {
+          manifest.parts.add('$partName.mp4');
+        }
+        manifest.completedMs = math.max(manifest.completedMs, t.received);
+        await _saveHlsManifest(t, manifest);
+      }
+
+      final seekPrefix = resumeMs > 0
+          ? "-ss ${(resumeMs / 1000.0).toStringAsFixed(3)} "
+          : '';
       final cmd =
           "-y -loglevel info -reconnect 1 -reconnect_streamed 1 -reconnect_on_network_error 1 -http_persistent 1 "
           "-protocol_whitelist file,http,https,tcp,tls,crypto "
           "-allowed_extensions ALL "
           "-rw_timeout 15000000 -timeout 15000000 -analyzeduration 0 -probesize 500000 "
-          "$uaArg $headerArg -i '${inputUrl}' -map 0:v:0? -map 0:a:0? -c copy -movflags +faststart -bsf:a aac_adtstoasc '${t.savePath}'";
+           "$seekPrefix$uaArg $headerArg -i '${inputUrl}' -map 0:v:0? -map 0:a:0? -c copy -movflags +faststart -bsf:a aac_adtstoasc '${outputPath}'";
       final session = await FFmpegKit.executeAsync(
         cmd,
         (session) async {
           final rc = await session.getReturnCode();
+            _hlsActiveOutputs.remove(t);
           _ffmpegSessions.remove(t);
           if (rc != null && rc.isValueSuccess()) {
+             if (!manifest.parts.contains('$partName.mp4')) {
+              manifest.parts.add('$partName.mp4');
+            }
+            manifest.completedMs = t.total ?? math.max(manifest.completedMs, resumeMs);
+            await _saveHlsManifest(t, manifest);
+            final assembled = await _finalizeHlsParts(t, manifest, '$partName.mp4');
+            if (!assembled) {
+              t.state = 'error';
+              _notifyDownloadsUpdated();
+              notifyListeners();
+              await _saveState();
+              return;
+            }
             t.state = 'done';
             try {
               final output = File(t.savePath);
@@ -3504,7 +3713,7 @@ class AppRepo extends ChangeNotifier {
             t.progressUnit = null;
             _lastHlsSize.remove(t);
             _normalizeTaskType(t);
-            // propagate update to downloads list
+          
             _notifyDownloadsUpdated();
             notifyListeners();
             await _generatePreview(t);
@@ -3523,8 +3732,9 @@ class AppRepo extends ChangeNotifier {
               }
             }
           } else {
-            // if user paused, state will have been set to paused already.
-            if (t.state != 'paused') {
+          if (t.state == 'paused') {
+              await recordPartial();
+            } else {
               t.state = 'error';
               _notifyDownloadsUpdated();
               notifyListeners();
@@ -3534,7 +3744,7 @@ class AppRepo extends ChangeNotifier {
                   parameters: {'kind': 'hls'},
                 );
               } catch (_) {}
-              // One-shot fallback retry via sanitize if remote playlist used and not already local
+            
               if (!t.url.startsWith('file:') &&
                   !t.url.startsWith('/') &&
                   !t.url.contains('/hls_sanitize_')) {
@@ -3544,7 +3754,8 @@ class AppRepo extends ChangeNotifier {
                     progressTask: t,
                   );
                   if (local != null) {
-                    // Re-run FFmpeg on the sanitized local playlist
+                    await _clearHlsManifest(t);
+                    await _cleanupHlsWorkspace(t);
                     final h2 = await _headersFor(t.url);
                     final ua2 = (h2['User-Agent'] ?? '').replaceAll("'", "\'");
                     final ref2 = (h2['Referer'] ?? '').replaceAll("'", "\'");
@@ -3602,34 +3813,26 @@ class AppRepo extends ChangeNotifier {
         },
         (log) {},
         (stat) async {
-          // During HLS conversion, refresh the UI based on the output file size.
-          // FFmpeg statistics callbacks occur frequently. To provide a responsive
-          // progress indicator in the UI, trigger a notifier update whenever the
-          // output file grows by at least 16 KB. We do not mutate t.received here
-          // because it represents the segment count for HLS tasks; instead we
-          // store the last known file size in [_lastHlsSize].
+          final activePath = _hlsActiveOutputs[t] ?? t.savePath;
           try {
-            final f = File(t.savePath);
+          final f = File(activePath);
             if (await f.exists()) {
               final len = await f.length();
               final last = _lastHlsSize[t] ?? 0;
-              // Throttle notifications to when the file has grown noticeably.
+             
               if (len >= last + (16 * 1024)) {
                 _lastHlsSize[t] = len;
                 _notifyDownloadsUpdated();
                 notifyListeners();
               }
             }
-          } catch (_) {
-            // Ignore probing errors
-          }
-          // Update time-based progress if available
+         } catch (_) {}
           try {
             final ms = stat.getTime();
             if (ms != null &&
                 (t.progressUnit == 'time-ms') &&
                 (t.total ?? 0) > 0) {
-              final newMs = ms.clamp(0, t.total!);
+             final newMs = (resumeMs + ms).clamp(0, t.total!);
               if (newMs > t.received) {
                 t.received = newMs;
                 _notifyDownloadsUpdated();

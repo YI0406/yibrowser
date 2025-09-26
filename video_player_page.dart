@@ -706,6 +706,8 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                                 ),
                               ),
                             ),
+                            const AirPlayRouteButton(),
+                            const SizedBox(width: 4),
                             IconButton(
                               icon: const Icon(
                                 Icons.picture_in_picture_alt,

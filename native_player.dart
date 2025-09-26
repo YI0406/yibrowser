@@ -32,6 +32,39 @@ class NativeVideoSurface extends StatelessWidget {
   }
 }
 
+/// Embedded AirPlay route picker button for iOS.
+class AirPlayRouteButton extends StatelessWidget {
+  const AirPlayRouteButton({
+    super.key,
+    this.tintColor = const Color(0xFFFFFFFF),
+    this.activeTintColor = const Color(0xFF40C4FF),
+  });
+
+  final Color tintColor;
+  final Color activeTintColor;
+
+  @override
+  Widget build(BuildContext context) {
+    if (defaultTargetPlatform != TargetPlatform.iOS) {
+      return const SizedBox.shrink();
+    }
+    return SizedBox(
+      width: 44,
+      height: 44,
+      child: UiKitView(
+        viewType: 'airplay-route-picker',
+        layoutDirection: TextDirection.ltr,
+        creationParams: <String, dynamic>{
+          'tintColor': tintColor.value,
+          'activeTintColor': activeTintColor.value,
+        },
+        creationParamsCodec: const StandardMessageCodec(),
+        hitTestBehavior: PlatformViewHitTestBehavior.transparent,
+      ),
+    );
+  }
+}
+
 /// Immutable snapshot of the native player state exposed to Flutter widgets.
 @immutable
 class NativePlayerValue {
