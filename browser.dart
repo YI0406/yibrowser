@@ -6294,216 +6294,98 @@ class _BrowserPageState extends State<BrowserPage>
       } catch (_) {}
     }
 
-    // Build the subtitle lines dynamically. Use a list to collect lines and
-    // later spread them into the Column.
-    final List<Widget> subtitleWidgets = [];
-    bool _addedSize = false;
-    // First line: the URL (truncated)
-    subtitleWidgets.add(
-      Text(
-        t.url,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: const TextStyle(fontSize: 12, color: Colors.grey),
-      ),
-    );
-    // Second line: status (show '轉換中' during conversion)
-    final String statusText =
-        isConverting
-            ? context.l10n('browser.download.status.converting')
-            : t.state;
-    subtitleWidgets.add(
-      Text(
-        context.l10n(
-          'browser.download.statusLabel',
-          params: {'status': statusText},
+    List<Widget> buildSubtitleWidgets() {
+      // Build the subtitle lines dynamically. Use a list to collect lines and
+      // later spread them into the Column.
+      final List<Widget> subtitleWidgets = [];
+      bool addedSize = false;
+
+      // First line: the URL (truncated)
+      subtitleWidgets.add(
+        Text(
+          t.url,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontSize: 12, color: Colors.grey),
         ),
-        style: const TextStyle(fontSize: 12),
-      ),
-    );
-    // For non-HLS tasks, display the timestamp when the download was added. HLS
-    // tasks omit this to reduce clutter.
-    if (!isHls) {
+      );
+      // Second line: status (show '轉換中' during conversion)
+      final String statusText =
+          isConverting
+              ? context.l10n('browser.download.status.converting')
+              : t.state;
       subtitleWidgets.add(
         Text(
           context.l10n(
-            'browser.download.timeLabel',
-            params: {'time': t.timestamp.toLocal().toString().split('.').first},
+            'browser.download.statusLabel',
+            params: {'status': statusText},
           ),
           style: const TextStyle(fontSize: 12),
         ),
       );
-    }
-    // If downloading HLS segments, show the segment count and progress.
-    if (isDownloadingSegments) {
-      subtitleWidgets.add(
-        Text(
-          context.l10n(
-            'browser.download.segmentLabel',
-            params: {'progress': '${t.received}/${t.total}'},
-          ),
-          style: const TextStyle(fontSize: 12),
-        ),
-      );
-      final int totalSegs = t.total ?? 0;
-      if (totalSegs > 0) {
-        final double pct = t.received / totalSegs * 100.0;
+      // For non-HLS tasks, display the timestamp when the download was added. HLS
+      // tasks omit this to reduce clutter.
+      if (!isHls) {
         subtitleWidgets.add(
           Text(
             context.l10n(
-              'browser.download.progressLabel',
+              'browser.download.timeLabel',
               params: {
-                'progress':
-                    '${t.received}/${t.total} (${pct.toStringAsFixed(1)}%)',
+                'time': t.timestamp.toLocal().toString().split('.').first,
               },
             ),
             style: const TextStyle(fontSize: 12),
           ),
         );
       }
-      // 以「片段/秒」顯示近似速度（HLS 片段階段無可靠 byte 計數）
-      final segKey = '${t.savePath}|seg';
-      final segRate = _computeSpeed(
-        segKey,
-        t.received,
-      ); // delta segments per second
-      if (segRate != null) {
+      // If downloading HLS segments, show the segment count and progress.
+      if (isDownloadingSegments) {
         subtitleWidgets.add(
           Text(
             context.l10n(
-              'browser.download.speedLabel',
-              params: {
-                'speed':
-                    '${segRate.toStringAsFixed(2)} ${context.l10n('browser.download.segmentsPerSecond')}',
-              },
+              'browser.download.segmentLabel',
+              params: {'progress': '${t.received}/${t.total}'},
             ),
             style: const TextStyle(fontSize: 12),
           ),
         );
-      } else {
-        _rateSnaps[segKey] = _snapNow(t.received);
-        subtitleWidgets.add(
-          Text(
-            context.l10n('browser.download.speedMeasuring'),
-            style: const TextStyle(fontSize: 12),
-          ),
-        );
-      }
-    } else if (isHls &&
-        t.progressUnit == 'time-ms' &&
-        t.total != null &&
-        t.total! > 0) {
-      final cur = Duration(milliseconds: t.received);
-      final tot = Duration(milliseconds: t.total!);
-      subtitleWidgets.add(
-        Text(
-          context.l10n(
-            'browser.download.progressLabel',
-            params: {
-              'progress':
-                  '${_fmtDur(cur.inSeconds.toDouble())}/${_fmtDur(tot.inSeconds.toDouble())} (${((progressPercent ?? 0) * 100).toStringAsFixed(1)}%)',
-            },
-          ),
-          style: const TextStyle(fontSize: 12),
-        ),
-      );
-      // 顯示目前檔案大小（可選）
-      try {
-        final f = File(t.savePath);
-        if (f.existsSync() && !_addedSize) {
-          subtitleWidgets.add(
-            Text(
-              context.l10n(
-                'browser.download.sizeLabel',
-                params: {'size': _fmtSize(f.lengthSync())},
-              ),
-              style: const TextStyle(fontSize: 12),
-            ),
-          );
-          _addedSize = true;
-        }
-      } catch (_) {}
-    }
-    // During conversion of an HLS task, show the current output file size to
-    // provide some sense of progress. Since FFmpeg does not expose a
-    // percentage, we rely on the file growing over time.
-    if (isConverting) {
-      try {
-        final f = File(t.savePath);
-        if (f.existsSync() && !_addedSize) {
-          subtitleWidgets.add(
-            Text(
-              context.l10n(
-                'browser.download.sizeLabel',
-                params: {'size': _fmtSize(f.lengthSync())},
-              ),
-              style: const TextStyle(fontSize: 12),
-            ),
-          );
-          _addedSize = true;
-        } else if (!f.existsSync()) {
-          subtitleWidgets.add(
-            Text(
-              context.l10n('browser.download.sizeConverting'),
-              style: const TextStyle(fontSize: 12),
-            ),
-          );
-        }
-      } catch (_) {
-        subtitleWidgets.add(
-          Text(
-            context.l10n('browser.download.sizeConverting'),
-            style: const TextStyle(fontSize: 12),
-          ),
-        );
-      }
-    }
-    // For non-HLS downloads: show the downloaded size while downloading and the
-    // final size when finished or errored.
-    if (!isHls) {
-      if (t.state == 'downloading') {
-        final hasTotal = t.total != null && t.total! > 0;
-        final sizeValue =
-            hasTotal
-                ? '${_fmtSize(t.received)} / ${_fmtSize(t.total!)}'
-                : _fmtSize(t.received);
-        subtitleWidgets.add(
-          Text(
-            context.l10n(
-              'browser.download.sizeLabel',
-              params: {'size': sizeValue},
-            ),
-            style: const TextStyle(fontSize: 12),
-          ),
-        );
-        if (progressPercent != null) {
+        final int totalSegs = t.total ?? 0;
+        if (totalSegs > 0) {
+          final double pct = t.received / totalSegs * 100.0;
           subtitleWidgets.add(
             Text(
               context.l10n(
                 'browser.download.progressLabel',
                 params: {
-                  'progress': '${(progressPercent * 100).toStringAsFixed(1)}%',
+                  'progress':
+                      '${t.received}/${t.total} (${pct.toStringAsFixed(1)}%)',
                 },
               ),
               style: const TextStyle(fontSize: 12),
             ),
           );
         }
-        // 顯示直接下載檔案的即時速度（非 HLS）
-        final keyDirect = '${t.savePath}|bytes';
-        final spDirect = _computeSpeed(keyDirect, t.received);
-        if (spDirect != null) {
+        // 以「片段/秒」顯示近似速度（HLS 片段階段無可靠 byte 計數）
+        final segKey = '${t.savePath}|seg';
+        final segRate = _computeSpeed(
+          segKey,
+          t.received,
+        ); // delta segments per second
+        if (segRate != null) {
           subtitleWidgets.add(
             Text(
               context.l10n(
                 'browser.download.speedLabel',
-                params: {'speed': _fmtSpeed(spDirect)},
+                params: {
+                  'speed':
+                      '${segRate.toStringAsFixed(2)} ${context.l10n('browser.download.segmentsPerSecond')}',
+                },
               ),
               style: const TextStyle(fontSize: 12),
             ),
           );
         } else {
-          _rateSnaps[keyDirect] = _snapNow(t.received);
+          _rateSnaps[segKey] = _snapNow(t.received);
           subtitleWidgets.add(
             Text(
               context.l10n('browser.download.speedMeasuring'),
@@ -6511,10 +6393,28 @@ class _BrowserPageState extends State<BrowserPage>
             ),
           );
         }
-      } else if (t.state == 'done' || t.state == 'error') {
+      } else if (isHls &&
+          t.progressUnit == 'time-ms' &&
+          t.total != null &&
+          t.total! > 0) {
+        final cur = Duration(milliseconds: t.received);
+        final tot = Duration(milliseconds: t.total!);
+        subtitleWidgets.add(
+          Text(
+            context.l10n(
+              'browser.download.progressLabel',
+              params: {
+                'progress':
+                    '${_fmtDur(cur.inSeconds.toDouble())}/${_fmtDur(tot.inSeconds.toDouble())} (${((progressPercent ?? 0) * 100).toStringAsFixed(1)}%)',
+              },
+            ),
+            style: const TextStyle(fontSize: 12),
+          ),
+        );
+        // 顯示目前檔案大小（可選）
         try {
           final f = File(t.savePath);
-          if (f.existsSync() && !_addedSize) {
+          if (f.existsSync() && !addedSize) {
             subtitleWidgets.add(
               Text(
                 context.l10n(
@@ -6524,98 +6424,205 @@ class _BrowserPageState extends State<BrowserPage>
                 style: const TextStyle(fontSize: 12),
               ),
             );
-            _addedSize = true;
+            addedSize = true;
           }
         } catch (_) {}
       }
-    } else if (isHls && t.state == 'done') {
-      // HLS tasks that have completed conversion: show final size.
-      try {
-        final f = File(t.savePath);
-        if (f.existsSync() && !_addedSize) {
+      // During conversion of an HLS task, show the current output file size to
+      // provide some sense of progress. Since FFmpeg does not expose a
+      // percentage, we rely on the file growing over time.
+      if (isConverting) {
+        try {
+          final f = File(t.savePath);
+          if (f.existsSync() && !addedSize) {
+            subtitleWidgets.add(
+              Text(
+                context.l10n(
+                  'browser.download.sizeLabel',
+                  params: {'size': _fmtSize(f.lengthSync())},
+                ),
+                style: const TextStyle(fontSize: 12),
+              ),
+            );
+            addedSize = true;
+          } else if (!f.existsSync()) {
+            subtitleWidgets.add(
+              Text(
+                context.l10n('browser.download.sizeConverting'),
+                style: const TextStyle(fontSize: 12),
+              ),
+            );
+          }
+        } catch (_) {
+          subtitleWidgets.add(
+            Text(
+              context.l10n('browser.download.sizeConverting'),
+              style: const TextStyle(fontSize: 12),
+            ),
+          );
+        }
+      }
+      // For non-HLS downloads: show the downloaded size while downloading and the
+      // final size when finished or errored.
+      if (!isHls) {
+        if (t.state == 'downloading') {
+          final hasTotal = t.total != null && t.total! > 0;
+          final sizeValue =
+              hasTotal
+                  ? '${_fmtSize(t.received)} / ${_fmtSize(t.total!)}'
+                  : _fmtSize(t.received);
           subtitleWidgets.add(
             Text(
               context.l10n(
                 'browser.download.sizeLabel',
-                params: {'size': _fmtSize(f.lengthSync())},
+                params: {'size': sizeValue},
               ),
               style: const TextStyle(fontSize: 12),
             ),
           );
-          _addedSize = true;
+          if (progressPercent != null) {
+            subtitleWidgets.add(
+              Text(
+                context.l10n(
+                  'browser.download.progressLabel',
+                  params: {
+                    'progress':
+                        '${(progressPercent * 100).toStringAsFixed(1)}%',
+                  },
+                ),
+                style: const TextStyle(fontSize: 12),
+              ),
+            );
+          }
+          // 顯示直接下載檔案的即時速度（非 HLS）
+          final keyDirect = '${t.savePath}|bytes';
+          final spDirect = _computeSpeed(keyDirect, t.received);
+          if (spDirect != null) {
+            subtitleWidgets.add(
+              Text(
+                context.l10n(
+                  'browser.download.speedLabel',
+                  params: {'speed': _fmtSpeed(spDirect)},
+                ),
+                style: const TextStyle(fontSize: 12),
+              ),
+            );
+          } else {
+            _rateSnaps[keyDirect] = _snapNow(t.received);
+            subtitleWidgets.add(
+              Text(
+                context.l10n('browser.download.speedMeasuring'),
+                style: const TextStyle(fontSize: 12),
+              ),
+            );
+          }
+        } else if (t.state == 'done' || t.state == 'error') {
+          try {
+            final f = File(t.savePath);
+            if (f.existsSync() && !addedSize) {
+              subtitleWidgets.add(
+                Text(
+                  context.l10n(
+                    'browser.download.sizeLabel',
+                    params: {'size': _fmtSize(f.lengthSync())},
+                  ),
+                  style: const TextStyle(fontSize: 12),
+                ),
+              );
+              addedSize = true;
+            }
+          } catch (_) {}
         }
-      } catch (_) {}
-    }
+      } else if (isHls && t.state == 'done') {
+        // HLS tasks that have completed conversion: show final size.
+        try {
+          final f = File(t.savePath);
+          if (f.existsSync() && !addedSize) {
+            subtitleWidgets.add(
+              Text(
+                context.l10n(
+                  'browser.download.sizeLabel',
+                  params: {'size': _fmtSize(f.lengthSync())},
+                ),
+                style: const TextStyle(fontSize: 12),
+              ),
+            );
+            addedSize = true;
+          }
+        } catch (_) {}
+      }
+      // 任何 downloading 狀態下的通用「目前檔案大小」顯示（若前面尚未加入大小）
+      if (t.state == 'downloading' && !addedSize) {
+        try {
+          final f = File(t.savePath);
+          if (f.existsSync()) {
+            subtitleWidgets.add(
+              Text(
+                context.l10n(
+                  'browser.download.sizeLabel',
+                  params: {'size': _fmtSize(f.lengthSync())},
+                ),
+                style: const TextStyle(fontSize: 12),
+              ),
+            );
+            addedSize = true;
+          }
+        } catch (_) {}
+      }
+      // 顯示即時下載/轉換速度
+      if (speedBytesNow != null) {
+        final key = '${t.savePath}|$speedKeyPhase';
+        final sp = _computeSpeed(key, speedBytesNow!);
+        if (sp != null) {
+          subtitleWidgets.add(
+            Text(
+              context.l10n(
+                'browser.download.speedLabel',
+                params: {'speed': _fmtSpeed(sp)},
+              ),
+              style: const TextStyle(fontSize: 12),
+            ),
+          );
+        } else {
+          // 首次建立快照時先不顯示數值（避免顯示 0）
+          _rateSnaps[key] = _snapNow(speedBytesNow!);
+          subtitleWidgets.add(
+            Text(
+              context.l10n('browser.download.speedMeasuring'),
+              style: const TextStyle(fontSize: 12),
+            ),
+          );
+        }
+      }
 
-    // 任何 downloading 狀態下的通用「目前檔案大小」顯示（若前面尚未加入大小）
-    if (t.state == 'downloading' && !_addedSize) {
-      try {
-        final f = File(t.savePath);
-        if (f.existsSync()) {
-          subtitleWidgets.add(
-            Text(
-              context.l10n(
-                'browser.download.sizeLabel',
-                params: {'size': _fmtSize(f.lengthSync())},
-              ),
-              style: const TextStyle(fontSize: 12),
-            ),
-          );
-          _addedSize = true;
-        }
-      } catch (_) {}
-    }
-    // 顯示即時下載/轉換速度
-    if (speedBytesNow != null) {
-      final key = '${t.savePath}|$speedKeyPhase';
-      final sp = _computeSpeed(key, speedBytesNow!);
-      if (sp != null) {
+      // Append duration information when available. If unavailable and the
+      // media is audio/video, show a placeholder.
+      if (t.duration != null) {
         subtitleWidgets.add(
           Text(
             context.l10n(
-              'browser.download.speedLabel',
-              params: {'speed': _fmtSpeed(sp)},
+              'browser.media.durationLabel',
+              params: {'duration': _fmtDur(t.duration!.inSeconds.toDouble())},
             ),
             style: const TextStyle(fontSize: 12),
           ),
         );
-      } else {
-        // 首次建立快照時先不顯示數值（避免顯示 0）
-        _rateSnaps[key] = _snapNow(speedBytesNow!);
+      } else if (resolvedType == 'video' || resolvedType == 'audio') {
         subtitleWidgets.add(
           Text(
-            context.l10n('browser.download.speedMeasuring'),
+            context.l10n('browser.media.durationResolving'),
             style: const TextStyle(fontSize: 12),
           ),
         );
       }
-    }
-
-    // Append duration information when available. If unavailable and the
-    // media is audio/video, show a placeholder.
-    if (t.duration != null) {
-      subtitleWidgets.add(
-        Text(
-          context.l10n(
-            'browser.media.durationLabel',
-            params: {'duration': _fmtDur(t.duration!.inSeconds.toDouble())},
-          ),
-          style: const TextStyle(fontSize: 12),
-        ),
-      );
-    } else if (resolvedType == 'video' || resolvedType == 'audio') {
-      subtitleWidgets.add(
-        Text(
-          context.l10n('browser.media.durationResolving'),
-          style: const TextStyle(fontSize: 12),
-        ),
-      );
+      return subtitleWidgets;
     }
 
     // 對於 HLS 轉換中或下載中，使用小型 ticker 讓速度/大小文字即時刷新
     final needsTicker = isConverting || t.state == 'downloading';
 
     Widget buildTile() {
+      final subtitleWidgets = buildSubtitleWidgets();
       // Build and return the ListTile. Action buttons for pause/resume/delete
       // remain unchanged. Progress indicators adapt based on the computed
       // progressPercent.
