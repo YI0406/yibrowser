@@ -27,7 +27,9 @@ class NativeVideoSurface extends StatelessWidget {
       layoutDirection: TextDirection.ltr,
       creationParams: null,
       creationParamsCodec: StandardMessageCodec(),
-      gestureRecognizers: <Factory<OneSequenceGestureRecognizer>>{},
+      gestureRecognizers: <Factory<OneSequenceGestureRecognizer>>{
+        Factory<OneSequenceGestureRecognizer>(() => EagerGestureRecognizer()),
+      },
       hitTestBehavior: PlatformViewHitTestBehavior.opaque,
     );
   }
@@ -63,7 +65,7 @@ class AirPlayRouteButton extends StatelessWidget {
               'activeTintColor': activeTintColor.value,
             },
             creationParamsCodec: const StandardMessageCodec(),
-            hitTestBehavior: PlatformViewHitTestBehavior.transparent,
+            hitTestBehavior: PlatformViewHitTestBehavior.opaque,
           ),
         ],
       ),

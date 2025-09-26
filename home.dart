@@ -1,9 +1,12 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'soure.dart';
 import 'package:flutter/services.dart';
 import 'dart:math' as math;
 import 'dart:async';
 import 'iap.dart';
+import 'soure.dart';
 import 'app_localizations.dart';
 
 /// HomePage displays a grid of shortcuts. Each shortcut shows its favicon,
@@ -164,6 +167,9 @@ class _HomePageState extends State<HomePage>
       begin: -2.0,
       end: 2.0,
     ).animate(_jitterController!);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(AppRepo.I.refreshMissingHomeIcons());
+    });
   }
 
   /// Shows a context menu near the long‑pressed tile allowing the user to
@@ -594,15 +600,30 @@ class _HomePageState extends State<HomePage>
     }
 
     Widget iconChild;
-    if (host.isNotEmpty && faviconDirect != null) {
-      iconChild = buildNetworkIcon(
-        faviconDirect!,
-        faviconS2 != null
-            ? buildNetworkIcon(faviconS2!, buildFallbackIcon())
-            : buildFallbackIcon(),
-      );
-    } else {
-      iconChild = buildFallbackIcon();
+    final iconPath = item.iconPath;
+    var hasLocalIcon = false;
+    if (iconPath != null && iconPath.isNotEmpty) {
+      final file = File(iconPath);
+      if (file.existsSync()) {
+        iconChild = Image.file(
+          file,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => buildFallbackIcon(),
+        );
+        hasLocalIcon = true;
+      }
+    }
+    if (!hasLocalIcon) {
+      if (host.isNotEmpty && faviconDirect != null) {
+        iconChild = buildNetworkIcon(
+          faviconDirect!,
+          faviconS2 != null
+              ? buildNetworkIcon(faviconS2!, buildFallbackIcon())
+              : buildFallbackIcon(),
+        );
+      } else {
+        iconChild = buildFallbackIcon();
+      }
     }
 
     final iconBackground =

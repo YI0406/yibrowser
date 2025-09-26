@@ -6251,7 +6251,9 @@ class _BrowserPageState extends State<BrowserPage>
         isHls &&
         t.state == 'downloading' &&
         (t.total != null && t.received < t.total!);
-    final resolvedType = AppRepo.I.resolvedTaskType(t);
+    final repo = AppRepo.I;
+    final resolvedType = repo.resolvedTaskType(t);
+    final activeHlsPath = repo.activeHlsOutputFor(t) ?? t.savePath;
 
     // --- Speed calculation setup ---
 
@@ -6289,7 +6291,7 @@ class _BrowserPageState extends State<BrowserPage>
       speedKeyPhase = 'dl';
     } else if (isConverting) {
       try {
-        final f = File(t.savePath);
+        final f = File(activeHlsPath);
         if (f.existsSync()) {
           speedBytesNow = f.lengthSync();
           speedKeyPhase = 'conv';
@@ -6557,7 +6559,7 @@ class _BrowserPageState extends State<BrowserPage>
       // 任何 downloading 狀態下的通用「目前檔案大小」顯示（若前面尚未加入大小）
       if (t.state == 'downloading' && !addedSize) {
         try {
-          final f = File(t.savePath);
+          final f = File(activeHlsPath);
           if (f.existsSync()) {
             subtitleWidgets.add(
               Text(

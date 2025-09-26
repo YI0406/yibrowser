@@ -333,12 +333,9 @@ class MiniPlayerData {
 }
 
 /// A home shortcut item representing a bookmarked page on the custom home
-/// screen. Each item stores the URL of the page and a user friendly name.
-/// Icons are not persisted on disk; instead, the UI derives the favicon
-/// directly from the page domain using an external service. Persisting
-/// only the URL and name keeps the saved state small and avoids binary
-/// blobs in the JSON file. You may modify the name and URL via the
-/// appropriate methods on [AppRepo].
+/// screen. Each item stores the URL of the page, a user friendly name and a
+/// cached favicon path so icons remain available offline. Favicons are
+/// downloaded lazily and refreshed as needed by [AppRepo].
 class HomeItem {
   /// The destination URL that will be loaded when this item is tapped.
   String url;
@@ -347,12 +344,17 @@ class HomeItem {
   /// of [url] will be used as a fallback in the UI.
   String name;
 
-  HomeItem({required this.url, required this.name});
+  /// Local path to the cached favicon for this shortcut. May be null if the
+  /// icon has not been downloaded yet or failed to download.
+  String? iconPath;
+
+  HomeItem({required this.url, required this.name, this.iconPath});
 
   factory HomeItem.fromJson(Map<String, dynamic> json) {
     return HomeItem(
       url: json['url'] as String? ?? '',
       name: json['name'] as String? ?? '',
+      iconPath: json['iconPath'] as String?,
     );
   }
 
@@ -1356,8 +1358,22 @@ class AppRepo extends ChangeNotifier {
                 (e) => HomeItem.fromJson(Map<String, dynamic>.from(e as Map)),
               )
               .toList();
+      var needsHomeSave = false;
+      for (final item in homes) {
+        final path = item.iconPath;
+        if (path != null && path.isNotEmpty) {
+          final file = File(path);
+          if (!file.existsSync()) {
+            item.iconPath = null;
+            needsHomeSave = true;
+          }
+        }
+      }
       homeItems.value = homes;
-
+      if (needsHomeSave) {
+        unawaited(_saveState());
+      }
+      unawaited(refreshMissingHomeIcons());
       // Restore open browser tabs (with full history when available).
       final List<dynamic> sessionRaw =
           data['openTabsV2'] as List<dynamic>? ?? const [];
@@ -2706,6 +2722,138 @@ class AppRepo extends ChangeNotifier {
     return trimmed;
   }
 
+  Future<Directory> _ensureHomeIconDirectory() async {
+    if (_homeIconDirectory != null) {
+      return _homeIconDirectory!;
+    }
+    final docs = await getApplicationDocumentsDirectory();
+    final dir = Directory(p.join(docs.path, 'home_icons'));
+    if (!await dir.exists()) {
+      await dir.create(recursive: true);
+    }
+    _homeIconDirectory = dir;
+    return dir;
+  }
+
+  File _homeIconFileForHost(String host) {
+    final normalized = host.toLowerCase();
+    final hash = sha1.convert(utf8.encode(normalized)).toString();
+    final dir = _homeIconDirectory;
+    if (dir == null) {
+      // Caller should ensure directory exists via _ensureHomeIconDirectory.
+      throw StateError('Home icon directory not initialized');
+    }
+    return File(p.join(dir.path, '$hash.png'));
+  }
+
+  void _maybeDeleteOrphanedHomeIcon(String? path) {
+    if (path == null || path.isEmpty) return;
+    final stillUsed = homeItems.value.any((item) => item.iconPath == path);
+    if (stillUsed) return;
+    try {
+      final file = File(path);
+      if (file.existsSync()) {
+        file.deleteSync();
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _refreshHomeItemIcon(HomeItem item, {bool force = false}) async {
+    Uri? uri;
+    try {
+      uri = Uri.tryParse(item.url);
+    } catch (_) {
+      uri = null;
+    }
+    final host = uri?.host ?? '';
+    if (host.isEmpty) {
+      if (item.iconPath != null) {
+        item.iconPath = null;
+        homeItems.value = List<HomeItem>.from(homeItems.value);
+        notifyListeners();
+        unawaited(_saveState());
+      }
+      return;
+    }
+
+    if (!force) {
+      final current = item.iconPath;
+      if (current != null && current.isNotEmpty) {
+        final file = File(current);
+        if (await file.exists()) {
+          return;
+        }
+      }
+    }
+
+    final key = host.toLowerCase();
+    if (_homeIconTasks.containsKey(key)) {
+      await _homeIconTasks[key];
+      return;
+    }
+
+    final task = () async {
+      try {
+        await _ensureHomeIconDirectory();
+        final file = _homeIconFileForHost(host);
+        final dio = Dio();
+        final candidates = <String>[
+          'https://$host/favicon.ico',
+          'https://$host/apple-touch-icon.png',
+          'https://$host/apple-touch-icon-precomposed.png',
+          'https://$host/favicon.png',
+          'https://www.google.com/s2/favicons?domain=$host&sz=128',
+        ];
+        for (final url in candidates) {
+          try {
+            final resp = await dio.get<List<int>>(
+              url,
+              options: Options(
+                responseType: ResponseType.bytes,
+                followRedirects: true,
+                sendTimeout: const Duration(seconds: 10),
+                receiveTimeout: const Duration(seconds: 10),
+              ),
+            );
+            final data = resp.data;
+            if (data == null || data.isEmpty) {
+              continue;
+            }
+            await file.writeAsBytes(data, flush: true);
+            if (item.iconPath != file.path) {
+              item.iconPath = file.path;
+              homeItems.value = List<HomeItem>.from(homeItems.value);
+              notifyListeners();
+              unawaited(_saveState());
+            }
+            return;
+          } catch (_) {
+            continue;
+          }
+        }
+      } catch (_) {
+        // ignore failures; fall back to text icon
+      }
+    }();
+
+    _homeIconTasks[key] = task;
+    try {
+      await task;
+    } finally {
+      _homeIconTasks.remove(key);
+    }
+  }
+
+  Future<void> refreshMissingHomeIcons() async {
+    final items = homeItems.value;
+    for (final item in items) {
+      final path = item.iconPath;
+      if (path == null || path.isEmpty || !File(path).existsSync()) {
+        await _refreshHomeItemIcon(item);
+      }
+    }
+  }
+
   void addHomeItem(String url, String name) {
     final u = _normalizeHomeUrl(url);
     final n = name.trim();
@@ -2713,11 +2861,13 @@ class AppRepo extends ChangeNotifier {
     if (hasReachedFreeHomeShortcutLimit) {
       return;
     }
-    final items = [...homeItems.value, HomeItem(url: u, name: n)];
+    final item = HomeItem(url: u, name: n);
+    final items = [...homeItems.value, item];
     homeItems.value = items;
     notifyListeners();
     // persist change asynchronously
     unawaited(_saveState());
+    unawaited(_refreshHomeItemIcon(item));
   }
 
   /// Remove the home item at [index] if it exists. This will update
@@ -2725,10 +2875,11 @@ class AppRepo extends ChangeNotifier {
   void removeHomeItemAt(int index) {
     final items = [...homeItems.value];
     if (index < 0 || index >= items.length) return;
-    items.removeAt(index);
+    final removed = items.removeAt(index);
     homeItems.value = items;
     notifyListeners();
     unawaited(_saveState());
+    _maybeDeleteOrphanedHomeIcon(removed.iconPath);
   }
 
   /// Update the item at [index] with new values. Pass null to leave a
@@ -2740,11 +2891,26 @@ class AppRepo extends ChangeNotifier {
     final item = items[index];
     final u = url?.trim();
     final n = name?.trim();
-    if (u != null && u.isNotEmpty) item.url = _normalizeHomeUrl(u);
+    var urlChanged = false;
+    final oldIconPath = item.iconPath;
+    if (u != null && u.isNotEmpty) {
+      final normalized = _normalizeHomeUrl(u);
+      if (normalized != item.url) {
+        item.url = normalized;
+        urlChanged = true;
+      }
+    }
     if (n != null && n.isNotEmpty) item.name = n;
+    if (urlChanged) {
+      item.iconPath = null;
+      unawaited(_refreshHomeItemIcon(item, force: true));
+    }
     homeItems.value = items;
     notifyListeners();
     unawaited(_saveState());
+    if (urlChanged) {
+      _maybeDeleteOrphanedHomeIcon(oldIconPath);
+    }
   }
 
   /// Move an item from [oldIndex] to [newIndex] in the home list. If the
@@ -2904,6 +3070,13 @@ class AppRepo extends ChangeNotifier {
   /// is resumed we write to a temporary chunk; this map lets progress probes
   /// read the correct file instead of the final destination.
   final Map<DownloadTask, String> _hlsActiveOutputs = {};
+
+  /// Directory containing cached favicons for home shortcuts.
+  Directory? _homeIconDirectory;
+
+  /// In-flight favicon download tasks keyed by host. Prevents duplicate
+  /// network requests when multiple widgets request the same favicon.
+  final Map<String, Future<void>> _homeIconTasks = {};
 
   /// Path to the JSON file used to persist app state (tasks, favourites, settings).
   late String _stateFilePath;
@@ -3343,11 +3516,39 @@ class AppRepo extends ChangeNotifier {
         notifyListeners();
       }
 
-      // Prepare temp folder to hold cleaned segments and local m3u8
-      final tmp = await getTemporaryDirectory();
-      final stamp = DateTime.now().millisecondsSinceEpoch;
-      final workDir = Directory('${tmp.path}/hls_sanitize_$stamp');
-      await workDir.create(recursive: true);
+      // Prepare folder to hold cleaned segments and local m3u8. When a
+      // progress task is provided reuse its workspace so paused sanitisation
+      // can resume without re-downloading earlier segments.
+      Directory workDir;
+      if (progressTask != null) {
+        workDir = await _ensureHlsWorkspace(progressTask);
+      } else {
+        final tmp = await getTemporaryDirectory();
+        final stamp = DateTime.now().millisecondsSinceEpoch;
+        workDir = Directory('${tmp.path}/hls_sanitize_$stamp');
+        await workDir.create(recursive: true);
+      }
+
+      int resumedSegments = 0;
+      if (progressTask != null) {
+        for (int i = 0; i < mediaSegs.length; i++) {
+          final existing = File(p.join(workDir.path, 'seg_$i.ts'));
+          if (await existing.exists()) {
+            try {
+              final len = await existing.length();
+              if (len > 0) {
+                resumedSegments++;
+                continue;
+              }
+            } catch (_) {}
+          }
+          break;
+        }
+        if (resumedSegments > 0) {
+          progressTask.received = resumedSegments;
+          _notifyDownloadsUpdated();
+        }
+      }
 
       // Build local m3u8 content
       final sb = StringBuffer();
@@ -3368,42 +3569,56 @@ class AppRepo extends ChangeNotifier {
             (progressTask.state == 'paused' || progressTask.paused)) {
           throw const _DownloadCancelled();
         }
-        // Fetch segment bytes with headers
-        final resp = await dio.get<List<int>>(
-          abs,
-          options: Options(
-            responseType: ResponseType.bytes,
-            headers: hdrs,
-            followRedirects: true,
-          ),
-        );
-        List<int> data = resp.data ?? const [];
+        final outPath = p.join(workDir.path, 'seg_$index.ts');
+        final f = File(outPath);
+        bool hasExisting = false;
+        if (await f.exists()) {
+          try {
+            final len = await f.length();
+            if (len > 0) {
+              hasExisting = true;
+            } else {
+              await f.delete();
+            }
+          } catch (_) {}
+        }
 
-        // Strip leading junk until MPEG-TS sync (0x47 appearing on 188-byte cadence).
-        int start = 0;
-        for (int i = 0; i < data.length; i++) {
-          final b = data[i];
-          if (b == 0x47) {
-            // Heuristic: also check next 188 bytes if possible
-            final j = i + 188;
-            if (j < data.length) {
-              if (data[j] == 0x47) {
+        if (!hasExisting) {
+          // Fetch segment bytes with headers
+          final resp = await dio.get<List<int>>(
+            abs,
+            options: Options(
+              responseType: ResponseType.bytes,
+              headers: hdrs,
+              followRedirects: true,
+            ),
+          );
+          List<int> data = resp.data ?? const [];
+
+          // Strip leading junk until MPEG-TS sync (0x47 appearing on 188-byte cadence).
+          int start = 0;
+          for (int i = 0; i < data.length; i++) {
+            final b = data[i];
+            if (b == 0x47) {
+              // Heuristic: also check next 188 bytes if possible
+              final j = i + 188;
+              if (j < data.length) {
+                if (data[j] == 0x47) {
+                  start = i;
+                  break;
+                }
+              } else {
                 start = i;
                 break;
               }
-            } else {
-              start = i;
-              break;
             }
           }
-        }
-        if (start > 0) {
-          data = data.sublist(start);
-        }
+          if (start > 0) {
+            data = data.sublist(start);
+          }
 
-        final outPath = p.join(workDir.path, 'seg_$index.ts');
-        final f = File(outPath);
-        await f.writeAsBytes(data, flush: true);
+          await f.writeAsBytes(data, flush: true);
+        }
 
         // Write EXTINF with duration (fallback 4.0 if null)
         double durSec = 4.0;
@@ -4254,6 +4469,11 @@ class AppRepo extends ChangeNotifier {
     // assign a shallow copy to force ValueNotifier to notify
     downloads.value = List<DownloadTask>.from(downloads.value);
   }
+
+  /// Returns the active temporary output file for an ongoing HLS conversion
+  /// if one is available. When null, the task is either not active or is
+  /// writing directly to its final destination path.
+  String? activeHlsOutputFor(DownloadTask t) => _hlsActiveOutputs[t];
 
   Future<void> _runTaskFile(DownloadTask t, {required bool resume}) async {
     try {
