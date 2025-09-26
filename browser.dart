@@ -1120,6 +1120,18 @@ class _BrowserPageState extends State<BrowserPage>
     return '${gb.toStringAsFixed(2)} GB';
   }
 
+  /// Returns the size of [path] in bytes if the file exists, otherwise null.
+  int? _fileLengthIfExists(String path) {
+    if (path.isEmpty) return null;
+    try {
+      final file = File(path);
+      if (file.existsSync()) {
+        return file.lengthSync();
+      }
+    } catch (_) {}
+    return null;
+  }
+
   /// Whether this task is a segmented/HLS style job where size doesn't update in real time.
   bool _isSegmentedTask(DownloadTask t) {
     final k = (t.kind).toString().toLowerCase();
@@ -6254,6 +6266,11 @@ class _BrowserPageState extends State<BrowserPage>
     final repo = AppRepo.I;
     final resolvedType = repo.resolvedTaskType(t);
     final activeHlsPath = repo.activeHlsOutputFor(t) ?? t.savePath;
+    final int? activeHlsBytes =
+        isHls
+            ? (_fileLengthIfExists(activeHlsPath) ??
+                _fileLengthIfExists(t.savePath))
+            : null;
 
     // --- Speed calculation setup ---
 
@@ -6284,19 +6301,13 @@ class _BrowserPageState extends State<BrowserPage>
 
     // Decide which byte counter to use for speed:
     // - 非 HLS：使用 t.received（bytes）
-    // - HLS 轉檔階段：使用輸出檔案大小
-    // - HLS 片段下載階段：無法可靠取得 bytes，暫不顯示
+    // - HLS：使用目前輸出檔案大小（無論片段下載或轉檔階段）
     if (!isHls && t.state == 'downloading') {
       speedBytesNow = t.received;
       speedKeyPhase = 'dl';
-    } else if (isConverting) {
-      try {
-        final f = File(activeHlsPath);
-        if (f.existsSync()) {
-          speedBytesNow = f.lengthSync();
-          speedKeyPhase = 'conv';
-        }
-      } catch (_) {}
+    } else if (isHls && t.state == 'downloading' && activeHlsBytes != null) {
+      speedBytesNow = activeHlsBytes;
+      speedKeyPhase = isConverting ? 'conv' : 'hls';
     }
 
     List<Widget> buildSubtitleWidgets() {
@@ -6404,34 +6415,53 @@ class _BrowserPageState extends State<BrowserPage>
           t.total! > 0) {
         final cur = Duration(milliseconds: t.received);
         final tot = Duration(milliseconds: t.total!);
+        final percent = progressPercent ?? 0.0;
+        final percentText = (percent * 100).toStringAsFixed(1);
+        String progressText;
+        final bytes = activeHlsBytes;
+        if (bytes != null && bytes > 0) {
+          int? estimatedTotalBytes;
+          if (percent >= 0.01) {
+            estimatedTotalBytes = (bytes / percent).round();
+          }
+          final timePart =
+              '${_fmtDur(cur.inSeconds.toDouble())}/${_fmtDur(tot.inSeconds.toDouble())}';
+          final sizePart =
+              (estimatedTotalBytes != null && estimatedTotalBytes > 0)
+                  ? '${_fmtSize(bytes)} / ${_fmtSize(estimatedTotalBytes)} ($percentText%)'
+                  : '${_fmtSize(bytes)} ($percentText%)';
+          progressText = '$sizePart • $timePart';
+          addedSize = true;
+        } else {
+          progressText =
+              '${_fmtDur(cur.inSeconds.toDouble())}/${_fmtDur(tot.inSeconds.toDouble())} ($percentText%)';
+        }
         subtitleWidgets.add(
           Text(
             context.l10n(
               'browser.download.progressLabel',
-              params: {
-                'progress':
-                    '${_fmtDur(cur.inSeconds.toDouble())}/${_fmtDur(tot.inSeconds.toDouble())} (${((progressPercent ?? 0) * 100).toStringAsFixed(1)}%)',
-              },
+              params: {'progress': progressText},
             ),
             style: const TextStyle(fontSize: 12),
           ),
         );
-        // 顯示目前檔案大小（可選）
-        try {
-          final f = File(t.savePath);
-          if (f.existsSync() && !addedSize) {
-            subtitleWidgets.add(
-              Text(
-                context.l10n(
-                  'browser.download.sizeLabel',
-                  params: {'size': _fmtSize(f.lengthSync())},
+        if (bytes == null) {
+          try {
+            final f = File(t.savePath);
+            if (f.existsSync() && !addedSize) {
+              subtitleWidgets.add(
+                Text(
+                  context.l10n(
+                    'browser.download.sizeLabel',
+                    params: {'size': _fmtSize(f.lengthSync())},
+                  ),
+                  style: const TextStyle(fontSize: 12),
                 ),
-                style: const TextStyle(fontSize: 12),
-              ),
-            );
-            addedSize = true;
-          }
-        } catch (_) {}
+              );
+              addedSize = true;
+            }
+          } catch (_) {}
+        }
       }
       // During conversion of an HLS task, show the current output file size to
       // provide some sense of progress. Since FFmpeg does not expose a
@@ -6558,21 +6588,20 @@ class _BrowserPageState extends State<BrowserPage>
       }
       // 任何 downloading 狀態下的通用「目前檔案大小」顯示（若前面尚未加入大小）
       if (t.state == 'downloading' && !addedSize) {
-        try {
-          final f = File(activeHlsPath);
-          if (f.existsSync()) {
-            subtitleWidgets.add(
-              Text(
-                context.l10n(
-                  'browser.download.sizeLabel',
-                  params: {'size': _fmtSize(f.lengthSync())},
-                ),
-                style: const TextStyle(fontSize: 12),
+        final bytes =
+            isHls ? activeHlsBytes : _fileLengthIfExists(activeHlsPath);
+        if (bytes != null) {
+          subtitleWidgets.add(
+            Text(
+              context.l10n(
+                'browser.download.sizeLabel',
+                params: {'size': _fmtSize(bytes)},
               ),
-            );
-            addedSize = true;
-          }
-        } catch (_) {}
+              style: const TextStyle(fontSize: 12),
+            ),
+          );
+          addedSize = true;
+        }
       }
       // 顯示即時下載/轉換速度
       if (speedBytesNow != null) {
