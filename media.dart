@@ -42,6 +42,23 @@ String formatFileSize(int bytes) {
   }
 }
 
+String _fmtSpeed(num bytesPerSecond) {
+  const units = ['B/s', 'KB/s', 'MB/s', 'GB/s', 'TB/s'];
+  double value = bytesPerSecond.toDouble();
+  int index = 0;
+  while (value >= 1024.0 && index < units.length - 1) {
+    value /= 1024.0;
+    index++;
+  }
+  final decimals =
+      value >= 100
+          ? 0
+          : value >= 10
+          ? 1
+          : 2;
+  return '${value.toStringAsFixed(decimals)} ${units[index]}';
+}
+
 bool _fileHasContent(String path) {
   try {
     final file = File(path);
@@ -50,6 +67,13 @@ bool _fileHasContent(String path) {
   } catch (_) {
     return false;
   }
+}
+
+class _RateSnapshot {
+  final int bytes;
+  final DateTime timestamp;
+
+  const _RateSnapshot(this.bytes, this.timestamp);
 }
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
@@ -78,6 +102,7 @@ class _MediaPageState extends State<MediaPage>
   Timer? _searchDebounce;
   final TextEditingController _hiddenSearchCtl = TextEditingController();
   String _hiddenSearch = '';
+  final Map<String, _RateSnapshot> _directSpeedSnaps = {};
   Timer? _hiddenSearchDebounce;
 
   bool _metaRefreshQueued = false;
@@ -798,6 +823,8 @@ class _MediaPageState extends State<MediaPage>
     final resolvedType = AppRepo.I.resolvedTaskType(task);
     final fileName = task.name ?? path.basename(task.savePath);
     final status = _stateLabel(task);
+    final bool isDirectDownloading =
+        task.kind != 'hls' && task.state.toLowerCase() == 'downloading';
 
     final selected = selection.contains(task);
     int displayBytes = task.total ?? 0;
@@ -807,6 +834,9 @@ class _MediaPageState extends State<MediaPage>
       // 避免出現「總片段 B」等單位錯誤的字串。
       displayBytes = 0;
     }
+    if (isDirectDownloading) {
+      displayBytes = math.max(displayBytes, task.received);
+    }
     if (displayBytes <= 0) {
       try {
         final file = File(task.savePath);
@@ -814,6 +844,9 @@ class _MediaPageState extends State<MediaPage>
           displayBytes = file.lengthSync();
         }
       } catch (_) {}
+    }
+    if (!isDirectDownloading) {
+      _purgeDirectSpeedSnapshot(task.savePath);
     }
     Widget? leadingThumb;
     final isDone = task.state.toLowerCase() == 'done';
@@ -856,7 +889,50 @@ class _MediaPageState extends State<MediaPage>
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(status),
-          if (displayBytes > 0)
+          if (isDirectDownloading) ...[
+            () {
+              final total = task.total ?? 0;
+              final hasTotal = total > 0;
+              final sizeValue =
+                  hasTotal
+                      ? '${formatFileSize(task.received)} / ${formatFileSize(total)}'
+                      : formatFileSize(task.received);
+              return Text(
+                context.l10n(
+                  'browser.download.sizeLabel',
+                  params: {'size': sizeValue},
+                ),
+              );
+            }(),
+            if ((task.total ?? 0) > 0)
+              () {
+                final total = task.total ?? 0;
+                final ratio = (task.received / total.toDouble()).clamp(
+                  0.0,
+                  1.0,
+                );
+                final pct = (ratio * 100).toStringAsFixed(1);
+                return Text(
+                  context.l10n(
+                    'browser.download.progressLabel',
+                    params: {'progress': '$pct%'},
+                  ),
+                );
+              }(),
+            () {
+              final speed = _directSpeedFor(task);
+              if (speed != null) {
+                return Text(
+                  context.l10n(
+                    'browser.download.speedLabel',
+                    params: {'speed': _fmtSpeed(speed)},
+                  ),
+                );
+              }
+              return Text(context.l10n('browser.download.speedMeasuring'));
+            }(),
+          ],
+          if (!isDirectDownloading && displayBytes > 0)
             Text(
               context.l10n(
                 'media.details.size',
@@ -1038,6 +1114,22 @@ class _MediaPageState extends State<MediaPage>
   }
 
   String _fmtSize(int bytes) => formatFileSize(bytes);
+  double? _directSpeedFor(DownloadTask task) {
+    final key = task.savePath;
+    final now = DateTime.now();
+    final prev = _directSpeedSnaps[key];
+    _directSpeedSnaps[key] = _RateSnapshot(task.received, now);
+    if (prev == null) return null;
+    final seconds = now.difference(prev.timestamp).inMilliseconds / 1000.0;
+    if (seconds <= 0) return null;
+    final delta = task.received - prev.bytes;
+    if (delta <= 0) return null;
+    return delta / seconds;
+  }
+
+  void _purgeDirectSpeedSnapshot(String key) {
+    _directSpeedSnaps.remove(key);
+  }
 
   String _stateLabel(DownloadTask t) {
     final isHls = t.kind == 'hls';

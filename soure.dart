@@ -3821,6 +3821,9 @@ class AppRepo extends ChangeNotifier {
         },
         (log) {},
         (stat) async {
+          if (t.state != 'downloading') {
+            return;
+          }
           final activePath = _hlsActiveOutputs[t] ?? t.savePath;
           try {
             final f = File(activePath);

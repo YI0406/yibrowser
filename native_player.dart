@@ -1,7 +1,8 @@
 import 'dart:async';
 import 'dart:math';
 import 'dart:ui';
-
+import 'package:flutter/cupertino.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -51,15 +52,27 @@ class AirPlayRouteButton extends StatelessWidget {
     return SizedBox(
       width: 44,
       height: 44,
-      child: UiKitView(
-        viewType: 'airplay-route-picker',
-        layoutDirection: TextDirection.ltr,
-        creationParams: <String, dynamic>{
-          'tintColor': tintColor.value,
-          'activeTintColor': activeTintColor.value,
-        },
-        creationParamsCodec: const StandardMessageCodec(),
-        hitTestBehavior: PlatformViewHitTestBehavior.transparent,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          UiKitView(
+            viewType: 'airplay-route-picker',
+            layoutDirection: TextDirection.ltr,
+            creationParams: <String, dynamic>{
+              'tintColor': tintColor.value,
+              'activeTintColor': activeTintColor.value,
+            },
+            creationParamsCodec: const StandardMessageCodec(),
+            hitTestBehavior: PlatformViewHitTestBehavior.transparent,
+          ),
+          IgnorePointer(
+            child: Icon(
+              CupertinoIcons.device_laptop,
+              color: tintColor,
+              size: 22,
+            ),
+          ),
+        ],
       ),
     );
   }
