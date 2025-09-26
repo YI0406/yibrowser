@@ -65,13 +65,6 @@ class AirPlayRouteButton extends StatelessWidget {
             creationParamsCodec: const StandardMessageCodec(),
             hitTestBehavior: PlatformViewHitTestBehavior.transparent,
           ),
-          IgnorePointer(
-            child: Icon(
-              CupertinoIcons.device_laptop,
-              color: tintColor,
-              size: 22,
-            ),
-          ),
         ],
       ),
     );

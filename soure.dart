@@ -6,6 +6,7 @@ import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter/services.dart';
+import 'package:ffmpeg_kit_flutter_new/ffprobe_kit.dart';
 import 'package:dio/dio.dart';
 import 'package:local_auth/error_codes.dart' as auth_error;
 import 'package:path_provider/path_provider.dart';
@@ -3525,6 +3526,93 @@ class AppRepo extends ChangeNotifier {
     } catch (_) {}
   }
 
+  int _sumHlsDurationsMs(String playlistText) {
+    int totalMs = 0;
+    for (final rawLine in playlistText.split('\n')) {
+      final line = rawLine.trim();
+      if (!line.startsWith('#EXTINF')) continue;
+      final remainder = line.split(':').skip(1).join(':');
+      final value = remainder.split(',').first.trim();
+      final seconds = double.tryParse(value);
+      if (seconds != null && seconds > 0) {
+        totalMs += (seconds * 1000).round();
+      }
+    }
+    return totalMs;
+  }
+
+  Future<int> _estimateHlsDurationMs({
+    required String playlistUrl,
+    required String playlistText,
+    required Map<String, String> headers,
+    Dio? client,
+    Set<String>? visited,
+  }) async {
+    final direct = _sumHlsDurationsMs(playlistText);
+    if (direct > 0) {
+      return direct;
+    }
+
+    final lower = playlistText.toLowerCase();
+    if (!lower.contains('#ext-x-stream-inf')) {
+      return 0;
+    }
+
+    visited ??= <String>{};
+    if (!visited.add(playlistUrl)) {
+      return 0;
+    }
+
+    try {
+      final parser = HlsPlaylistParser.create();
+      final parsed = await parser.parseString(
+        Uri.parse(playlistUrl),
+        playlistText,
+      );
+      if (parsed is! HlsMasterPlaylist) {
+        return 0;
+      }
+
+      final variants = List.of(parsed.variants);
+      if (variants.isEmpty) {
+        return 0;
+      }
+      variants.sort(
+        (a, b) => (b.format?.bitrate ?? 0).compareTo(a.format?.bitrate ?? 0),
+      );
+
+      final dio = client ?? Dio();
+      for (final variant in variants) {
+        final variantUrl = variant.url.toString();
+        if (variantUrl.isEmpty || visited.contains(variantUrl)) {
+          continue;
+        }
+        try {
+          final resp = await dio.get<String>(
+            variantUrl,
+            options: Options(
+              responseType: ResponseType.plain,
+              headers: headers,
+              followRedirects: true,
+            ),
+          );
+          final text = resp.data ?? '';
+          final nested = await _estimateHlsDurationMs(
+            playlistUrl: variantUrl,
+            playlistText: text,
+            headers: headers,
+            client: dio,
+            visited: visited,
+          );
+          if (nested > 0) {
+            return nested;
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
+    return 0;
+  }
+
   Future<bool> _finalizeHlsParts(
     DownloadTask t,
     _HlsResumeManifest manifest,
@@ -3607,18 +3695,12 @@ class AppRepo extends ChangeNotifier {
         final probeTxt = probe.data ?? '';
         // Pre-calc total duration for progress: sum EXTINF durations if present
         try {
-          int totalMs = 0;
-          for (final rawLine in probeTxt.split('\n')) {
-            final l = rawLine.trim();
-            if (l.startsWith('#EXTINF')) {
-              final part = l.split(':').skip(1).join(':');
-              final v = part.split(',').first.trim();
-              final sec = double.tryParse(v);
-              if (sec != null && sec > 0) {
-                totalMs += (sec * 1000).round();
-              }
-            }
-          }
+          final totalMs = await _estimateHlsDurationMs(
+            playlistUrl: t.url,
+            playlistText: probeTxt,
+            headers: hdrsProbe,
+            client: dioProbe,
+          );
           if (totalMs > 0) {
             t.total = totalMs;
             t.received = 0;
@@ -3711,7 +3793,25 @@ class AppRepo extends ChangeNotifier {
         if (!manifest.parts.contains('$partName.mp4')) {
           manifest.parts.add('$partName.mp4');
         }
-        manifest.completedMs = math.max(manifest.completedMs, t.received);
+        int progressMs = t.received;
+        if (progressMs <= manifest.completedMs) {
+          try {
+            final probeSession = await FFprobeKit.getMediaInformation(
+              outputPath,
+            );
+            final info = probeSession.getMediaInformation();
+            final durationStr = info?.getDuration();
+            final seconds = double.tryParse(durationStr ?? '');
+            if (seconds != null && seconds.isFinite && seconds > 0) {
+              progressMs = (seconds * 1000).round();
+            }
+          } catch (_) {}
+        }
+        if (progressMs > t.received) {
+          t.received = progressMs;
+          _notifyDownloadsUpdated();
+        }
+        manifest.completedMs = math.max(manifest.completedMs, progressMs);
         await _saveHlsManifest(t, manifest);
       }
 

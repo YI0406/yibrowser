@@ -28,6 +28,9 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
       PlayerEngine.shared.configureChannels(messenger: messenger)
       registrar.register(NativePlayerViewFactory(messenger: messenger), withId: "native-player-view")
     }
+      if let airplayRegistrar = flutterVC.registrar(forPlugin: "AirPlayRoutePickerFactory") {
+           airplayRegistrar.register(AirPlayRoutePickerFactory(), withId: "airplay-route-picker")
+         }
     let channel = FlutterMethodChannel(
       name: "app.quick_actions_bridge",
       binaryMessenger: flutterVC.binaryMessenger
