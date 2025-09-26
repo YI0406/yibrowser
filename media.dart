@@ -801,6 +801,12 @@ class _MediaPageState extends State<MediaPage>
 
     final selected = selection.contains(task);
     int displayBytes = task.total ?? 0;
+    if (task.kind == 'hls' && task.state.toLowerCase() != 'done') {
+      // HLS 任務在片段下載階段會以「片段數」或「毫秒」暫存於 total，
+      // 並非真實的位元組數。此時改以實際檔案長度（若可取得）顯示，
+      // 避免出現「總片段 B」等單位錯誤的字串。
+      displayBytes = 0;
+    }
     if (displayBytes <= 0) {
       try {
         final file = File(task.savePath);

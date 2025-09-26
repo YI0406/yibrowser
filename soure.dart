@@ -3768,16 +3768,12 @@ class AppRepo extends ChangeNotifier {
       );
       final framePattern = p.join(work.path, 'frame_%06d$frameExt');
       final bool useHardwareEncoder = Platform.isIOS;
-      final encoderFilter = useHardwareEncoder ? 'nv12' : 'yuv420p';
-      final encoder = useHardwareEncoder ? 'h264_videotoolbox' : 'libx264';
-      final encoderArgs = '-vf format=$encoderFilter -c:v $encoder';
-      String cmd;
-      if (uniformDuration && baseDuration > 0) {
-        final fps = 1.0 / baseDuration;
-        final fpsStr = fps.toStringAsFixed(6);
-        cmd =
-            "-y -framerate $fpsStr -i '$framePattern' $encoderArgs '${t.savePath}'";
-      } else {
+      final encoderFilterHw = 'nv12';
+      const encoderFilterSw = 'yuv420p';
+      const encoderHw = 'h264_videotoolbox';
+      const encoderSw = 'libx264';
+      String? concatListPath;
+      if (!(uniformDuration && baseDuration > 0)) {
         // Build concat list file for FFmpeg so we can keep per-image durations
         final listFile = File(p.join(work.path, 'list.txt'));
         final sb = StringBuffer();
@@ -3791,57 +3787,88 @@ class AppRepo extends ChangeNotifier {
         final lastName = frameNames.last;
         sb.writeln("file '$lastName'");
         await listFile.writeAsString(sb.toString(), flush: true);
-        cmd =
-            "-y -f concat -safe 0 -i '${listFile.path}' $encoderArgs '${t.savePath}'";
+        concatListPath = listFile.path;
       }
 
-      final session = await FFmpegKit.executeAsync(
-        cmd,
-        (session) async {
-          final rc = await session.getReturnCode();
-          if (rc != null && rc.isValueSuccess()) {
-            t.state = 'done';
-            int? finalSize;
-            try {
-              final output = File(t.savePath);
-              if (await output.exists()) {
-                finalSize = await output.length();
-              }
-            } catch (_) {}
-            if (finalSize != null && finalSize > 0) {
-              t.total = finalSize;
-              t.received = finalSize;
-            } else {
-              t.received = t.total ?? t.received;
+      String _buildCommand(String encoderArgs) {
+        if (uniformDuration && baseDuration > 0) {
+          final fps = 1.0 / baseDuration;
+          final fpsStr = fps.toStringAsFixed(6);
+          return "-y -framerate $fpsStr -i '$framePattern' $encoderArgs '${t.savePath}'";
+        }
+        return "-y -f concat -safe 0 -i '${concatListPath!}' $encoderArgs '${t.savePath}'";
+      }
+
+      Future<bool> _runEncoder(String encoderArgs) async {
+        final completer = Completer<bool>();
+        final session = await FFmpegKit.executeAsync(
+          _buildCommand(encoderArgs),
+          (session) async {
+            final rc = await session.getReturnCode();
+            if (!completer.isCompleted) {
+              completer.complete(rc != null && rc.isValueSuccess());
             }
-            t.progressUnit = null;
-            _normalizeTaskType(t);
-            // generate preview and optionally save to gallery
-            _notifyDownloadsUpdated();
-            notifyListeners();
-            await _generatePreview(t);
-            _maybeNotifyDownloadComplete(t);
-            if (autoSave.value) {
-              try {
-                await saveFileToGallery(t.savePath);
-              } catch (e) {}
+          },
+          (log) {
+            if (kDebugMode) {
+              print('ffmpeg(image-hls): \${log.getMessage()}');
             }
-          } else {
-            t.state = 'error';
-            _notifyDownloadsUpdated();
-            notifyListeners();
+          },
+          (stat) {},
+        );
+        final id = await session.getSessionId();
+        if (id != null) _ffmpegSessions[t] = id;
+        final ok = await completer.future;
+        _ffmpegSessions.remove(t);
+        return ok;
+      }
+
+      bool success = false;
+      if (useHardwareEncoder) {
+        final hwArgs = '-vf format=$encoderFilterHw -c:v $encoderHw';
+        success = await _runEncoder(hwArgs);
+        if (!success) {
+          // Hardware encoding may fail on some devices; retry with software encoder.
+          final swArgs = '-vf format=$encoderFilterSw -c:v $encoderSw';
+          success = await _runEncoder(swArgs);
+        }
+      } else {
+        final swArgs = '-vf format=$encoderFilterSw -c:v $encoderSw';
+        success = await _runEncoder(swArgs);
+      }
+
+      if (success) {
+        t.state = 'done';
+        int? finalSize;
+        try {
+          final output = File(t.savePath);
+          if (await output.exists()) {
+            finalSize = await output.length();
           }
-          await _saveState();
-        },
-        (log) {
-          if (kDebugMode) print('ffmpeg(image-hls): \${log.getMessage()}');
-        },
-        (stat) {
-          // FFmpeg statistics are not used for image sequence; rely on segment count
-        },
-      );
-      final id = await session.getSessionId();
-      if (id != null) _ffmpegSessions[t] = id;
+        } catch (_) {}
+        if (finalSize != null && finalSize > 0) {
+          t.total = finalSize;
+          t.received = finalSize;
+        } else {
+          t.received = t.total ?? t.received;
+        }
+        t.progressUnit = null;
+        _normalizeTaskType(t);
+        _notifyDownloadsUpdated();
+        notifyListeners();
+        await _generatePreview(t);
+        _maybeNotifyDownloadComplete(t);
+        if (autoSave.value) {
+          try {
+            await saveFileToGallery(t.savePath);
+          } catch (e) {}
+        }
+      } else {
+        t.state = 'error';
+        _notifyDownloadsUpdated();
+        notifyListeners();
+      }
+      await _saveState();
     } catch (e) {
       if (kDebugMode) print('runTaskHlsImages error: $e');
       if (t.state != 'paused') {
