@@ -599,7 +599,7 @@ class _HomePageState extends State<HomePage>
       );
     }
 
-    Widget iconChild;
+    Widget iconChild = buildFallbackIcon();
     final iconPath = item.iconPath;
     var hasLocalIcon = false;
     if (iconPath != null && iconPath.isNotEmpty) {
@@ -621,8 +621,6 @@ class _HomePageState extends State<HomePage>
               ? buildNetworkIcon(faviconS2!, buildFallbackIcon())
               : buildFallbackIcon(),
         );
-      } else {
-        iconChild = buildFallbackIcon();
       }
     }
 
