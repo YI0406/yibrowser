@@ -439,6 +439,22 @@ class _BrowserPageState extends State<BrowserPage>
   bool _miniVisible = false;
   Offset _miniPos = const Offset(20, 80); // 初始位置（相對螢幕左上）
   String? _miniUrl;
+
+  void _syncRepoPageContext() {
+    if (_currentTabIndex < 0 || _currentTabIndex >= _tabs.length) {
+      AppRepo.I.currentPageUrl.value = null;
+      AppRepo.I.currentPageTitle.value = null;
+      return;
+    }
+    final tab = _tabs[_currentTabIndex];
+    final url = tab.currentUrl?.trim();
+    final title = tab.pageTitle?.trim();
+    AppRepo.I.currentPageUrl.value =
+        (url != null && url.isNotEmpty) ? url : null;
+    AppRepo.I.currentPageTitle.value =
+        (title != null && title.isNotEmpty) ? title : null;
+  }
+
   // Focus node for the URL input. Used to determine whether to show the
   // clear button only when the field has focus and contains text.
   final FocusNode _urlFocus = FocusNode();
@@ -1708,6 +1724,7 @@ class _BrowserPageState extends State<BrowserPage>
       _currentTabIndex = makeActive ? _tabs.length - 1 : previousIndex;
     });
     _updateOpenTabs();
+    _syncRepoPageContext();
     await _persistCurrentTabIndex();
   }
 
@@ -1762,6 +1779,7 @@ class _BrowserPageState extends State<BrowserPage>
                         setState(() {
                           _currentTabIndex = i;
                         });
+                        _syncRepoPageContext();
                         _persistCurrentTabIndex();
                       },
                       child: Text(
@@ -1791,6 +1809,7 @@ class _BrowserPageState extends State<BrowserPage>
                             }
                           });
                           // Update persisted open tabs after removal
+                          _syncRepoPageContext();
                           _updateOpenTabs();
                         },
                         child: const Icon(Icons.close, size: 14),
@@ -1926,6 +1945,7 @@ class _BrowserPageState extends State<BrowserPage>
                   _currentTabIndex = _tabs.length - 1;
                 });
                 _updateOpenTabs();
+                _syncRepoPageContext();
                 _persistCurrentTabIndex();
               },
               onSelect: (int index) {
@@ -1933,6 +1953,7 @@ class _BrowserPageState extends State<BrowserPage>
                 setState(() {
                   _currentTabIndex = index;
                 });
+                _syncRepoPageContext();
                 _persistCurrentTabIndex();
               },
               onClose: (int index) {
@@ -1951,6 +1972,7 @@ class _BrowserPageState extends State<BrowserPage>
                   }
                 });
                 _updateOpenTabs();
+                _syncRepoPageContext();
                 _persistCurrentTabIndex();
               },
             ),
@@ -1999,6 +2021,7 @@ class _BrowserPageState extends State<BrowserPage>
       _currentTabIndex = _tabs.length - 1;
     }
     _updateOpenTabs();
+    _syncRepoPageContext();
     _persistCurrentTabIndex();
   }
 
@@ -2015,6 +2038,7 @@ class _BrowserPageState extends State<BrowserPage>
         _currentTabIndex = 0;
       }
       _updateOpenTabs();
+      _syncRepoPageContext();
       _persistCurrentTabIndex();
     } else if (_currentTabIndex < 0 || _currentTabIndex >= _tabs.length) {
       final newIndex = _tabs.isEmpty ? 0 : (_tabs.length - 1);
@@ -2025,6 +2049,7 @@ class _BrowserPageState extends State<BrowserPage>
       } else {
         _currentTabIndex = newIndex;
       }
+      _syncRepoPageContext();
       _persistCurrentTabIndex();
     }
   }
@@ -3937,7 +3962,12 @@ class _BrowserPageState extends State<BrowserPage>
                             );
                             tab.urlCtrl.text = isBlank ? '' : s;
                             tab.currentUrl = isBlank ? null : s;
-                            if (!isBlank) AppRepo.I.currentPageUrl.value = s;
+                            if (!isBlank) {
+                              AppRepo.I.currentPageUrl.value = s;
+                              if (tabIndex == _currentTabIndex) {
+                                AppRepo.I.currentPageTitle.value = null;
+                              }
+                            }
                             if (mounted) setState(() {});
                           }
                         },
@@ -3954,7 +3984,12 @@ class _BrowserPageState extends State<BrowserPage>
                             );
                             tab.urlCtrl.text = isBlank ? '' : s;
                             tab.currentUrl = isBlank ? null : s;
-                            if (!isBlank) AppRepo.I.currentPageUrl.value = s;
+                            if (!isBlank) {
+                              AppRepo.I.currentPageUrl.value = s;
+                              if (tabIndex == _currentTabIndex) {
+                                AppRepo.I.currentPageTitle.value = null;
+                              }
+                            }
                             if (mounted) setState(() {});
                           }
                         },
@@ -3981,8 +4016,17 @@ class _BrowserPageState extends State<BrowserPage>
 
                             tab.urlCtrl.text = isBlank ? '' : s;
                             tab.currentUrl = isBlank ? null : s;
-                            if (!isBlank) AppRepo.I.currentPageUrl.value = s;
+                            if (!isBlank) {
+                              AppRepo.I.currentPageUrl.value = s;
+                            }
                             tab.pageTitle = title;
+                            if (!isBlank && tabIndex == _currentTabIndex) {
+                              final trimmed = title?.trim();
+                              AppRepo.I.currentPageTitle.value =
+                                  (trimmed != null && trimmed.isNotEmpty)
+                                      ? trimmed
+                                      : null;
+                            }
 
                             // about:blank 不寫入歷史；復原的第一筆載入也跳過
                             if (!isBlank) {
@@ -4006,12 +4050,22 @@ class _BrowserPageState extends State<BrowserPage>
                               unawaited(_syncHistoryFromController(tab));
                             }
                             _updateOpenTabs();
+                            if (tabIndex == _currentTabIndex) {
+                              _syncRepoPageContext();
+                            }
                             if (mounted) setState(() {});
                           }
                         },
                         onTitleChanged: (c, title) {
                           final tab = _tabs[tabIndex];
                           tab.pageTitle = title;
+                          if (tabIndex == _currentTabIndex) {
+                            final trimmed = title?.trim();
+                            AppRepo.I.currentPageTitle.value =
+                                (trimmed != null && trimmed.isNotEmpty)
+                                    ? trimmed
+                                    : null;
+                          }
                           if (mounted) setState(() {});
                         },
                         onProgressChanged: (c, progress) {

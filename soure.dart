@@ -359,7 +359,11 @@ class HomeItem {
   }
 
   Map<String, dynamic> toJson() {
-    return {'url': url, 'name': name};
+    return {
+      'url': url,
+      'name': name,
+      if (iconPath != null && iconPath!.isNotEmpty) 'iconPath': iconPath,
+    };
   }
 }
 
@@ -685,6 +689,8 @@ class AppRepo extends ChangeNotifier {
   final ValueNotifier<String?> ytTitle = ValueNotifier<String?>(null);
   // 由 BrowserPage 即時同步的目前頁面 URL（供建 Referer 用）
   final ValueNotifier<String?> currentPageUrl = ValueNotifier<String?>(null);
+  // 由 BrowserPage 更新的當前網頁標題，用於預設下載檔名。
+  final ValueNotifier<String?> currentPageTitle = ValueNotifier<String?>(null);
   static final AppRepo I = AppRepo._();
   AppRepo._();
 
@@ -2150,9 +2156,10 @@ class AppRepo extends ChangeNotifier {
       final raw = utf8Match.group(1);
       if (raw != null) {
         try {
-          return Uri.decodeFull(raw);
+          final decoded = Uri.decodeFull(raw);
+          return decoded;
         } catch (_) {
-          return raw;
+          return _decodeHeaderFilename(raw);
         }
       }
     }
@@ -2161,16 +2168,34 @@ class AppRepo extends ChangeNotifier {
       caseSensitive: false,
     ).firstMatch(header);
     if (quotedMatch != null) {
-      return quotedMatch.group(1);
+      final raw = quotedMatch.group(1);
+      return raw == null ? null : _decodeHeaderFilename(raw);
     }
     final bareMatch = RegExp(
       r'filename=([^;]+)',
       caseSensitive: false,
     ).firstMatch(header);
     if (bareMatch != null) {
-      return bareMatch.group(1)?.trim();
+      final raw = bareMatch.group(1)?.trim();
+      return raw == null ? null : _decodeHeaderFilename(raw);
     }
     return null;
+  }
+
+  String _decodeHeaderFilename(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return trimmed;
+    if (trimmed.runes.any((r) => r > 255)) {
+      return trimmed;
+    }
+    final codeUnits = trimmed.codeUnits.map((c) => c & 0xFF).toList();
+    try {
+      final decoded = utf8.decode(codeUnits, allowMalformed: true).trim();
+      if (decoded.isNotEmpty) {
+        return decoded;
+      }
+    } catch (_) {}
+    return trimmed;
   }
 
   String? _extensionFromFilename(String? filename) {
@@ -3143,15 +3168,66 @@ class AppRepo extends ChangeNotifier {
   /// Creates a unique file path in the persistent downloads directory with
   /// the given extension. Files stored here will survive app restarts and
   /// will show up in the iOS Files app. A subfolder is created on demand.
-  Future<String> _tempFilePath(String ext) async {
+  String _sanitizeDownloadStem(String input) {
+    var sanitized =
+        input
+            .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
+            .replaceAll(RegExp(r'[\s\n\r]+'), ' ')
+            .trim();
+    sanitized = sanitized.replaceAll(RegExp(r'[\u0000-\u001F]'), '');
+    if (sanitized.length > 120) {
+      sanitized = sanitized.substring(0, 120).trim();
+    }
+    if (sanitized.isEmpty) {
+      sanitized = 'download_${DateTime.now().millisecondsSinceEpoch}';
+    }
+    return sanitized;
+  }
+
+  String? _preferredDownloadStem({required String url}) {
+    final candidates = <String?>[
+      ytTitle.value?.trim(),
+      currentPageTitle.value?.trim(),
+    ];
+    for (final candidate in candidates) {
+      if (candidate != null && candidate.isNotEmpty) {
+        return _sanitizeDownloadStem(candidate);
+      }
+    }
+    try {
+      final uri = Uri.parse(url);
+      final segments = uri.pathSegments.where((s) => s.isNotEmpty).toList();
+      if (segments.isNotEmpty) {
+        final last = segments.last;
+        final dot = last.lastIndexOf('.');
+        final stem = dot > 0 ? last.substring(0, dot) : last;
+        if (stem.trim().isNotEmpty) {
+          return _sanitizeDownloadStem(stem);
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  Future<String> _tempFilePath(String ext, {String? suggestedName}) async {
     final docs = await getApplicationDocumentsDirectory();
     final downloadDir = Directory('${docs.path}/downloads');
     if (!await downloadDir.exists()) {
       await downloadDir.create(recursive: true);
     }
-    final raw =
-        '${downloadDir.path}/${DateTime.now().millisecondsSinceEpoch}.$ext';
-    return _canonicalPath(raw);
+    final stem =
+        (suggestedName != null && suggestedName.trim().isNotEmpty)
+            ? _sanitizeDownloadStem(suggestedName)
+            : 'download_${DateTime.now().millisecondsSinceEpoch}';
+    var candidate = '$stem.$ext';
+    var path = p.join(downloadDir.path, candidate);
+    var index = 1;
+    while (await File(path).exists()) {
+      candidate = '$stem ($index).$ext';
+      path = p.join(downloadDir.path, candidate);
+      index += 1;
+    }
+    return _canonicalPath(path);
   }
 
   /// Requests permission to save media to gallery. Throws if denied.
@@ -3242,14 +3318,18 @@ class AppRepo extends ChangeNotifier {
       if (ext.isEmpty || ext == 'bin') {
         ext = _defaultExtensionForType(type);
       }
-      final out = await _tempFilePath(ext);
+      final stem =
+          _preferredDownloadStem(url: innerUrl) ??
+          _preferredDownloadStem(url: url);
+      final suggested = stem ?? ytTitle.value ?? currentPageTitle.value;
+      final out = await _tempFilePath(ext, suggestedName: suggested);
 
       final task = DownloadTask(
         url: url,
         savePath: out,
         kind: kind,
         type: type,
-        name: ytTitle.value ?? null,
+        name: suggested,
       );
       downloads.value = [...downloads.value, task];
       await _saveState();
@@ -4337,6 +4417,12 @@ class AppRepo extends ChangeNotifier {
         _notifyDownloadsUpdated();
         notifyListeners();
       }
+      t.received = 0;
+      t.total = null;
+      t.progressUnit = null;
+      _lastHlsSize[t] = 0;
+      _notifyDownloadsUpdated();
+      notifyListeners();
       // Determine whether all durations are effectively identical so we can
       // leverage the lightweight image2 demuxer with a constant framerate.
       final baseDuration = durations.isNotEmpty ? durations.first : 4.0;
@@ -4381,26 +4467,57 @@ class AppRepo extends ChangeNotifier {
           throw const _DownloadCancelled();
         }
         final completer = Completer<bool>();
-        final session = await FFmpegKit.executeAsync(
-          _buildCommand(encoderArgs),
-          (session) async {
-            final rc = await session.getReturnCode();
-            if (!completer.isCompleted) {
-              completer.complete(rc != null && rc.isValueSuccess());
-            }
-          },
-          (log) {
-            if (kDebugMode) {
-              print('ffmpeg(image-hls): \${log.getMessage()}');
-            }
-          },
-          (stat) {},
-        );
-        final id = await session.getSessionId();
-        if (id != null) _ffmpegSessions[t] = id;
-        final ok = await completer.future;
-        _ffmpegSessions.remove(t);
-        return ok;
+        try {
+          final session = await FFmpegKit.executeAsync(
+            _buildCommand(encoderArgs),
+            (session) async {
+              final rc = await session.getReturnCode();
+              if (!completer.isCompleted) {
+                completer.complete(rc != null && rc.isValueSuccess());
+              }
+            },
+            (log) {
+              if (kDebugMode) {
+                print('ffmpeg(image-hls): ${log.getMessage()}');
+              }
+            },
+            (stat) async {
+              if (t.state != 'downloading') {
+                return;
+              }
+              try {
+                final output = File(t.savePath);
+                if (await output.exists()) {
+                  final len = await output.length();
+                  final last = _lastHlsSize[t] ?? 0;
+                  if (len > last) {
+                    _lastHlsSize[t] = len;
+                    t.received = len;
+                    _notifyDownloadsUpdated();
+                    if (len - last >= 256 * 1024) {
+                      notifyListeners();
+                    }
+                  }
+                }
+              } catch (_) {}
+            },
+          );
+          final id = await session.getSessionId();
+          if (id != null) _ffmpegSessions[t] = id;
+          final ok = await completer.future;
+          _ffmpegSessions.remove(t);
+          return ok;
+        } on PlatformException catch (e) {
+          if (kDebugMode) {
+            print('ffmpeg(image-hls) failed to start: $e');
+          }
+          return false;
+        } catch (e) {
+          if (kDebugMode) {
+            print('ffmpeg(image-hls) error: $e');
+          }
+          return false;
+        }
       }
 
       bool success = false;
@@ -4445,6 +4562,7 @@ class AppRepo extends ChangeNotifier {
         }
       } else {
         t.state = 'error';
+        _lastHlsSize.remove(t);
         _notifyDownloadsUpdated();
         notifyListeners();
       }
