@@ -22,7 +22,7 @@ final class AirPlayRoutePickerView: NSObject, FlutterPlatformView {
     init(frame: CGRect, arguments args: Any?) {
         picker = AVRoutePickerView(frame: frame)
         super.init()
-        picker.translatesAutoresizingMaskIntoConstraints = false
+        picker.translatesAutoresizingMaskIntoConstraints = true
         picker.backgroundColor = .clear
         picker.prioritizesVideoDevices = true
         applyColors(from: args)
