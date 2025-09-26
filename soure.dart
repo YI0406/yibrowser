@@ -618,6 +618,29 @@ class YtOption {
   });
 }
 
+class _HlsResumeManifest {
+  _HlsResumeManifest({List<String>? parts, int? completedMs})
+    : parts = parts ?? <String>[],
+      completedMs = completedMs ?? 0;
+
+  final List<String> parts;
+  int completedMs;
+
+  Map<String, dynamic> toJson() => {
+    'version': 1,
+    'parts': parts,
+    'completedMs': completedMs,
+  };
+
+  static _HlsResumeManifest fromJson(Map<String, dynamic> json) {
+    final parts =
+        (json['parts'] as List?)?.whereType<String>().toList(growable: true) ??
+        <String>[];
+    final completed = json['completedMs'] as int? ?? 0;
+    return _HlsResumeManifest(parts: parts, completedMs: completed);
+  }
+}
+
 /// Application repository managing detected media hits, download tasks, and favorites.
 /// It also handles downloading/ converting HLS media to MP4/MOV and saving
 /// downloaded files into the photo gallery.
@@ -2871,10 +2894,12 @@ class AppRepo extends ChangeNotifier {
 
   /// Active FFmpeg session ids for HLS downloads (hls kind).
   final Map<DownloadTask, int> _ffmpegSessions = {};
- /// Tracks the active output file path for HLS conversions. When a conversion
+
+  /// Tracks the active output file path for HLS conversions. When a conversion
   /// is resumed we write to a temporary chunk; this map lets progress probes
   /// read the correct file instead of the final destination.
   final Map<DownloadTask, String> _hlsActiveOutputs = {};
+
   /// Path to the JSON file used to persist app state (tasks, favourites, settings).
   late String _stateFilePath;
 
@@ -3399,7 +3424,8 @@ class AppRepo extends ChangeNotifier {
       return null;
     }
   }
- String _hlsWorkspaceId(DownloadTask t) {
+
+  String _hlsWorkspaceId(DownloadTask t) {
     final input = utf8.encode('${t.url}|${t.savePath}');
     return sha1.convert(input).toString();
   }
@@ -3413,31 +3439,8 @@ class AppRepo extends ChangeNotifier {
     return dir;
   }
 
-  File _hlsManifestFile(Directory dir) => File(p.join(dir.path, 'manifest.json'));
-
-  class _HlsResumeManifest {
-    _HlsResumeManifest({List<String>? parts, int? completedMs})
-        : parts = parts ?? <String>[],
-          completedMs = completedMs ?? 0;
-
-    final List<String> parts;
-    int completedMs;
-
-    Map<String, dynamic> toJson() => {
-          'version': 1,
-          'parts': parts,
-          'completedMs': completedMs,
-        };
-
-    static _HlsResumeManifest fromJson(Map<String, dynamic> json) {
-      final parts = (json['parts'] as List?)
-              ?.whereType<String>()
-              .toList(growable: true) ??
-          <String>[];
-      final completed = json['completedMs'] as int? ?? 0;
-      return _HlsResumeManifest(parts: parts, completedMs: completed);
-    }
-  }
+  File _hlsManifestFile(Directory dir) =>
+      File(p.join(dir.path, 'manifest.json'));
 
   Future<_HlsResumeManifest> _loadHlsManifest(DownloadTask t) async {
     try {
@@ -3551,6 +3554,7 @@ class AppRepo extends ChangeNotifier {
     } catch (_) {}
     return false;
   }
+
   Future<void> _runTaskHls(DownloadTask t) async {
     try {
       // Detect suspicious .jpeg segments and pre-sanitize if needed
@@ -3633,7 +3637,7 @@ class AppRepo extends ChangeNotifier {
       final headerArg =
           headerLines.isNotEmpty ? "-headers '${headerLines}\\r\\n'" : '';
       final uaArg = ua.isNotEmpty ? "-user_agent '${ua}'" : '';
-       final manifest = await _loadHlsManifest(t);
+      final manifest = await _loadHlsManifest(t);
       int resumeMs = manifest.completedMs;
       if (t.total != null && t.total! > 0) {
         resumeMs = resumeMs.clamp(0, t.total!) as int;
@@ -3670,28 +3674,32 @@ class AppRepo extends ChangeNotifier {
         await _saveHlsManifest(t, manifest);
       }
 
-      final seekPrefix = resumeMs > 0
-          ? "-ss ${(resumeMs / 1000.0).toStringAsFixed(3)} "
-          : '';
+      final seekPrefix =
+          resumeMs > 0 ? "-ss ${(resumeMs / 1000.0).toStringAsFixed(3)} " : '';
       final cmd =
           "-y -loglevel info -reconnect 1 -reconnect_streamed 1 -reconnect_on_network_error 1 -http_persistent 1 "
           "-protocol_whitelist file,http,https,tcp,tls,crypto "
           "-allowed_extensions ALL "
           "-rw_timeout 15000000 -timeout 15000000 -analyzeduration 0 -probesize 500000 "
-           "$seekPrefix$uaArg $headerArg -i '${inputUrl}' -map 0:v:0? -map 0:a:0? -c copy -movflags +faststart -bsf:a aac_adtstoasc '${outputPath}'";
+          "$seekPrefix$uaArg $headerArg -i '${inputUrl}' -map 0:v:0? -map 0:a:0? -c copy -movflags +faststart -bsf:a aac_adtstoasc '${outputPath}'";
       final session = await FFmpegKit.executeAsync(
         cmd,
         (session) async {
           final rc = await session.getReturnCode();
-            _hlsActiveOutputs.remove(t);
+          _hlsActiveOutputs.remove(t);
           _ffmpegSessions.remove(t);
           if (rc != null && rc.isValueSuccess()) {
-             if (!manifest.parts.contains('$partName.mp4')) {
+            if (!manifest.parts.contains('$partName.mp4')) {
               manifest.parts.add('$partName.mp4');
             }
-            manifest.completedMs = t.total ?? math.max(manifest.completedMs, resumeMs);
+            manifest.completedMs =
+                t.total ?? math.max(manifest.completedMs, resumeMs);
             await _saveHlsManifest(t, manifest);
-            final assembled = await _finalizeHlsParts(t, manifest, '$partName.mp4');
+            final assembled = await _finalizeHlsParts(
+              t,
+              manifest,
+              '$partName.mp4',
+            );
             if (!assembled) {
               t.state = 'error';
               _notifyDownloadsUpdated();
@@ -3713,7 +3721,7 @@ class AppRepo extends ChangeNotifier {
             t.progressUnit = null;
             _lastHlsSize.remove(t);
             _normalizeTaskType(t);
-          
+
             _notifyDownloadsUpdated();
             notifyListeners();
             await _generatePreview(t);
@@ -3732,7 +3740,7 @@ class AppRepo extends ChangeNotifier {
               }
             }
           } else {
-          if (t.state == 'paused') {
+            if (t.state == 'paused') {
               await recordPartial();
             } else {
               t.state = 'error';
@@ -3744,7 +3752,7 @@ class AppRepo extends ChangeNotifier {
                   parameters: {'kind': 'hls'},
                 );
               } catch (_) {}
-            
+
               if (!t.url.startsWith('file:') &&
                   !t.url.startsWith('/') &&
                   !t.url.contains('/hls_sanitize_')) {
@@ -3815,24 +3823,24 @@ class AppRepo extends ChangeNotifier {
         (stat) async {
           final activePath = _hlsActiveOutputs[t] ?? t.savePath;
           try {
-          final f = File(activePath);
+            final f = File(activePath);
             if (await f.exists()) {
               final len = await f.length();
               final last = _lastHlsSize[t] ?? 0;
-             
+
               if (len >= last + (16 * 1024)) {
                 _lastHlsSize[t] = len;
                 _notifyDownloadsUpdated();
                 notifyListeners();
               }
             }
-         } catch (_) {}
+          } catch (_) {}
           try {
             final ms = stat.getTime();
             if (ms != null &&
                 (t.progressUnit == 'time-ms') &&
                 (t.total ?? 0) > 0) {
-             final newMs = (resumeMs + ms).clamp(0, t.total!);
+              final newMs = (resumeMs + ms).clamp(0, t.total!);
               if (newMs > t.received) {
                 t.received = newMs;
                 _notifyDownloadsUpdated();

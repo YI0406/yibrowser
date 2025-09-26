@@ -27,7 +27,7 @@ class NativeVideoSurface extends StatelessWidget {
       creationParams: null,
       creationParamsCodec: StandardMessageCodec(),
       gestureRecognizers: <Factory<OneSequenceGestureRecognizer>>{},
-      hitTestBehavior: PlatformViewHitTestBehavior.transparent,
+      hitTestBehavior: PlatformViewHitTestBehavior.opaque,
     );
   }
 }
