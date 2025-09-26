@@ -575,6 +575,10 @@ class DownloadTask {
   };
 }
 
+class _DownloadCancelled implements Exception {
+  const _DownloadCancelled();
+}
+
 /// Represents a user-defined folder that groups download tasks on the media
 /// page. The order of folders in [AppRepo.mediaFolders] determines their
 /// display order.
@@ -3275,6 +3279,12 @@ class AppRepo extends ChangeNotifier {
     String url, {
     DownloadTask? progressTask,
   }) async {
+    final originalTotal = progressTask?.total;
+    final originalReceived = progressTask?.received ?? 0;
+    final originalProgressUnit = progressTask?.progressUnit;
+    final originalName = progressTask?.name;
+    final bool nameWasEmpty = (originalName == null || originalName.isEmpty);
+    var resetName = false;
     try {
       final hdrs = await _headersFor(url);
       final dio = Dio();
@@ -3319,14 +3329,15 @@ class AppRepo extends ChangeNotifier {
 
       // Initialize progress feedback via task (use segment count as pseudo total)
       if (progressTask != null) {
+        progressTask.progressUnit = 'segments';
         progressTask.total = mediaSegs.length;
         progressTask.received = 0;
-        progressTask.name =
-            (progressTask.name == null || progressTask.name!.isEmpty)
-                ? LanguageService.instance.translate(
-                  'download.progress.sanitizingHls',
-                )
-                : progressTask.name;
+        if (nameWasEmpty) {
+          progressTask.name = LanguageService.instance.translate(
+            'download.progress.sanitizingHls',
+          );
+          resetName = true;
+        }
         _notifyDownloadsUpdated();
         notifyListeners();
       }
@@ -3352,6 +3363,10 @@ class AppRepo extends ChangeNotifier {
       int index = 0;
       for (final absUri in mediaSegs) {
         final abs = absUri.toString();
+        if (progressTask != null &&
+            (progressTask.state == 'paused' || progressTask.paused)) {
+          throw const _DownloadCancelled();
+        }
         // Fetch segment bytes with headers
         final resp = await dio.get<List<int>>(
           abs,
@@ -3401,6 +3416,9 @@ class AppRepo extends ChangeNotifier {
 
         // progress update by segment count (lightweight and reliable)
         if (progressTask != null) {
+          if (progressTask.state == 'paused' || progressTask.paused) {
+            throw const _DownloadCancelled();
+          }
           progressTask.received = index + 1;
           // propagate update to downloads list for UI progress
           _notifyDownloadsUpdated();
@@ -3415,13 +3433,29 @@ class AppRepo extends ChangeNotifier {
       final localPl = p.join(workDir.path, 'local.m3u8');
       await File(localPl).writeAsString(sb.toString(), flush: true);
       if (progressTask != null) {
+        if (progressTask.state == 'paused' || progressTask.paused) {
+          throw const _DownloadCancelled();
+        }
         _notifyDownloadsUpdated();
         notifyListeners();
       }
       return localPl;
+    } on _DownloadCancelled {
+      rethrow;
     } catch (e) {
       if (kDebugMode) print('_sanitizeHlsToLocal error: $e');
       return null;
+    } finally {
+      if (progressTask != null) {
+        progressTask.progressUnit = originalProgressUnit;
+        progressTask.total = originalTotal;
+        progressTask.received = originalReceived;
+        if (resetName) {
+          progressTask.name = originalName;
+        }
+        _notifyDownloadsUpdated();
+        notifyListeners();
+      }
     }
   }
 
@@ -3612,16 +3646,23 @@ class AppRepo extends ChangeNotifier {
         // If the playlist contains only image segments (no TS/m4s) then process via image sequence
         if (jpegish && !hasTs) {
           // run dedicated image sequence processing and return early
-          await _runTaskHlsImages(t, playlistText: probeTxt);
+          try {
+            await _runTaskHlsImages(t, playlistText: probeTxt);
+          } on _DownloadCancelled {
+            return;
+          }
           return;
         }
         // If the playlist contains image segments but also TS segments, sanitize to remove images
         if (jpegish) {
-          // Provide task so sanitizer can report progress to the UI
-          final local = await _sanitizeHlsToLocal(t.url, progressTask: t);
-          if (local == null) {}
-          if (local != null) {
-            inputUrl = local; // use local cleaned playlist
+          try {
+            // Provide task so sanitizer can report progress to the UI
+            final local = await _sanitizeHlsToLocal(t.url, progressTask: t);
+            if (local != null) {
+              inputUrl = local; // use local cleaned playlist
+            }
+          } on _DownloadCancelled {
+            return;
           }
         }
       } catch (_) {}
@@ -3813,6 +3854,8 @@ class AppRepo extends ChangeNotifier {
                       return;
                     }
                   }
+                } on _DownloadCancelled {
+                  return;
                 } catch (_) {}
               }
             }
@@ -3854,6 +3897,8 @@ class AppRepo extends ChangeNotifier {
       );
       final id = await session.getSessionId();
       if (id != null) _ffmpegSessions[t] = id;
+    } on _DownloadCancelled {
+      return;
     } catch (e) {
       if (t.state != 'paused') {
         t.state = 'error';
@@ -3948,6 +3993,9 @@ class AppRepo extends ChangeNotifier {
       final headers = await _headersFor(t.url);
       final frameNames = <String>[];
       for (int i = 0; i < imageUris.length; i++) {
+        if (t.state == 'paused' || t.paused) {
+          throw const _DownloadCancelled();
+        }
         final uri = imageUris[i];
         final frameName = 'frame_${i.toString().padLeft(6, '0')}$frameExt';
         try {
@@ -4014,6 +4062,9 @@ class AppRepo extends ChangeNotifier {
       }
 
       Future<bool> _runEncoder(String encoderArgs) async {
+        if (t.state == 'paused' || t.paused) {
+          throw const _DownloadCancelled();
+        }
         final completer = Completer<bool>();
         final session = await FFmpegKit.executeAsync(
           _buildCommand(encoderArgs),
@@ -4083,6 +4134,8 @@ class AppRepo extends ChangeNotifier {
         notifyListeners();
       }
       await _saveState();
+    } on _DownloadCancelled {
+      return;
     } catch (e) {
       if (kDebugMode) print('runTaskHlsImages error: $e');
       if (t.state != 'paused') {
