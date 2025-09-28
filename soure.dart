@@ -2221,8 +2221,12 @@ class AppRepo extends ChangeNotifier {
     } catch (_) {}
 
     Duration? detectedDuration;
-    if (durationSeconds != null && durationSeconds.isFinite && durationSeconds > 0) {
-      detectedDuration = Duration(milliseconds: (durationSeconds * 1000).round());
+    if (durationSeconds != null &&
+        durationSeconds.isFinite &&
+        durationSeconds > 0) {
+      detectedDuration = Duration(
+        milliseconds: (durationSeconds * 1000).round(),
+      );
       t.duration = detectedDuration;
     }
 
@@ -2471,6 +2475,9 @@ class AppRepo extends ChangeNotifier {
             await f2.delete();
           }
         } catch (_) {}
+      }
+      if (t.kind == 'yt-merge') {
+        await _cleanupYtMergeWorkspace(t);
       }
     }
     downloads.value = current;
@@ -2971,6 +2978,8 @@ class AppRepo extends ChangeNotifier {
           unawaited(_runTaskFile(task, resume: true));
         } else if (task.kind == 'dash') {
           unawaited(_runTaskDash(task));
+        } else if (task.kind == 'yt-merge') {
+          unawaited(_runTaskYoutubeMerge(task));
         } else {
           unawaited(_runTaskHls(task));
         }
@@ -3572,24 +3581,33 @@ class AppRepo extends ChangeNotifier {
     final token = CancelToken();
     _dioTokens[t] = token;
 
-    final tempDir = await getTemporaryDirectory();
-    final baseName =
-        'yt_${DateTime.now().microsecondsSinceEpoch}_${t.timestamp.millisecondsSinceEpoch}';
-    final videoTemp = p.join(tempDir.path, '$baseName.video.$fileExt');
-    final audioTemp = p.join(tempDir.path, '$baseName.audio.$audioExt');
+    final workspace = await _ensureYtMergeWorkspace(t);
+    final videoTemp = p.join(workspace.path, 'video.$fileExt');
+    final audioTemp = p.join(workspace.path, 'audio.$audioExt');
 
-    int aggregate = 0;
+    Future<int> existingLength(String path) async {
+      try {
+        final file = File(path);
+        if (await file.exists()) {
+          return await file.length();
+        }
+      } catch (_) {}
+      return 0;
+    }
+
+    int aggregate =
+        await existingLength(videoTemp) + await existingLength(audioTemp);
+    if (aggregate > 0) {
+      t.received = aggregate;
+      _notifyDownloadsUpdated();
+    }
     int totalExpected = 0;
 
-    Future<void> cleanupTemps() async {
-      try {
-        final file = File(videoTemp);
-        if (await file.exists()) await file.delete();
-      } catch (_) {}
-      try {
-        final file = File(audioTemp);
-        if (await file.exists()) await file.delete();
-      } catch (_) {}
+    Future<void> cleanupTemps({required bool keepPartial}) async {
+      if (keepPartial) {
+        return;
+      }
+      await _cleanupYtMergeWorkspace(t);
     }
 
     void handleChunk(int chunkLength) {
@@ -3629,20 +3647,52 @@ class AppRepo extends ChangeNotifier {
       Map<String, String> headers,
     ) async {
       final file = File(outputPath);
-      if (await file.exists()) await file.delete();
+
       await file.create(recursive: true);
-      final sink = file.openWrite();
+      int start = 0;
       try {
-        final resp = await dio.get<ResponseBody>(
-          targetUrl,
-          options: Options(
-            headers: headers,
-            responseType: ResponseType.stream,
-            followRedirects: true,
-          ),
-          cancelToken: token,
-        );
+        if (await file.exists()) {
+          start = await file.length();
+        }
+      } catch (_) {
+        start = 0;
+      }
+
+      final hdrs = Map<String, String>.from(headers);
+      if (start > 0) {
+        hdrs[HttpHeaders.rangeHeader] = 'bytes=$start-';
+      }
+
+      final resp = await dio.get<ResponseBody>(
+        targetUrl,
+        options: Options(
+          headers: hdrs,
+          responseType: ResponseType.stream,
+          followRedirects: true,
+          validateStatus:
+              (status) => status != null && status >= 200 && status < 400,
+        ),
+        cancelToken: token,
+      );
+
+      final status = resp.statusCode ?? HttpStatus.ok;
+      if (status == HttpStatus.requestedRangeNotSatisfiable) {
+        return await file.length();
+      }
+
+      if (start > 0 && status == HttpStatus.ok) {
+        aggregate -= start;
+        if (aggregate < 0) aggregate = 0;
+        t.received = aggregate;
+        _notifyDownloadsUpdated();
+        await file.writeAsBytes(const [], flush: true);
+        start = 0;
+      }
+
+      final sink = file.openWrite(mode: FileMode.append);
+      try {
         await for (final chunk in resp.data!.stream) {
+          if (chunk.isEmpty) continue;
           if (token.isCancelled) break;
           sink.add(chunk);
           handleChunk(chunk.length);
@@ -3678,11 +3728,18 @@ class AppRepo extends ChangeNotifier {
       if (token.isCancelled) {
         t.paused = true;
         t.state = 'paused';
-        await cleanupTemps();
+
         await _saveState();
         return;
       }
-
+      final videoBytesNow = await existingLength(videoTemp);
+      final preAudioBytes = await existingLength(audioTemp);
+      final diskTotalBeforeAudio = videoBytesNow + preAudioBytes;
+      if (diskTotalBeforeAudio > aggregate) {
+        aggregate = diskTotalBeforeAudio;
+        t.received = aggregate;
+        _notifyDownloadsUpdated();
+      }
       Future<void> ensureLocalStream({
         required String path,
         required String kind,
@@ -3707,22 +3764,50 @@ class AppRepo extends ChangeNotifier {
         }
       }
 
-      Future<int> downloadVideoFallback() {
-        return downloadYoutubeStreamToFile(
+      Future<int> downloadVideoFallback() async {
+        final existing = await existingLength(videoTemp);
+        var skipResume = existing > 0;
+        return await downloadYoutubeStreamToFile(
           videoId: videoId!,
           itag: videoItag!,
           destinationPath: videoTemp,
-          onBytes: handleChunk,
+          onBytes: (bytes) {
+            if (skipResume) {
+              skipResume = false;
+              if (bytes == existing) {
+                return;
+              }
+              aggregate -= existing;
+              if (aggregate < 0) aggregate = 0;
+              t.received = aggregate;
+              _notifyDownloadsUpdated();
+            }
+            handleChunk(bytes);
+          },
           shouldAbort: () => token.isCancelled,
         );
       }
 
-      Future<int> downloadAudioFallback() {
-        return downloadYoutubeStreamToFile(
+      Future<int> downloadAudioFallback() async {
+        final existing = await existingLength(audioTemp);
+        var skipResume = existing > 0;
+        return await downloadYoutubeStreamToFile(
           videoId: videoId!,
           itag: audioItag!,
           destinationPath: audioTemp,
-          onBytes: handleChunk,
+          onBytes: (bytes) {
+            if (skipResume) {
+              skipResume = false;
+              if (bytes == existing) {
+                return;
+              }
+              aggregate -= existing;
+              if (aggregate < 0) aggregate = 0;
+              t.received = aggregate;
+              _notifyDownloadsUpdated();
+            }
+            handleChunk(bytes);
+          },
           shouldAbort: () => token.isCancelled,
         );
       }
@@ -3738,7 +3823,7 @@ class AppRepo extends ChangeNotifier {
         } on YoutubeStreamCancelled {
           t.paused = true;
           t.state = 'paused';
-          await cleanupTemps();
+
           await _saveState();
           return;
         }
@@ -3748,11 +3833,17 @@ class AppRepo extends ChangeNotifier {
       if (token.isCancelled) {
         t.paused = true;
         t.state = 'paused';
-        await cleanupTemps();
+
         await _saveState();
         return;
       }
-
+      final audioBytesNow = await existingLength(audioTemp);
+      final diskTotal = await existingLength(videoTemp) + audioBytesNow;
+      if (diskTotal > aggregate) {
+        aggregate = diskTotal;
+        t.received = aggregate;
+        _notifyDownloadsUpdated();
+      }
       if (videoId != null && audioItag != null) {
         try {
           await ensureLocalStream(
@@ -3764,7 +3855,7 @@ class AppRepo extends ChangeNotifier {
         } on YoutubeStreamCancelled {
           t.paused = true;
           t.state = 'paused';
-          await cleanupTemps();
+
           await _saveState();
           return;
         }
@@ -3806,7 +3897,7 @@ class AppRepo extends ChangeNotifier {
             notifyListeners();
           }
           _ffmpegSessions.remove(t);
-          await cleanupTemps();
+          await cleanupTemps(keepPartial: t.state == 'paused');
           await _saveState();
         },
         (log) {
@@ -3828,7 +3919,7 @@ class AppRepo extends ChangeNotifier {
         t.paused = true;
         t.state = 'paused';
       }
-      await cleanupTemps();
+      await cleanupTemps(keepPartial: t.state == 'paused');
       await _saveState();
     } catch (e) {
       if (t.state != 'paused') {
@@ -3837,7 +3928,7 @@ class AppRepo extends ChangeNotifier {
         _notifyDownloadsUpdated();
         notifyListeners();
       }
-      await cleanupTemps();
+      await cleanupTemps(keepPartial: t.state == 'paused');
       await _saveState();
     } finally {
       _dioTokens.remove(t);
@@ -4181,6 +4272,36 @@ class AppRepo extends ChangeNotifier {
       await dir.create(recursive: true);
     }
     return dir;
+  }
+
+  String _ytMergeWorkspaceId(DownloadTask t) {
+    final key = utf8.encode(
+      '${t.url}|${t.savePath}|${t.timestamp.millisecondsSinceEpoch}',
+    );
+    return sha1.convert(key).toString();
+  }
+
+  Future<Directory> _ensureYtMergeWorkspace(DownloadTask t) async {
+    final docs = await getApplicationDocumentsDirectory();
+    final dir = Directory(
+      p.join(docs.path, 'yt_merge', _ytMergeWorkspaceId(t)),
+    );
+    if (!await dir.exists()) {
+      await dir.create(recursive: true);
+    }
+    return dir;
+  }
+
+  Future<void> _cleanupYtMergeWorkspace(DownloadTask t) async {
+    try {
+      final docs = await getApplicationDocumentsDirectory();
+      final dir = Directory(
+        p.join(docs.path, 'yt_merge', _ytMergeWorkspaceId(t)),
+      );
+      if (await dir.exists()) {
+        await dir.delete(recursive: true);
+      }
+    } catch (_) {}
   }
 
   File _hlsManifestFile(Directory dir) =>

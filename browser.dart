@@ -267,14 +267,17 @@ class _BrowserPageState extends State<BrowserPage>
     final resolvedInfo = info!;
     _cachedYoutubeInfo = resolvedInfo;
 
-    final durationLabel = resolvedInfo.duration != null
-        ? context.l10n(
-            'browser.media.durationLabel',
-            params: {
-              'duration': _fmtDur(resolvedInfo.duration!.inSeconds.toDouble()),
-            },
-          )
-        : context.l10n('browser.media.durationResolving');
+    final durationLabel =
+        resolvedInfo.duration != null
+            ? context.l10n(
+              'browser.media.durationLabel',
+              params: {
+                'duration': _fmtDur(
+                  resolvedInfo.duration!.inSeconds.toDouble(),
+                ),
+              },
+            )
+            : context.l10n('browser.media.durationResolving');
     final thumbUrl =
         'https://img.youtube.com/vi/${resolvedInfo.videoId}/hqdefault.jpg';
 
@@ -299,19 +302,17 @@ class _BrowserPageState extends State<BrowserPage>
                   child: Image.network(
                     thumbUrl,
                     fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => Container(
-                      color: theme.colorScheme.surfaceVariant,
-                      alignment: Alignment.center,
-                      child: const Icon(Icons.image_not_supported),
-                    ),
+                    errorBuilder:
+                        (_, __, ___) => Container(
+                          color: theme.colorScheme.surfaceVariant,
+                          alignment: Alignment.center,
+                          child: const Icon(Icons.image_not_supported),
+                        ),
                   ),
                 ),
               ),
               const SizedBox(height: 12),
-              Text(
-                durationLabel,
-                style: theme.textTheme.bodyMedium,
-              ),
+              Text(durationLabel, style: theme.textTheme.bodyMedium),
               const SizedBox(height: 8),
               SelectableText(
                 url,
@@ -343,10 +344,7 @@ class _BrowserPageState extends State<BrowserPage>
               label: Text(context.l10n('common.download')),
               onPressed: () async {
                 Navigator.of(dialogContext).pop();
-                await _showYoutubeDownloadOptions(
-                  url,
-                  preloaded: resolvedInfo,
-                );
+                await _showYoutubeDownloadOptions(url, preloaded: resolvedInfo);
               },
             ),
           ],
@@ -1296,9 +1294,7 @@ class _BrowserPageState extends State<BrowserPage>
       if (option.type == YtOptionType.videoAudio) {
         final audioRate = formatBitrate(option.audioBitrate);
         if (audioRate != null) parts.add(audioRate);
-        parts.add(
-          context.l10n('browser.youtube.option.mergeHint'),
-        );
+        parts.add(context.l10n('browser.youtube.option.mergeHint'));
       }
       return parts.join(' · ');
     }
@@ -4652,8 +4648,7 @@ class _BrowserPageState extends State<BrowserPage>
                           final candidate = extra?.trim();
                           final hasCandidateLink =
                               candidate != null && candidate.isNotEmpty;
-                          final bool isYoutubeWatch =
-                              _isOnYoutubeWatchPage();
+                          final bool isYoutubeWatch = _isOnYoutubeWatchPage();
                           if (hasCandidateLink &&
                               (isAnchorHit ||
                                   (!isImageHit &&
@@ -6543,6 +6538,7 @@ class _BrowserPageState extends State<BrowserPage>
 
   /// key => snapshot (key can be url or savePath+phase)
   final Map<String, _RateSnapshot> _rateSnaps = {};
+
   /// Cache the most recent non-null speed so the UI can keep showing a value
   /// while the next sample is still being gathered.
   final Map<String, double> _lastSpeeds = {};
@@ -7066,35 +7062,6 @@ class _BrowserPageState extends State<BrowserPage>
               ),
             );
           }
-          // 顯示直接下載檔案的即時速度（非 HLS）
-          final keyDirect = '${t.savePath}|bytes';
-          final spDirect = _computeSpeed(keyDirect, t.received);
-          if (spDirect != null) {
-            _lastSpeeds[keyDirect] = spDirect;
-            subtitleWidgets.add(
-              Text(
-                context.l10n(
-                  'browser.download.speedLabel',
-                  params: {'speed': _fmtSpeed(spDirect)},
-                ),
-                style: const TextStyle(fontSize: 12),
-              ),
-            );
-          } else {
-            _rateSnaps.putIfAbsent(keyDirect, () => _snapNow(t.received));
-            final cached = _lastSpeeds[keyDirect];
-            subtitleWidgets.add(
-              Text(
-                cached != null
-                    ? context.l10n(
-                        'browser.download.speedLabel',
-                        params: {'speed': _fmtSpeed(cached)},
-                      )
-                    : context.l10n('browser.download.speedMeasuring'),
-                style: const TextStyle(fontSize: 12),
-              ),
-            );
-          }
         } else if (t.state == 'done' || t.state == 'error') {
           try {
             final f = File(t.savePath);
@@ -7170,9 +7137,9 @@ class _BrowserPageState extends State<BrowserPage>
             Text(
               cached != null
                   ? context.l10n(
-                      'browser.download.speedLabel',
-                      params: {'speed': _fmtSpeed(cached)},
-                    )
+                    'browser.download.speedLabel',
+                    params: {'speed': _fmtSpeed(cached)},
+                  )
                   : context.l10n('browser.download.speedMeasuring'),
               style: const TextStyle(fontSize: 12),
             ),
@@ -7234,7 +7201,7 @@ class _BrowserPageState extends State<BrowserPage>
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (t.state == 'downloading' && !t.paused)
+            if (t.state == 'downloading' && !t.paused && !isConverting)
               IconButton(
                 icon: const Icon(Icons.pause),
                 tooltip: context.l10n('common.pause'),
@@ -7267,10 +7234,7 @@ class _BrowserPageState extends State<BrowserPage>
                 if (!isCompleted && state == 'downloading') {
                   await AppRepo.I.pauseTask(t);
                 }
-                await AppRepo.I.removeTasks(
-                  [t],
-                  deleteFiles: shouldDeleteFile,
-                );
+                await AppRepo.I.removeTasks([t], deleteFiles: shouldDeleteFile);
                 await AppRepo.I.rescanDownloadsFolder();
                 if (!mounted) return;
                 ScaffoldMessenger.of(context).showSnackBar(
