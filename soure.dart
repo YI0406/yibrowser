@@ -645,6 +645,50 @@ class _HlsResumeManifest {
   }
 }
 
+class _HlsImageResumeData {
+  _HlsImageResumeData({
+    required this.playlistHash,
+    required this.frameExt,
+    required this.frameCount,
+    Set<int>? completed,
+  }) : completed = completed ?? <int>{};
+
+  final String playlistHash;
+  String frameExt;
+  int frameCount;
+  final Set<int> completed;
+
+  Map<String, dynamic> toJson() => {
+    'version': 1,
+    'playlistHash': playlistHash,
+    'frameExt': frameExt,
+    'frameCount': frameCount,
+    'completed': completed.toList(),
+  };
+
+  static _HlsImageResumeData? fromJson(Map<String, dynamic> json) {
+    final hash = json['playlistHash'] as String?;
+    final ext = json['frameExt'] as String? ?? '';
+    final count = (json['frameCount'] as num?)?.toInt();
+    if (hash == null || hash.isEmpty || count == null || count < 0) {
+      return null;
+    }
+    final completedList = (json['completed'] as List?)?.whereType<num>();
+    final completed = <int>{
+      if (completedList != null)
+        ...completedList.map((e) => e.toInt()).where((e) => e >= 0),
+    };
+    final extWithDot =
+        ext.isEmpty ? '.jpeg' : (ext.startsWith('.') ? ext : '.$ext');
+    return _HlsImageResumeData(
+      playlistHash: hash,
+      frameExt: extWithDot,
+      frameCount: count,
+      completed: completed,
+    );
+  }
+}
+
 /// Application repository managing detected media hits, download tasks, and favorites.
 /// It also handles downloading/ converting HLS media to MP4/MOV and saving
 /// downloaded files into the photo gallery.
@@ -4306,6 +4350,11 @@ class AppRepo extends ChangeNotifier {
 
   File _hlsManifestFile(Directory dir) =>
       File(p.join(dir.path, 'manifest.json'));
+  File _hlsImageManifestFile(Directory dir) =>
+      File(p.join(dir.path, 'image_resume.json'));
+
+  Directory _hlsImageFramesDir(Directory dir) =>
+      Directory(p.join(dir.path, 'image_frames'));
 
   Future<_HlsResumeManifest> _loadHlsManifest(DownloadTask t) async {
     try {
@@ -4324,6 +4373,48 @@ class AppRepo extends ChangeNotifier {
     } catch (_) {
       return _HlsResumeManifest();
     }
+  }
+
+  Future<_HlsImageResumeData?> _loadHlsImageResume(DownloadTask t) async {
+    try {
+      final dir = await _ensureHlsWorkspace(t);
+      final file = _hlsImageManifestFile(dir);
+      if (!await file.exists()) {
+        return null;
+      }
+      final raw = await file.readAsString();
+      if (raw.trim().isEmpty) {
+        return null;
+      }
+      final data = jsonDecode(raw);
+      if (data is Map<String, dynamic>) {
+        return _HlsImageResumeData.fromJson(data);
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _saveHlsImageResume(
+    DownloadTask t,
+    _HlsImageResumeData data,
+  ) async {
+    try {
+      final dir = await _ensureHlsWorkspace(t);
+      final file = _hlsImageManifestFile(dir);
+      await file.writeAsString(jsonEncode(data.toJson()), flush: true);
+    } catch (_) {}
+  }
+
+  Future<void> _clearHlsImageResume(DownloadTask t) async {
+    try {
+      final dir = await _ensureHlsWorkspace(t);
+      final file = _hlsImageManifestFile(dir);
+      if (await file.exists()) {
+        await file.delete();
+      }
+    } catch (_) {}
   }
 
   Future<void> _saveHlsManifest(
@@ -4892,23 +4983,12 @@ class AppRepo extends ChangeNotifier {
         await _saveState();
         return;
       }
-      // prepare temp working dir
-      final tmp = await getTemporaryDirectory();
-      final stamp = DateTime.now().millisecondsSinceEpoch;
-      final work = Directory('${tmp.path}/hls_images_$stamp');
-      await work.create(recursive: true);
-      // set totals based on number of segments and reset progress
-      t.total = imageUris.length;
-      t.received = 0;
-      t.state = 'downloading';
-      // ensure UI reflects the updated task list
-      _notifyDownloadsUpdated();
-      notifyListeners();
-      // Determine a consistent filename extension for sequential frames so
-      // FFmpeg's image2 demuxer can glob them with a numeric pattern. We use
-      // the first extension found (defaulting to .jpeg) because FFmpeg probes
-      // file headers to detect actual formats, so the extension itself is not
-      // critical.
+      final playlistHash = sha1.convert(utf8.encode(playlistText)).toString();
+      final workspace = await _ensureHlsWorkspace(t);
+      final framesDir = _hlsImageFramesDir(workspace);
+      if (!await framesDir.exists()) {
+        await framesDir.create(recursive: true);
+      }
       String frameExt = '.jpeg';
       for (final uri in imageUris) {
         final ext = p.extension(uri.path).toLowerCase();
@@ -4918,16 +4998,76 @@ class AppRepo extends ChangeNotifier {
         }
       }
 
-      // download images sequentially
+      var resumeData = await _loadHlsImageResume(t);
+      if (resumeData == null ||
+          resumeData.playlistHash != playlistHash ||
+          resumeData.frameCount != imageUris.length) {
+        try {
+          if (await framesDir.exists()) {
+            await framesDir.delete(recursive: true);
+          }
+        } catch (_) {}
+        await framesDir.create(recursive: true);
+        resumeData = _HlsImageResumeData(
+          playlistHash: playlistHash,
+          frameExt: frameExt,
+          frameCount: imageUris.length,
+        );
+      } else {
+        if (resumeData.frameExt.isNotEmpty) {
+          frameExt = resumeData.frameExt;
+        } else {
+          resumeData.frameExt = frameExt;
+        }
+        resumeData.frameCount = imageUris.length;
+      }
+
+      final validatedCompleted = <int>{};
+      for (final index in resumeData.completed) {
+        if (index < 0 || index >= imageUris.length) {
+          continue;
+        }
+        final frameName = 'frame_${index.toString().padLeft(6, '0')}$frameExt';
+        final file = File(p.join(framesDir.path, frameName));
+        try {
+          if (await file.exists()) {
+            final len = await file.length();
+            if (len > 0) {
+              validatedCompleted.add(index);
+            }
+          }
+        } catch (_) {}
+      }
+      if (validatedCompleted.length != resumeData.completed.length) {
+        resumeData.completed
+          ..clear()
+          ..addAll(validatedCompleted);
+      }
+      resumeData.frameExt = frameExt;
+      resumeData.frameCount = imageUris.length;
+      await _saveHlsImageResume(t, resumeData);
+
+      t.total = imageUris.length;
+      t.received = resumeData.completed.length;
+      t.progressUnit = null;
+      t.state = 'downloading';
+      _notifyDownloadsUpdated();
+      notifyListeners();
       final dio = Dio();
       final headers = await _headersFor(t.url);
       final frameNames = <String>[];
+      var downloadedCount = resumeData.completed.length;
       for (int i = 0; i < imageUris.length; i++) {
         if (t.state == 'paused' || t.paused) {
           throw const _DownloadCancelled();
         }
         final uri = imageUris[i];
         final frameName = 'frame_${i.toString().padLeft(6, '0')}$frameExt';
+        final framePath = p.join(framesDir.path, frameName);
+        if (resumeData.completed.contains(i)) {
+          frameNames.add(frameName);
+          continue;
+        }
         try {
           final resp = await dio.get<List<int>>(
             uri.toString(),
@@ -4938,23 +5078,26 @@ class AppRepo extends ChangeNotifier {
             ),
           );
           final bytes = resp.data ?? const <int>[];
-          final file = File(p.join(work.path, frameName));
+          final file = File(framePath);
           await file.writeAsBytes(bytes, flush: true);
         } catch (e) {
           // still create empty file to maintain sequence
-          final file = File(p.join(work.path, frameName));
+          final file = File(framePath);
           await file.writeAsBytes(const <int>[], flush: true);
         }
         frameNames.add(frameName);
+        resumeData.completed.add(i);
+        downloadedCount += 1;
         // update progress by segment count
-        t.received = i + 1;
+        t.received = downloadedCount;
         // propagate to listeners (downloads list and others)
         _notifyDownloadsUpdated();
         notifyListeners();
+        await _saveHlsImageResume(t, resumeData);
       }
-      t.received = 0;
-      t.total = null;
-      t.progressUnit = null;
+      await _saveHlsImageResume(t, resumeData);
+      t.received = t.total ?? downloadedCount;
+      t.progressUnit = 'hls-converting';
       _lastHlsSize[t] = 0;
       _notifyDownloadsUpdated();
       notifyListeners();
@@ -4964,7 +5107,7 @@ class AppRepo extends ChangeNotifier {
       final uniformDuration = durations.every(
         (d) => (d - baseDuration).abs() < 0.001 && d > 0,
       );
-      final framePattern = p.join(work.path, 'frame_%06d$frameExt');
+      final framePattern = p.join(framesDir.path, 'frame_%06d$frameExt');
       final bool useHardwareEncoder = Platform.isIOS;
       const evenScaleFilter = 'scale=trunc(iw/2)*2:trunc(ih/2)*2';
       const encoderFilterHw = 'nv12';
@@ -4974,7 +5117,7 @@ class AppRepo extends ChangeNotifier {
       String? concatListPath;
       if (!(uniformDuration && baseDuration > 0)) {
         // Build concat list file for FFmpeg so we can keep per-image durations
-        final listFile = File(p.join(work.path, 'list.txt'));
+        final listFile = File(p.join(framesDir.path, 'list.txt'));
         final sb = StringBuffer();
         for (int i = 0; i < frameNames.length; i++) {
           final name = frameNames[i];
@@ -5060,7 +5203,7 @@ class AppRepo extends ChangeNotifier {
       if (useHardwareEncoder) {
         final hwArgs =
             '-vf $evenScaleFilter,format=$encoderFilterHw -c:v $encoderHw '
-            '-allow_sw 1 -b:v 6000k -pix_fmt $encoderFilterSw';
+            '-b:v 6000k -pix_fmt $encoderFilterSw';
         success = await _runEncoder(hwArgs);
         if (!success) {
           // Hardware encoding may fail on some devices; retry with software encoder.
@@ -5091,6 +5234,8 @@ class AppRepo extends ChangeNotifier {
         }
         t.progressUnit = null;
         _normalizeTaskType(t);
+        await _clearHlsImageResume(t);
+        await _cleanupHlsWorkspace(t);
         _notifyDownloadsUpdated();
         notifyListeners();
         await _generatePreview(t);
@@ -5102,6 +5247,7 @@ class AppRepo extends ChangeNotifier {
         }
       } else {
         t.state = 'error';
+        t.progressUnit = null;
         _lastHlsSize.remove(t);
         _notifyDownloadsUpdated();
         notifyListeners();

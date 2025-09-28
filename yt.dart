@@ -466,13 +466,10 @@ class YoutubeStreamCancelled implements Exception {
 }
 
 int _pickParallelConnectionCount(int totalBytes) {
-  if (totalBytes < 4 * 1024 * 1024) {
-    return 2;
-  }
-  if (totalBytes < 20 * 1024 * 1024) {
+  if (totalBytes < 8 * 1024 * 1024) {
     return 4;
   }
-  if (totalBytes < 80 * 1024 * 1024) {
+  if (totalBytes < 48 * 1024 * 1024) {
     return 6;
   }
   return 8;
@@ -610,6 +607,7 @@ class _YoutubeParallelDownloader {
       }
       _segments = _buildSegments(totalBytes);
       await _ensureOutputFile(totalBytes);
+      await _persistResume();
       final resume = await _loadResumeProgress();
       if (resume.isComplete) {
         await _cleanupResume();

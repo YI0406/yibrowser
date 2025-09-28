@@ -6789,7 +6789,8 @@ class _BrowserPageState extends State<BrowserPage>
     final bool isConverting =
         isHls &&
         t.state == 'downloading' &&
-        (t.total != null && t.received >= t.total!);
+        ((t.total != null && t.received >= t.total!) ||
+            t.progressUnit == 'hls-converting');
     // HLS tasks actively downloading segments have received fewer segments
     // than the total and are still marked as downloading.
     final bool isDownloadingSegments =
