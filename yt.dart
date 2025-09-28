@@ -467,12 +467,12 @@ class YoutubeStreamCancelled implements Exception {
 
 int _pickParallelConnectionCount(int totalBytes) {
   if (totalBytes < 8 * 1024 * 1024) {
-    return 4;
-  }
-  if (totalBytes < 48 * 1024 * 1024) {
     return 6;
   }
-  return 8;
+  if (totalBytes < 48 * 1024 * 1024) {
+    return 8;
+  }
+  return 12;
 }
 
 Future<int> _downloadStreamSequential({
@@ -589,7 +589,8 @@ class _YoutubeParallelDownloader {
     _client =
         HttpClient()
           ..userAgent = _userAgent
-          ..connectionTimeout = const Duration(seconds: 20);
+          ..connectionTimeout = const Duration(seconds: 20)
+          ..maxConnectionsPerHost = math.max(6, parallelConnections + 2);
     _currentUrl = initialUrl;
     try {
       final metadata = await _probeMetadata();

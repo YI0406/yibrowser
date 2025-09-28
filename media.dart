@@ -84,8 +84,9 @@ bool _fileHasContent(String path) {
 class _RateSnapshot {
   final int bytes;
   final DateTime timestamp;
+  final double? speed;
 
-  const _RateSnapshot(this.bytes, this.timestamp);
+  const _RateSnapshot(this.bytes, this.timestamp, this.speed);
 }
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
@@ -1225,13 +1226,25 @@ class _MediaPageState extends State<MediaPage>
     final key = task.savePath;
     final now = DateTime.now();
     final prev = _directSpeedSnaps[key];
-    _directSpeedSnaps[key] = _RateSnapshot(task.received, now);
-    if (prev == null) return null;
-    final seconds = now.difference(prev.timestamp).inMilliseconds / 1000.0;
-    if (seconds <= 0) return null;
-    final delta = task.received - prev.bytes;
-    if (delta <= 0) return null;
-    return delta / seconds;
+    double? computed;
+    if (prev != null) {
+      final elapsedMs = now.difference(prev.timestamp).inMilliseconds;
+      if (elapsedMs > 0) {
+        final delta = task.received - prev.bytes;
+        if (delta > 0) {
+          computed = delta / (elapsedMs / 1000.0);
+        } else if (delta == 0) {
+          computed = prev.speed;
+        } else {
+          computed = null;
+        }
+      } else {
+        computed = prev.speed;
+      }
+    }
+    final cached = computed ?? prev?.speed;
+    _directSpeedSnaps[key] = _RateSnapshot(task.received, now, cached);
+    return cached;
   }
 
   void _purgeDirectSpeedSnapshot(String key) {

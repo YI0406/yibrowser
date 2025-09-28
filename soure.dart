@@ -4,6 +4,7 @@ import 'dart:ui'
     show Offset, Rect; // for mini player free-positioning & PiP sync
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter/services.dart';
 import 'package:ffmpeg_kit_flutter_new/ffprobe_kit.dart';
@@ -5108,7 +5109,11 @@ class AppRepo extends ChangeNotifier {
         (d) => (d - baseDuration).abs() < 0.001 && d > 0,
       );
       final framePattern = p.join(framesDir.path, 'frame_%06d$frameExt');
-      final bool useHardwareEncoder = Platform.isIOS;
+      final WidgetsBinding binding = WidgetsBinding.instance;
+      final appLifecycle = binding.lifecycleState;
+      final bool appIsActive =
+          appLifecycle == null || appLifecycle == AppLifecycleState.resumed;
+      final bool useHardwareEncoder = Platform.isIOS && appIsActive;
       const evenScaleFilter = 'scale=trunc(iw/2)*2:trunc(ih/2)*2';
       const encoderFilterHw = 'nv12';
       const encoderFilterSw = 'yuv420p';
