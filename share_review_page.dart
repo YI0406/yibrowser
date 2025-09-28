@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 import 'package:video_player/video_player.dart';
@@ -67,10 +66,6 @@ class _ShareReviewPageState extends State<ShareReviewPage>
   final List<IncomingShare> _removedItems = [];
   int _currentIndex = 0;
   _ShareReviewAction? _processing;
-  static const MethodChannel _iosShareChannel = MethodChannel(
-    'com.yibrowser/share',
-  );
-
   @override
   void initState() {
     super.initState();
@@ -95,27 +90,6 @@ class _ShareReviewPageState extends State<ShareReviewPage>
           debugPrint('[ShareReview] Failed to delete ${item.path}: $err');
         }
       }
-    }
-    if (!Platform.isIOS) {
-      return;
-    }
-    final cleanupPaths = items
-        .map((e) => e.relativePath)
-        .whereType<String>()
-        .map((path) => path.trim())
-        .where((path) => path.isNotEmpty)
-        .toSet()
-        .toList(growable: false);
-    if (cleanupPaths.isEmpty) {
-      return;
-    }
-    try {
-      await _iosShareChannel.invokeMethod(
-        'cleanupSharedDownloads',
-        cleanupPaths,
-      );
-    } catch (err) {
-      debugPrint('[ShareReview] iOS cleanup failed: $err');
     }
   }
 

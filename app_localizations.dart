@@ -1461,6 +1461,36 @@ final Map<String, Map<AppLanguage, String>> _translations = {
     AppLanguage.en:
         'Detected downloadable streams. Choose a quality/type to start downloading.',
   },
+  'browser.youtube.option.type.muxed': {
+    AppLanguage.zhHant: '視訊+音訊（原生）',
+    AppLanguage.zhHans: '视频+音频（原生）',
+    AppLanguage.en: 'Video + audio (single file)',
+  },
+  'browser.youtube.option.type.videoAudio': {
+    AppLanguage.zhHant: '視訊+音訊（需合併）',
+    AppLanguage.zhHans: '视频+音频（需合并）',
+    AppLanguage.en: 'Video + audio (merge required)',
+  },
+  'browser.youtube.option.type.videoOnly': {
+    AppLanguage.zhHant: '僅視訊（無音訊）',
+    AppLanguage.zhHans: '仅视频（无音频）',
+    AppLanguage.en: 'Video only (no audio)',
+  },
+  'browser.youtube.option.type.audioOnly': {
+    AppLanguage.zhHant: '僅音訊',
+    AppLanguage.zhHans: '仅音频',
+    AppLanguage.en: 'Audio only',
+  },
+  'browser.youtube.option.mergeHint': {
+    AppLanguage.zhHant: '下載時會先分段下載再合併，速度較慢',
+    AppLanguage.zhHans: '下载时会先分段下载再合并，速度较慢',
+    AppLanguage.en: 'Downloads video and audio separately then merges, slower',
+  },
+  'browser.youtube.error.noStreams': {
+    AppLanguage.zhHant: '無法取得此影片的串流選項',
+    AppLanguage.zhHans: '无法取得此影片的串流选项',
+    AppLanguage.en: 'Unable to load stream options for this video.',
+  },
   'browser.snack.addedDownload': {
     AppLanguage.zhHant: '已加入下載',
     AppLanguage.zhHans: '已加入下载',
@@ -2059,6 +2089,11 @@ final Map<String, Map<AppLanguage, String>> _translations = {
     AppLanguage.zhHant: '已刪除任務，檔案仍在媒體庫',
     AppLanguage.zhHans: '已删除任务，档案仍在媒体库',
     AppLanguage.en: 'Removed task; file kept in media library',
+  },
+  'browser.snack.downloadRemovedDeletedFile': {
+    AppLanguage.zhHant: '已刪除任務，並移除了相關檔案',
+    AppLanguage.zhHans: '已删除任务，并移除了相关档案',
+    AppLanguage.en: 'Removed task and deleted associated file',
   },
   'browser.snack.fileMissing': {
     AppLanguage.zhHant: '檔案已不存在',

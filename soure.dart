@@ -24,13 +24,13 @@ import 'app_localizations.dart';
 import 'dart:math' as math;
 import 'package:crypto/crypto.dart';
 import 'package:video_player/video_player.dart';
-import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 import 'package:flutter_hls_parser/flutter_hls_parser.dart';
 import 'package:firebase_analytics/firebase_analytics.dart';
 import 'notification_service.dart';
 // NOTE: The `download` package targets Flutter Web (browser-triggered save). It is not
 // applicable to iOS/Android file-system saving. Kept here for web builds if needed.
 import 'package:download/download.dart' as web_download; // unused on mobile
+import 'yt.dart';
 
 final ValueNotifier<String?> uaNotifier = ValueNotifier<String?>(null);
 
@@ -513,6 +513,9 @@ class DownloadTask {
   ///百分比與時間式進度。
   String? progressUnit;
 
+  /// Arbitrary metadata (e.g. YouTube stream pairing info) persisted with the task.
+  Map<String, dynamic>? extra;
+
   DownloadTask({
     required this.url,
     required this.savePath,
@@ -530,6 +533,7 @@ class DownloadTask {
     this.duration,
     this.paused = false,
     this.progressUnit,
+    this.extra,
   }) : timestamp = timestamp ?? DateTime.now();
 
   /// Construct a task from persisted JSON. Unknown fields are ignored.
@@ -557,6 +561,10 @@ class DownloadTask {
               : null,
       paused: json['paused'] as bool? ?? false,
       progressUnit: json['progressUnit'] as String?,
+      extra:
+          json['extra'] is Map
+              ? Map<String, dynamic>.from(json['extra'] as Map)
+              : null,
     );
   }
 
@@ -579,6 +587,7 @@ class DownloadTask {
     'duration': duration?.inMilliseconds,
     'paused': paused,
     'progressUnit': progressUnit,
+    'extra': extra,
   };
 }
 
@@ -611,22 +620,6 @@ class MediaFolder {
   }
 
   Map<String, dynamic> toJson() => {'id': id, 'name': name};
-}
-
-/// Represents a downloadable YouTube stream option (video or audio).
-class YtOption {
-  final String label; // 顯示給使用者看的標籤（例如 1080p MP4, 144p audio M4A）
-  final String url; // 真實可下載的 URL（googlevideo.com）
-  final String kind; // 'video' | 'audio'
-  final String container; // 'mp4' | 'webm' | 'm4a' ...
-  final int? bitrate; // 位元率（bps）
-  YtOption({
-    required this.label,
-    required this.url,
-    required this.kind,
-    required this.container,
-    this.bitrate,
-  });
 }
 
 class _HlsResumeManifest {
@@ -684,13 +677,26 @@ class AppRepo extends ChangeNotifier {
   static const int _hlsCandidateLimit = 8; // 最多嘗試 8 個候選
   /// When a YouTube URL is detected, this notifier exposes the available
   /// quality/type choices to the UI to show a picker. Set to null when idle.
-  final ValueNotifier<List<YtOption>?> ytOptions =
-      ValueNotifier<List<YtOption>?>(null);
+  final ValueNotifier<List<YtStreamOption>?> ytOptions =
+      ValueNotifier<List<YtStreamOption>?>(null);
   final ValueNotifier<String?> ytTitle = ValueNotifier<String?>(null);
   // 由 BrowserPage 即時同步的目前頁面 URL（供建 Referer 用）
   final ValueNotifier<String?> currentPageUrl = ValueNotifier<String?>(null);
   // 由 BrowserPage 更新的當前網頁標題，用於預設下載檔名。
   final ValueNotifier<String?> currentPageTitle = ValueNotifier<String?>(null);
+  bool isYoutubeUrl(String url) => _isYouTubeUrl(url);
+
+  Future<YtVideoInfo?> prepareYoutubeOptions(String url) async {
+    try {
+      return await _collectYtVideoInfo(url);
+    } catch (e) {
+      if (kDebugMode) {
+        print('prepareYoutubeOptions error: $e');
+      }
+      return null;
+    }
+  }
+
   static final AppRepo I = AppRepo._();
   AppRepo._();
 
@@ -1422,56 +1428,8 @@ class AppRepo extends ChangeNotifier {
   bool _isYouTubeUrl(String url) =>
       url.contains('youtube.com') || url.contains('youtu.be');
 
-  Future<List<YtOption>> _collectYtOptions(String url) async {
-    final yt = YoutubeExplode();
-    try {
-      final video = await yt.videos.get(url);
-      final manifest = await yt.videos.streamsClient.getManifest(video.id);
-      final opts = <YtOption>[];
-      // Muxed（含音訊的影片檔）
-      for (final s in manifest.muxed) {
-        final c = s.container.name; // mp4/webm
-        final q = s.videoQualityLabel; // 1080p 等
-        final br = s.bitrate.bitsPerSecond;
-        final label = '${q.isNotEmpty ? q : ''} ${c.toUpperCase()}'.trim();
-        opts.add(
-          YtOption(
-            label: label,
-            url: s.url.toString(),
-            kind: 'video',
-            container: c,
-            bitrate: br,
-          ),
-        );
-      }
-      // 純音訊
-      for (final a in manifest.audioOnly) {
-        final c = a.container.name; // m4a/webm
-        final br = a.bitrate.bitsPerSecond;
-        final kbps = (br / 1000).round();
-        final label = LanguageService.instance.translate(
-          'media.youtube.audioOption',
-          params: {'kbps': kbps.toString(), 'codec': c.toUpperCase()},
-        );
-        opts.add(
-          YtOption(
-            label: label,
-            url: a.url.toString(),
-            kind: 'audio',
-            container: c,
-            bitrate: br,
-          ),
-        );
-      }
-      // 由高到低排序（先 bitrate 高者）
-      opts.sort((a, b) => (b.bitrate ?? 0).compareTo(a.bitrate ?? 0));
-      // 通知 UI 顯示選單
-      ytTitle.value = video.title;
-      ytOptions.value = opts;
-      return opts;
-    } finally {
-      yt.close();
-    }
+  Future<YtVideoInfo> _collectYtVideoInfo(String url) async {
+    return fetchYoutubeVideoInfo(url);
   }
 
   bool _isBlobUrl(String url) => url.trim().toLowerCase().startsWith('blob:');
@@ -2249,10 +2207,25 @@ class AppRepo extends ChangeNotifier {
   }
 
   /// Generate a thumbnail and duration for a completed task. Only applicable
-  /// to video files. Extracts a frame at 1 second using FFmpeg and reads
-  /// the duration via a temporary [VideoPlayerController].
+  /// to video files. Uses FFprobe for metadata, generates a lightweight
+  /// thumbnail via FFmpeg, and falls back to VideoPlayer only when duration
+  /// remains unknown.
   Future<void> _generatePreview(DownloadTask t) async {
     if (t.type != 'video') return;
+    double? durationSeconds;
+    try {
+      final probe = await FFprobeKit.getMediaInformation(t.savePath);
+      final info = probe.getMediaInformation();
+      final durationStr = info?.getDuration();
+      durationSeconds = double.tryParse(durationStr ?? '');
+    } catch (_) {}
+
+    Duration? detectedDuration;
+    if (durationSeconds != null && durationSeconds.isFinite && durationSeconds > 0) {
+      detectedDuration = Duration(milliseconds: (durationSeconds * 1000).round());
+      t.duration = detectedDuration;
+    }
+
     try {
       final thumbsDir = await _thumbnailsDir();
       final baseName = p.basenameWithoutExtension(t.savePath);
@@ -2269,9 +2242,17 @@ class AppRepo extends ChangeNotifier {
         thumbsDir.path,
         'thumb_${sanitized}_$uniqueSuffix.jpg',
       );
-      // Extract a single frame at 1 second into the file. Suppress output.
+
+      double capturePoint = 0.5;
+      if (durationSeconds != null && durationSeconds.isFinite) {
+        if (durationSeconds < 0.6) {
+          capturePoint = math.max(durationSeconds - 0.1, 0.0);
+        }
+      }
+
       final cmd =
-          "-y -ss 1 -i '${t.savePath}' -vframes 1 -update 1 -q:v 3 '$thumbPath'";
+          "-y -loglevel error -ss ${capturePoint.toStringAsFixed(2)} -i '${t.savePath}' "
+          "-frames:v 1 -vf \"scale=320:-1:flags=lanczos\" -q:v 3 '$thumbPath'";
       final session = await FFmpegKit.execute(cmd);
       ReturnCode? rc;
       try {
@@ -2300,21 +2281,16 @@ class AppRepo extends ChangeNotifier {
     } catch (e) {
       if (kDebugMode) print('Failed to generate thumbnail: $e');
     }
-    try {
-      // Load the video to determine its duration.
-      final controller = VideoPlayerController.file(File(t.savePath));
-      await controller.initialize();
-      t.duration = controller.value.duration;
-      await controller.dispose();
-    } catch (e) {
-      // ignore if duration could not be determined
+
+    if (t.duration == null) {
+      try {
+        final controller = VideoPlayerController.file(File(t.savePath));
+        await controller.initialize();
+        t.duration = controller.value.duration;
+        await controller.dispose();
+      } catch (_) {}
     }
 
-    // Persist and notify listeners when metadata has been updated. Without this,
-    // thumbnails and durations will only show up after a restart because
-    // observers are not notified when the properties on an existing
-    // [DownloadTask] change. By reassigning the list and saving state,
-    // listeners rebuild immediately and the new metadata is persisted.
     try {
       downloads.value = [...downloads.value];
       notifyListeners();
@@ -3256,112 +3232,41 @@ class AppRepo extends ChangeNotifier {
   /// whether the URL is an HLS playlist, allocates a persistent output
   /// path and starts the download. The task list is immediately updated
   /// and persisted. Robust: always adds a task even on errors.
-  Future<DownloadTask> enqueueDownload(String url) async {
-    // Always guard the whole flow so UI can see an error task instead of nothing.
+  Future<DownloadTask> enqueueDownload(
+    String url, {
+    bool skipYoutubeHandling = false,
+    String? suggestedName,
+  }) async {
+    final originalUrl = url;
     try {
-      // 如果是 YouTube 連結，先抓取可用串流，通知 UI 顯示選單；
-      // 同時預設挑選最高畫質（或最高音訊）直接開始下載，避免流程中斷。
-      if (_isYouTubeUrl(url)) {
+      if (!skipYoutubeHandling && _isYouTubeUrl(url)) {
         try {
-          final options = await _collectYtOptions(url);
-          if (options.isNotEmpty) {
-            // 預設選擇第一個（通常為最高 bitrate 的 muxed）
-            url = options.first.url;
+          final info = await _collectYtVideoInfo(url);
+          final defaultOption = _pickDefaultYtOption(info.options);
+          if (defaultOption != null) {
+            return await enqueueYoutubeOption(
+              defaultOption,
+              sourceUrl: url,
+              titleOverride: info.title,
+            );
           }
         } catch (e) {
           if (kDebugMode) print('YouTube options fetch error: $e');
         }
       }
 
-      // blob: 先嘗試從嗅探結果回推實體連結
-      if (_isBlobUrl(url)) {
-        // Try resolve from hits (m3u8/mp4 or infer from .ts)
-        final resolved = await _resolveRealMediaFromHits(url);
-        if (resolved != null) {
-          url = resolved; // Use the real URL
-        } else {
-          // 建立一個錯誤 task 讓 UI 有回饋
-          final out = await _tempFilePath('bin');
-          final task = DownloadTask(
-            url: url,
-            savePath: out,
-            kind: 'file',
-            type: 'video',
-            state: 'error',
-            name: LanguageService.instance.translate(
-              'download.error.playFirst',
-            ),
-          );
-          downloads.value = [...downloads.value, task];
-          await _saveState();
-          notifyListeners();
-          return task;
-        }
-      }
-
-      // HLS / DASH 判斷（用更新後的 url）
-      final lower0 = url.toLowerCase();
-      bool isHls = lower0.contains('.m3u8');
-      final bool isDash = lower0.contains('.mpd');
-
-      if (isHls) {
-        // Fast-path: 移除過長、成效不佳的 master/variant/trick-play 驗證；
-        // 直接加入下載清單，交由 _runTaskHls() 內部的 probe/sanitize 與
-        // image-sequence 組裝流程處理（已能自動辨識純圖片 HLS 並組回影片）。
-        // 此處不更動 url、不等待任何 ensure 流程，以提升入列速度。
-      }
-
-      final kind = isHls ? 'hls' : (isDash ? 'dash' : 'file');
-      final innerUrl = _extractInnerUrl(url) ?? url;
-      final type = _inferType(innerUrl);
-      var ext = (isHls || isDash) ? 'mp4' : _extensionFromUrl(innerUrl);
-      if (ext.isEmpty || ext == 'bin') {
-        ext = _defaultExtensionForType(type);
-      }
-      final stem =
-          _preferredDownloadStem(url: innerUrl) ??
-          _preferredDownloadStem(url: url);
-      final suggested = stem ?? ytTitle.value ?? currentPageTitle.value;
-      final out = await _tempFilePath(ext, suggestedName: suggested);
-
-      final task = DownloadTask(
-        url: url,
-        savePath: out,
-        kind: kind,
-        type: type,
-        name: suggested,
-      );
-      downloads.value = [...downloads.value, task];
-      await _saveState();
-      notifyListeners();
-
-      // Analytics: 下載加入佇列
-      try {
-        await FirebaseAnalytics.instance.logEvent(
-          name: 'download_enqueue',
-          parameters: {
-            'kind': kind,
-            'type': type,
-            'host': _hostFromAny(url) ?? '',
-          },
-        );
-      } catch (_) {}
-
-      // 背景執行下載
-      _runTask(task);
-      return task;
+      return await _enqueueDirectTask(url, suggestedName: suggestedName);
     } catch (e, st) {
-      // 確保就算失敗也會塞入一筆錯誤任務，讓使用者看得到
       if (kDebugMode) {
         print('enqueueDownload fatal: $e');
         print(st);
       }
       final out = await _tempFilePath('bin');
       final task = DownloadTask(
-        url: url,
+        url: originalUrl,
         savePath: out,
         kind: 'file',
-        type: _inferType(url),
+        type: _inferType(originalUrl),
         state: 'error',
         name: LanguageService.instance.translate(
           'download.error.enqueueFailed',
@@ -3373,6 +3278,195 @@ class AppRepo extends ChangeNotifier {
       notifyListeners();
       return task;
     }
+  }
+
+  Future<DownloadTask> _enqueueDirectTask(
+    String initialUrl, {
+    String? suggestedName,
+    String? forcedExtension,
+    String? explicitType,
+    String? kindOverride,
+    Map<String, dynamic>? extra,
+  }) async {
+    var url = initialUrl;
+
+    if (_isBlobUrl(url)) {
+      final resolved = await _resolveRealMediaFromHits(url);
+      if (resolved != null) {
+        url = resolved;
+      } else {
+        final out = await _tempFilePath('bin');
+        final task = DownloadTask(
+          url: url,
+          savePath: out,
+          kind: kindOverride ?? 'file',
+          type: 'video',
+          state: 'error',
+          name: LanguageService.instance.translate('download.error.playFirst'),
+        );
+        downloads.value = [...downloads.value, task];
+        await _saveState();
+        notifyListeners();
+        return task;
+      }
+    }
+
+    final lower0 = url.toLowerCase();
+    final bool isHls = lower0.contains('.m3u8');
+    final bool isDash = lower0.contains('.mpd');
+    var kind = kindOverride ?? (isHls ? 'hls' : (isDash ? 'dash' : 'file'));
+    final innerUrl = _extractInnerUrl(url) ?? url;
+    var type = explicitType ?? _inferType(innerUrl);
+
+    var ext =
+        forcedExtension ??
+        ((isHls || isDash) ? 'mp4' : _extensionFromUrl(innerUrl));
+    if (ext.isEmpty || ext == 'bin') {
+      ext = forcedExtension ?? _defaultExtensionForType(type);
+    }
+
+    final stem =
+        _preferredDownloadStem(url: innerUrl) ??
+        _preferredDownloadStem(url: url);
+    final suggested =
+        suggestedName ?? stem ?? ytTitle.value ?? currentPageTitle.value;
+    final out = await _tempFilePath(ext, suggestedName: suggested);
+
+    final task = DownloadTask(
+      url: url,
+      savePath: out,
+      kind: kind,
+      type: type,
+      name: suggested,
+      extra: extra,
+    );
+    downloads.value = [...downloads.value, task];
+    await _saveState();
+    notifyListeners();
+
+    try {
+      await FirebaseAnalytics.instance.logEvent(
+        name: 'download_enqueue',
+        parameters: {
+          'kind': kind,
+          'type': type,
+          'host': _hostFromAny(url) ?? '',
+        },
+      );
+    } catch (_) {}
+
+    _runTask(task);
+    return task;
+  }
+
+  Future<DownloadTask> enqueueYoutubeOption(
+    YtStreamOption option, {
+    String? sourceUrl,
+    String? titleOverride,
+  }) async {
+    final mergedExtra = <String, dynamic>{};
+    final ytMeta = <String, dynamic>{
+      'sourceUrl': sourceUrl ?? currentPageUrl.value,
+      'optionType': option.type.name,
+      'qualityLabel': option.qualityLabel,
+      'downloadUrl': option.downloadUrl,
+      'videoId': option.videoId,
+      if (option.width != null) 'width': option.width,
+      if (option.height != null) 'height': option.height,
+      if (option.videoCodec != null) 'videoCodec': option.videoCodec,
+      if (option.audioCodec != null) 'audioCodec': option.audioCodec,
+      if (option.videoBitrate != null) 'videoBitrate': option.videoBitrate,
+      if (option.audioBitrate != null) 'audioBitrate': option.audioBitrate,
+      if (option.totalBitrate != null) 'totalBitrate': option.totalBitrate,
+      if (option.itag != null) 'itag': option.itag,
+      if (option.audioItag != null) 'audioItag': option.audioItag,
+      if (option.duration != null)
+        'durationMs': option.duration!.inMilliseconds,
+    };
+    if (option.audioUrl != null) {
+      ytMeta['audioUrl'] = option.audioUrl;
+    }
+    if (option.audioContainer != null) {
+      ytMeta['audioContainer'] = option.audioContainer;
+    }
+    ytMeta['fileExtension'] = option.fileExtension;
+    mergedExtra['yt'] = ytMeta;
+
+    final suggested =
+        option.suggestedFileName ??
+        titleOverride ??
+        ytTitle.value ??
+        currentPageTitle.value;
+
+    switch (option.type) {
+      case YtOptionType.muxed:
+        return _enqueueDirectTask(
+          option.downloadUrl,
+          suggestedName: suggested,
+          forcedExtension: option.fileExtension,
+          explicitType: 'video',
+          extra: mergedExtra,
+        );
+      case YtOptionType.videoOnly:
+        return _enqueueDirectTask(
+          option.downloadUrl,
+          suggestedName: suggested,
+          forcedExtension: option.fileExtension,
+          explicitType: 'video',
+          extra: mergedExtra,
+        );
+      case YtOptionType.audioOnly:
+        return _enqueueDirectTask(
+          option.downloadUrl,
+          suggestedName: suggested,
+          forcedExtension: option.fileExtension,
+          explicitType: 'audio',
+          extra: mergedExtra,
+        );
+      case YtOptionType.videoAudio:
+        return _enqueueYoutubeMergeTask(
+          option,
+          suggestedName: suggested,
+          extra: mergedExtra,
+        );
+    }
+  }
+
+  Future<DownloadTask> _enqueueYoutubeMergeTask(
+    YtStreamOption option, {
+    String? suggestedName,
+    Map<String, dynamic>? extra,
+  }) async {
+    final audioUrl = option.audioUrl;
+    if (audioUrl == null) {
+      throw ArgumentError('Missing audio stream for YouTube merge option');
+    }
+    final mergedExtra = extra ?? {};
+    final ytMeta = Map<String, dynamic>.from(
+      (mergedExtra['yt'] as Map<String, dynamic>?) ?? <String, dynamic>{},
+    );
+    ytMeta['videoUrl'] = option.downloadUrl;
+    ytMeta['audioUrl'] = audioUrl;
+    ytMeta['audioContainer'] =
+        option.audioContainer ?? ytMeta['audioContainer'] ?? 'm4a';
+    ytMeta['fileExtension'] = option.fileExtension;
+    mergedExtra['yt'] = ytMeta;
+
+    return _enqueueDirectTask(
+      option.downloadUrl,
+      suggestedName: suggestedName,
+      forcedExtension: option.fileExtension,
+      explicitType: 'video',
+      kindOverride: 'yt-merge',
+      extra: mergedExtra,
+    );
+  }
+
+  YtStreamOption? _pickDefaultYtOption(List<YtStreamOption> options) {
+    return options.firstWhereOrNull((o) => o.type == YtOptionType.muxed) ??
+        options.firstWhereOrNull((o) => o.type == YtOptionType.videoAudio) ??
+        options.firstWhereOrNull((o) => o.type == YtOptionType.videoOnly) ??
+        options.firstWhereOrNull((o) => o.type == YtOptionType.audioOnly);
   }
 
   /// Pause a running download. For 'file' kind, cancels the Dio request and keeps partial file.
@@ -3387,6 +3481,15 @@ class AppRepo extends ChangeNotifier {
         t.paused = true;
         t.state = 'paused';
       } else if (t.kind == 'hls') {
+        final id = _ffmpegSessions.remove(t);
+        if (id != null) {
+          await FFmpegKit.cancel(id);
+        }
+        t.paused = true;
+        t.state = 'paused';
+      } else if (t.kind == 'yt-merge') {
+        final token = _dioTokens.remove(t);
+        if (token != null && !token.isCancelled) token.cancel('user pause');
         final id = _ffmpegSessions.remove(t);
         if (id != null) {
           await FFmpegKit.cancel(id);
@@ -3411,8 +3514,14 @@ class AppRepo extends ChangeNotifier {
     // Resume via underlying runners.
     if (t.kind == 'file') {
       _runTaskFile(t, resume: true);
+    } else if (t.kind == 'hls') {
+      _runTaskHls(t);
+    } else if (t.kind == 'dash') {
+      _runTaskDash(t);
+    } else if (t.kind == 'yt-merge') {
+      _runTaskYoutubeMerge(t);
     } else {
-      _runTaskHls(t); // restart
+      _runTask(t);
     }
   }
 
@@ -3425,8 +3534,313 @@ class AppRepo extends ChangeNotifier {
       await _runTaskHls(t);
     } else if (t.kind == 'dash') {
       await _runTaskDash(t);
+    } else if (t.kind == 'yt-merge') {
+      await _runTaskYoutubeMerge(t);
     } else {
       await _runTaskFile(t, resume: false);
+    }
+  }
+
+  Future<void> _runTaskYoutubeMerge(DownloadTask t) async {
+    final meta = (t.extra?['yt'] as Map<String, dynamic>?) ?? const {};
+    final videoUrl = (meta['videoUrl'] as String?) ?? t.url;
+    final audioUrl = meta['audioUrl'] as String?;
+    if (audioUrl == null || videoUrl.isEmpty) {
+      t.state = 'error';
+      notifyListeners();
+      await _saveState();
+      return;
+    }
+
+    int? parseItag(dynamic value) {
+      if (value is int) return value;
+      if (value is num) return value.toInt();
+      return null;
+    }
+
+    final videoId = meta['videoId'] as String?;
+    final videoItag = parseItag(meta['itag']);
+    final audioItag = parseItag(meta['audioItag']);
+
+    final sourceUrl = meta['sourceUrl'] as String?;
+    final fileExtRaw = (meta['fileExtension'] as String?) ?? 'mp4';
+    final audioExtRaw = (meta['audioContainer'] as String?) ?? 'm4a';
+    final fileExt = fileExtRaw.isEmpty ? 'mp4' : fileExtRaw;
+    final audioExt = audioExtRaw.isEmpty ? 'm4a' : audioExtRaw;
+
+    final dio = Dio();
+    final token = CancelToken();
+    _dioTokens[t] = token;
+
+    final tempDir = await getTemporaryDirectory();
+    final baseName =
+        'yt_${DateTime.now().microsecondsSinceEpoch}_${t.timestamp.millisecondsSinceEpoch}';
+    final videoTemp = p.join(tempDir.path, '$baseName.video.$fileExt');
+    final audioTemp = p.join(tempDir.path, '$baseName.audio.$audioExt');
+
+    int aggregate = 0;
+    int totalExpected = 0;
+
+    Future<void> cleanupTemps() async {
+      try {
+        final file = File(videoTemp);
+        if (await file.exists()) await file.delete();
+      } catch (_) {}
+      try {
+        final file = File(audioTemp);
+        if (await file.exists()) await file.delete();
+      } catch (_) {}
+    }
+
+    void handleChunk(int chunkLength) {
+      aggregate += chunkLength;
+      t.received = aggregate;
+      _notifyDownloadsUpdated();
+      if (aggregate % (128 * 1024) == 0) {
+        notifyListeners();
+      }
+    }
+
+    Future<int?> probeLength(
+      String targetUrl,
+      Map<String, String> headers,
+    ) async {
+      try {
+        final resp = await dio.head(
+          targetUrl,
+          options: Options(
+            headers: headers,
+            followRedirects: true,
+            validateStatus: (_) => true,
+          ),
+        );
+        final cl = resp.headers.value(HttpHeaders.contentLengthHeader);
+        final parsed = int.tryParse(cl ?? '');
+        if (parsed != null && parsed > 0) {
+          return parsed;
+        }
+      } catch (_) {}
+      return null;
+    }
+
+    Future<int> downloadPart(
+      String targetUrl,
+      String outputPath,
+      Map<String, String> headers,
+    ) async {
+      final file = File(outputPath);
+      if (await file.exists()) await file.delete();
+      await file.create(recursive: true);
+      final sink = file.openWrite();
+      try {
+        final resp = await dio.get<ResponseBody>(
+          targetUrl,
+          options: Options(
+            headers: headers,
+            responseType: ResponseType.stream,
+            followRedirects: true,
+          ),
+          cancelToken: token,
+        );
+        await for (final chunk in resp.data!.stream) {
+          if (token.isCancelled) break;
+          sink.add(chunk);
+          handleChunk(chunk.length);
+        }
+      } finally {
+        await sink.flush();
+        await sink.close();
+      }
+      return await file.exists() ? await file.length() : 0;
+    }
+
+    try {
+      final videoHeaders = await _headersFor(videoUrl);
+      final audioHeaders = await _headersFor(audioUrl);
+      if (sourceUrl != null && sourceUrl.isNotEmpty) {
+        videoHeaders['Referer'] = sourceUrl;
+        audioHeaders['Referer'] = sourceUrl;
+      }
+
+      final videoLen = await probeLength(videoUrl, videoHeaders);
+      final audioLen = await probeLength(audioUrl, audioHeaders);
+      if (videoLen != null) totalExpected += videoLen;
+      if (audioLen != null) totalExpected += audioLen;
+      if (totalExpected > 0) {
+        t.total = totalExpected;
+        _notifyDownloadsUpdated();
+        notifyListeners();
+      } else {
+        t.total = null;
+      }
+
+      await downloadPart(videoUrl, videoTemp, videoHeaders);
+      if (token.isCancelled) {
+        t.paused = true;
+        t.state = 'paused';
+        await cleanupTemps();
+        await _saveState();
+        return;
+      }
+
+      Future<void> ensureLocalStream({
+        required String path,
+        required String kind,
+        required int? itag,
+        required Future<int> Function() fallback,
+      }) async {
+        final file = File(path);
+        final exists = await file.exists();
+        final hasSize = exists ? await file.length() > 0 : false;
+        if (hasSize) {
+          return;
+        }
+        if (token.isCancelled) {
+          throw const YoutubeStreamCancelled();
+        }
+        if (itag == null || videoId == null) {
+          throw StateError('Missing YouTube metadata to recover $kind track');
+        }
+        final produced = await fallback();
+        if (produced <= 0 || !await file.exists()) {
+          throw StateError('Failed to fetch YouTube $kind stream');
+        }
+      }
+
+      Future<int> downloadVideoFallback() {
+        return downloadYoutubeStreamToFile(
+          videoId: videoId!,
+          itag: videoItag!,
+          destinationPath: videoTemp,
+          onBytes: handleChunk,
+          shouldAbort: () => token.isCancelled,
+        );
+      }
+
+      Future<int> downloadAudioFallback() {
+        return downloadYoutubeStreamToFile(
+          videoId: videoId!,
+          itag: audioItag!,
+          destinationPath: audioTemp,
+          onBytes: handleChunk,
+          shouldAbort: () => token.isCancelled,
+        );
+      }
+
+      if (videoId != null && videoItag != null) {
+        try {
+          await ensureLocalStream(
+            path: videoTemp,
+            kind: 'video',
+            itag: videoItag,
+            fallback: downloadVideoFallback,
+          );
+        } on YoutubeStreamCancelled {
+          t.paused = true;
+          t.state = 'paused';
+          await cleanupTemps();
+          await _saveState();
+          return;
+        }
+      }
+
+      await downloadPart(audioUrl, audioTemp, audioHeaders);
+      if (token.isCancelled) {
+        t.paused = true;
+        t.state = 'paused';
+        await cleanupTemps();
+        await _saveState();
+        return;
+      }
+
+      if (videoId != null && audioItag != null) {
+        try {
+          await ensureLocalStream(
+            path: audioTemp,
+            kind: 'audio',
+            itag: audioItag,
+            fallback: downloadAudioFallback,
+          );
+        } on YoutubeStreamCancelled {
+          t.paused = true;
+          t.state = 'paused';
+          await cleanupTemps();
+          await _saveState();
+          return;
+        }
+      }
+
+      _dioTokens.remove(t);
+
+      final cmd =
+          "-y -i '${videoTemp}' -i '${audioTemp}' -c copy -movflags +faststart '${t.savePath}'";
+      final session = await FFmpegKit.executeAsync(
+        cmd,
+        (session) async {
+          final rc = await session.getReturnCode();
+          if (rc != null && rc.isValueSuccess()) {
+            try {
+              final outFile = File(t.savePath);
+              if (await outFile.exists()) {
+                final len = await outFile.length();
+                t.received = len;
+                t.total = len;
+              }
+            } catch (_) {}
+            t.state = 'done';
+            _normalizeTaskType(t);
+            _notifyDownloadsUpdated();
+            notifyListeners();
+            await _generatePreview(t);
+            _maybeNotifyDownloadComplete(t);
+            if (autoSave.value) {
+              try {
+                await saveFileToGallery(t.savePath);
+              } catch (e) {
+                if (kDebugMode) print('Failed to save to gallery: $e');
+              }
+            }
+          } else if (t.state != 'paused') {
+            t.state = 'error';
+            _notifyDownloadsUpdated();
+            notifyListeners();
+          }
+          _ffmpegSessions.remove(t);
+          await cleanupTemps();
+          await _saveState();
+        },
+        (log) {
+          if (kDebugMode) {
+            print('ffmpeg(yt-merge): ${log.getMessage()}');
+          }
+        },
+        (_) {},
+      );
+      final id = await session.getSessionId();
+      if (id != null) _ffmpegSessions[t] = id;
+    } on DioException catch (e) {
+      if (!CancelToken.isCancel(e) && t.state != 'paused') {
+        t.state = 'error';
+        if (kDebugMode) print('youtube merge download error: $e');
+        _notifyDownloadsUpdated();
+        notifyListeners();
+      } else {
+        t.paused = true;
+        t.state = 'paused';
+      }
+      await cleanupTemps();
+      await _saveState();
+    } catch (e) {
+      if (t.state != 'paused') {
+        t.state = 'error';
+        if (kDebugMode) print('youtube merge error: $e');
+        _notifyDownloadsUpdated();
+        notifyListeners();
+      }
+      await cleanupTemps();
+      await _saveState();
+    } finally {
+      _dioTokens.remove(t);
     }
   }
 
@@ -4431,7 +4845,8 @@ class AppRepo extends ChangeNotifier {
       );
       final framePattern = p.join(work.path, 'frame_%06d$frameExt');
       final bool useHardwareEncoder = Platform.isIOS;
-      final encoderFilterHw = 'nv12';
+      const evenScaleFilter = 'scale=trunc(iw/2)*2:trunc(ih/2)*2';
+      const encoderFilterHw = 'nv12';
       const encoderFilterSw = 'yuv420p';
       const encoderHw = 'h264_videotoolbox';
       const encoderSw = 'libx264';
@@ -4522,15 +4937,19 @@ class AppRepo extends ChangeNotifier {
 
       bool success = false;
       if (useHardwareEncoder) {
-        final hwArgs = '-vf format=$encoderFilterHw -c:v $encoderHw';
+        final hwArgs =
+            '-vf $evenScaleFilter,format=$encoderFilterHw -c:v $encoderHw '
+            '-allow_sw 1 -b:v 6000k -pix_fmt $encoderFilterSw';
         success = await _runEncoder(hwArgs);
         if (!success) {
           // Hardware encoding may fail on some devices; retry with software encoder.
-          final swArgs = '-vf format=$encoderFilterSw -c:v $encoderSw';
+          final swArgs =
+              '-vf $evenScaleFilter,format=$encoderFilterSw -c:v $encoderSw';
           success = await _runEncoder(swArgs);
         }
       } else {
-        final swArgs = '-vf format=$encoderFilterSw -c:v $encoderSw';
+        final swArgs =
+            '-vf $evenScaleFilter,format=$encoderFilterSw -c:v $encoderSw';
         success = await _runEncoder(swArgs);
       }
 

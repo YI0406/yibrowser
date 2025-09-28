@@ -20,7 +20,7 @@ import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:app_tracking_transparency/app_tracking_transparency.dart';
 import 'package:quick_actions/quick_actions.dart';
 import 'package:flutter/services.dart';
-import 'package:receive_sharing_intent/receive_sharing_intent.dart';
+import 'package:share_handler/share_handler.dart';
 import 'app_localizations.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'notification_service.dart';
@@ -144,17 +144,11 @@ class _RootNavState extends State<RootNav> with LanguageAwareState<RootNav> {
   static const MethodChannel _iosQuickActionChannel = MethodChannel(
     'app.quick_actions_bridge',
   );
-  static const MethodChannel _iosShareChannel = MethodChannel(
-    'com.yibrowser/share',
-  );
   final QuickActions _quickActions = const QuickActions();
-  ReceiveSharingIntent get _receiveSharingIntent =>
-      ReceiveSharingIntent.instance;
   bool _handledInitialQuickAction = false;
   DateTime? _lastQuickActionAt;
   String? _lastQuickActionType;
-  StreamSubscription<List<SharedMediaFile>>? _sharedMediaSubscription;
-  bool _iosShareHandlerRegistered = false;
+  StreamSubscription<SharedMedia>? _sharedMediaSubscription;
   String? _lastShareEventKey;
   DateTime? _lastShareEventAt;
   @override
@@ -278,33 +272,20 @@ class _RootNavState extends State<RootNav> with LanguageAwareState<RootNav> {
   }
 
   void _initShareHandling() {
-    if (Platform.isIOS) {
-      debugPrint('[Share] Initializing iOS share bridge');
-      if (!_iosShareHandlerRegistered) {
-        _iosShareChannel.setMethodCallHandler((call) async {
-          if (call.method == 'onShareTriggered') {
-            await _consumeIosSharedDownloads();
-            return;
-          }
-          debugPrint('[Share] Unknown iOS share callback: ${call.method}');
-        });
-        _iosShareHandlerRegistered = true;
-      }
-      unawaited(_consumeIosSharedDownloads());
-      return;
-    }
-    if (!Platform.isAndroid) {
+    if (!(Platform.isIOS || Platform.isAndroid)) {
       return;
     }
     debugPrint('[Share] Initializing share handling listeners');
-    _sharedMediaSubscription = _receiveSharingIntent.getMediaStream().listen(
-      (mediaFiles) {
+    final shareHandler = ShareHandler.instance;
+    _sharedMediaSubscription = shareHandler.sharedMediaStream.listen(
+      (SharedMedia media) {
+        final incoming = _incomingSharesFromSharedMedia(media);
         debugPrint(
-          '[Share] Stream event received with ${mediaFiles.length} item(s)',
+          '[Share] Stream event received with ${incoming.length} item(s)',
         );
-        final incoming = mediaFiles
-            .map(_incomingShareFromPlugin)
-            .toList(growable: false);
+        if (incoming.isEmpty) {
+          return;
+        }
         _importAndPresentSharedMedia(incoming);
       },
       onError: (Object err) {
@@ -312,18 +293,20 @@ class _RootNavState extends State<RootNav> with LanguageAwareState<RootNav> {
       },
     );
 
-    _receiveSharingIntent
-        .getInitialMedia()
-        .then((mediaFiles) {
-          debugPrint(
-            '[Share] Initial media fetch returned ${mediaFiles.length} item(s)',
-          );
-          if (mediaFiles.isEmpty) {
+    shareHandler
+        .getInitialSharedMedia()
+        .then((media) {
+          if (media == null) {
+            debugPrint('[Share] Initial media fetch returned 0 item(s)');
             return;
           }
-          final incoming = mediaFiles
-              .map(_incomingShareFromPlugin)
-              .toList(growable: false);
+          final incoming = _incomingSharesFromSharedMedia(media);
+          debugPrint(
+            '[Share] Initial media fetch returned ${incoming.length} item(s)',
+          );
+          if (incoming.isEmpty) {
+            return;
+          }
           _importAndPresentSharedMedia(incoming);
         })
         .catchError((Object err) {
@@ -331,68 +314,32 @@ class _RootNavState extends State<RootNav> with LanguageAwareState<RootNav> {
         });
   }
 
-  Future<void> _consumeIosSharedDownloads() async {
-    List<dynamic>? rawItems;
-    try {
-      rawItems = await _iosShareChannel.invokeMethod<List<dynamic>>(
-        'consumeSharedDownloads',
-      );
-    } catch (err) {
-      debugPrint('[Share] Failed to consume iOS shared downloads: $err');
-      return;
-    }
-    if (rawItems == null || rawItems.isEmpty) {
-      return;
-    }
-    final entries = rawItems
-        .whereType<Map<dynamic, dynamic>>()
-        .map(_incomingShareFromIosMap)
-        .whereType<IncomingShare>()
-        .toList(growable: false);
-    if (entries.isEmpty) {
-      debugPrint('[Share] consumeIosSharedDownloads yielded no valid items');
-      return;
-    }
-    await _importAndPresentSharedMedia(entries);
-  }
-
-  IncomingShare? _incomingShareFromIosMap(Map<dynamic, dynamic> map) {
-    final pathValue = map['path'];
-    if (pathValue is! String || pathValue.isEmpty) {
-      return null;
-    }
-    final typeValue = map['type'];
-    String? type;
-    if (typeValue is String && typeValue.isNotEmpty) {
-      type = typeValue;
-    }
-    final relative = map['relativePath'];
-    final relativePath =
-        relative is String && relative.isNotEmpty ? relative : null;
-    final displayValue = map['displayName'];
-    String? displayName;
-    if (displayValue is String) {
-      final trimmed = displayValue.trim();
-      if (trimmed.isNotEmpty) {
-        displayName = trimmed;
+  List<IncomingShare> _incomingSharesFromSharedMedia(SharedMedia media) {
+    final attachments = media.attachments ?? const <SharedAttachment?>[];
+    final List<IncomingShare> incoming = [];
+    for (final attachment in attachments) {
+      if (attachment == null) {
+        continue;
       }
+      final rawPath = attachment.path.trim();
+      if (rawPath.isEmpty) {
+        continue;
+      }
+      final displayName = p.basename(rawPath);
+      incoming.add(
+        IncomingShare(
+          path: rawPath,
+          typeHint: _normalizedShareType(attachment.type),
+          relativePath: null,
+          displayName: displayName.isNotEmpty ? displayName : null,
+        ),
+      );
     }
-    return IncomingShare(
-      path: pathValue,
-      typeHint: type,
-      relativePath: relativePath,
-      displayName: displayName,
-    );
-  }
-
-  IncomingShare _incomingShareFromPlugin(SharedMediaFile file) {
-    final baseName = p.basename(file.path);
-    return IncomingShare(
-      path: file.path,
-      typeHint: _normalizedShareType(file.type),
-      relativePath: null,
-      displayName: baseName.isNotEmpty ? baseName : null,
-    );
+    final sharedText = media.content?.trim();
+    if (sharedText != null && sharedText.isNotEmpty) {
+      debugPrint('[Share] Ignoring shared text payload (unsupported)');
+    }
+    return incoming;
   }
 
   Future<void> _importAndPresentSharedMedia(
@@ -435,17 +382,16 @@ class _RootNavState extends State<RootNav> with LanguageAwareState<RootNav> {
     if (rawType == null) {
       return null;
     }
-    if (rawType is SharedMediaType) {
+    if (rawType is SharedAttachmentType) {
       switch (rawType) {
-        case SharedMediaType.video:
+        case SharedAttachmentType.video:
           return 'video';
-
-        case SharedMediaType.image:
+        case SharedAttachmentType.image:
           return 'image';
-        case SharedMediaType.file:
+        case SharedAttachmentType.audio:
+          return 'audio';
+        case SharedAttachmentType.file:
           return 'file';
-        default:
-          return null;
       }
     }
     if (rawType is String) {
@@ -545,15 +491,13 @@ class _RootNavState extends State<RootNav> with LanguageAwareState<RootNav> {
       }
     }
 
-    if (Platform.isAndroid) {
-      try {
-        await _receiveSharingIntent.reset();
-      } catch (err) {
-        debugPrint('[Share] Failed to reset share intent: $err');
-      }
+    try {
+      await ShareHandler.instance.resetInitialSharedMedia();
+    } catch (err) {
+      debugPrint('[Share] Failed to reset share handler: $err');
     }
 
-    await _cleanupIncomingShares(items);
+    await _disposeSharedFiles(items);
 
     String? message;
     if (imported.isNotEmpty) {
@@ -606,14 +550,12 @@ class _RootNavState extends State<RootNav> with LanguageAwareState<RootNav> {
   Future<ShareReviewResult> _discardSharedImports(
     List<IncomingShare> items,
   ) async {
-    if (Platform.isAndroid) {
-      try {
-        await _receiveSharingIntent.reset();
-      } catch (err) {
-        debugPrint('[Share] Failed to reset share intent: $err');
-      }
+    try {
+      await ShareHandler.instance.resetInitialSharedMedia();
+    } catch (err) {
+      debugPrint('[Share] Failed to reset share handler: $err');
     }
-    await _cleanupIncomingShares(items);
+    await _disposeSharedFiles(items);
     final count = items.length;
     final message =
         count > 1
@@ -630,37 +572,23 @@ class _RootNavState extends State<RootNav> with LanguageAwareState<RootNav> {
     );
   }
 
-  Future<void> _cleanupIncomingShares(List<IncomingShare> items) async {
-    if (!Platform.isIOS) {
-      return;
-    }
-    final cleanupPaths = items
-        .map((e) => e.relativePath)
-        .whereType<String>()
-        .map((path) => path.trim())
-        .where((path) => path.isNotEmpty)
-        .toSet()
-        .toList(growable: false);
-    if (cleanupPaths.isEmpty) {
-      return;
-    }
-    try {
-      await _iosShareChannel.invokeMethod(
-        'cleanupSharedDownloads',
-        cleanupPaths,
-      );
-    } catch (err) {
-      debugPrint('[Share] Cleanup for iOS shared downloads failed: $err');
+  Future<void> _disposeSharedFiles(List<IncomingShare> items) async {
+    for (final item in items) {
+      final file = File(item.path);
+      if (!await file.exists()) {
+        continue;
+      }
+      try {
+        await file.delete();
+      } catch (err) {
+        debugPrint('[Share] Failed to delete shared source ${item.path}: $err');
+      }
     }
   }
 
   @override
   void dispose() {
     _sharedMediaSubscription?.cancel();
-    if (_iosShareHandlerRegistered) {
-      _iosShareChannel.setMethodCallHandler(null);
-      _iosShareHandlerRegistered = false;
-    }
     super.dispose();
   }
 

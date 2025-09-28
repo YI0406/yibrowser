@@ -1,0 +1,6 @@
+"CFBundleDisplayName" = "YiBrowser";
+"QuickAction.NewTab.Title" = "New Tab";
+"QuickAction.Media.Title" = "Media";
+"NSFaceIDUsageDescription" = "Used to unlock hidden media.";
+"NSPhotoLibraryUsageDescription" = "Photo library access is required to save or read your downloaded videos.";
+"NSUserNotificationUsageDescription" = "We will notify you when the download is complete.";

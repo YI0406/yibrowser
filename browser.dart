@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/log.dart';
@@ -26,6 +27,7 @@ import 'package:share_plus/share_plus.dart';
 import 'dart:io' show Platform;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'app_localizations.dart';
+import 'yt.dart';
 
 // --- Top-level helper for measuring instantaneous rates (bytes per second)
 class _RateSnapshot {
@@ -227,6 +229,134 @@ class _BrowserPageState extends State<BrowserPage>
         selector: selectors,
       ),
     );
+  }
+
+  Future<void> _showYoutubePreviewDialog(String url) async {
+    if (!mounted) return;
+    if (_ytMenuOpen) return;
+    if (_ytFetchInFlight) return;
+
+    _suppressLinkLongPress = true;
+
+    _ytFetchInFlight = true;
+    _insertYtFetchBarrier();
+
+    YtVideoInfo? info;
+    try {
+      info = await AppRepo.I.prepareYoutubeOptions(url);
+    } finally {
+      _removeYtFetchBarrier();
+      _ytFetchInFlight = false;
+    }
+
+    if (!mounted) {
+      _suppressLinkLongPress = false;
+      return;
+    }
+    if (info == null || info.options.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 2),
+          content: Text(context.l10n('browser.youtube.error.noStreams')),
+        ),
+      );
+      _suppressLinkLongPress = false;
+      return;
+    }
+
+    final resolvedInfo = info!;
+    _cachedYoutubeInfo = resolvedInfo;
+
+    final durationLabel = resolvedInfo.duration != null
+        ? context.l10n(
+            'browser.media.durationLabel',
+            params: {
+              'duration': _fmtDur(resolvedInfo.duration!.inSeconds.toDouble()),
+            },
+          )
+        : context.l10n('browser.media.durationResolving');
+    final thumbUrl =
+        'https://img.youtube.com/vi/${resolvedInfo.videoId}/hqdefault.jpg';
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        final theme = Theme.of(dialogContext);
+        return AlertDialog(
+          title: Text(
+            resolvedInfo.title,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: AspectRatio(
+                  aspectRatio: 16 / 9,
+                  child: Image.network(
+                    thumbUrl,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => Container(
+                      color: theme.colorScheme.surfaceVariant,
+                      alignment: Alignment.center,
+                      child: const Icon(Icons.image_not_supported),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                durationLabel,
+                style: theme.textTheme.bodyMedium,
+              ),
+              const SizedBox(height: 8),
+              SelectableText(
+                url,
+                maxLines: 2,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurface.withOpacity(0.7),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: Text(context.l10n('common.cancel')),
+            ),
+            TextButton.icon(
+              icon: const Icon(Icons.copy),
+              label: Text(context.l10n('browser.context.copyLink')),
+              onPressed: () async {
+                await Clipboard.setData(ClipboardData(text: url));
+                if (mounted) {
+                  _showSnackBar(context.l10n('browser.snack.copiedLink'));
+                }
+                Navigator.of(dialogContext).pop();
+              },
+            ),
+            FilledButton.icon(
+              icon: const Icon(Icons.download),
+              label: Text(context.l10n('common.download')),
+              onPressed: () async {
+                Navigator.of(dialogContext).pop();
+                await _showYoutubeDownloadOptions(
+                  url,
+                  preloaded: resolvedInfo,
+                );
+              },
+            ),
+          ],
+        );
+      },
+    );
+
+    if (!_ytMenuOpen) {
+      _suppressLinkLongPress = false;
+    }
   }
 
   static List<ContentBlocker> _buildLegacyAdBlockerRules() {
@@ -560,6 +690,8 @@ class _BrowserPageState extends State<BrowserPage>
   bool _iosLinkMenuBridgeReady = false;
   String? _lastIosLinkMenuUrl;
   DateTime? _lastIosLinkMenuTime;
+  bool _suppressLinkLongPress = false;
+  YtVideoInfo? _cachedYoutubeInfo;
 
   static const String _kIosLinkContextMenuJS = r'''
 (() => {
@@ -568,9 +700,12 @@ class _BrowserPageState extends State<BrowserPage>
   }
   window.__flutterIosLinkMenuInstalled = true;
 
-  const LONG_PRESS_DELAY = 450;
+  const LONG_PRESS_DELAY = 650;
+  const MOVE_TOLERANCE = 14;
   let activeAnchor = null;
   let longPressTimer = null;
+  let startX = 0;
+  let startY = 0;
 
   const ensureStyle = () => {
     if (document.getElementById('flutter-ios-link-menu-style')) {
@@ -606,15 +741,18 @@ class _BrowserPageState extends State<BrowserPage>
       longPressTimer = null;
     }
     activeAnchor = null;
+    startX = 0;
+    startY = 0;
   };
 
   document.addEventListener(
     'touchstart',
     (event) => {
-      if (!event || (event.touches && event.touches.length > 1)) {
+      if (!event || !event.touches || event.touches.length !== 1) {
         clearPending();
         return;
       }
+      const touch = event.touches[0];
       ensureStyle();
       const anchor =
         event.target && event.target.closest
@@ -628,8 +766,16 @@ class _BrowserPageState extends State<BrowserPage>
         clearTimeout(longPressTimer);
       }
       activeAnchor = anchor;
+      startX = touch.clientX;
+      startY = touch.clientY;
       longPressTimer = setTimeout(() => {
         const resolved = resolveHref(activeAnchor);
+        try {
+          const selection = window.getSelection && window.getSelection();
+          if (selection && selection.removeAllRanges) {
+            selection.removeAllRanges();
+          }
+        } catch (_) {}
         clearPending();
         if (
           resolved &&
@@ -647,6 +793,20 @@ class _BrowserPageState extends State<BrowserPage>
     'touchmove',
     (event) => {
       if (!activeAnchor) {
+        return;
+      }
+      const touch =
+        event && event.touches && event.touches.length > 0
+          ? event.touches[0]
+          : null;
+      if (!touch) {
+        clearPending();
+        return;
+      }
+      const dx = touch.clientX - startX;
+      const dy = touch.clientY - startY;
+      if (Math.hypot(dx, dy) > MOVE_TOLERANCE) {
+        clearPending();
         return;
       }
       if (!event || !event.target || !event.target.closest) {
@@ -1017,63 +1177,234 @@ class _BrowserPageState extends State<BrowserPage>
   }
 
   // --- YouTube Download Options Listener ---
+  DateTime? _lastYtOptionsRequest;
+  bool _ytFetchInFlight = false;
+  OverlayEntry? _ytFetchBarrier;
   bool _ytMenuOpen = false;
+
+  void _removeYtFetchBarrier() {
+    _ytFetchBarrier?.remove();
+    _ytFetchBarrier = null;
+  }
+
+  void _insertYtFetchBarrier() {
+    if (_ytFetchBarrier != null) return;
+    final overlay = Overlay.of(context);
+    if (overlay == null) return;
+    _ytFetchBarrier = OverlayEntry(
+      builder: (_) {
+        final theme = Theme.of(context);
+        return Stack(
+          children: [
+            ModalBarrier(
+              dismissible: false,
+              color: theme.colorScheme.scrim.withOpacity(0.4),
+            ),
+            Center(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.surface,
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.18),
+                      blurRadius: 20,
+                      offset: const Offset(0, 12),
+                    ),
+                  ],
+                ),
+                child: const Padding(
+                  padding: EdgeInsets.all(20),
+                  child: CircularProgressIndicator.adaptive(),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+    overlay.insert(_ytFetchBarrier!);
+  }
 
   void _onYtOptionsChanged() {
     final opts = repo.ytOptions.value;
     if (opts == null || _ytMenuOpen) return;
     _ytMenuOpen = true;
+    final theme = Theme.of(context);
     final title =
         repo.ytTitle.value ??
         context.l10n('browser.dialog.downloadQuality.title');
 
+    String? formatBitrate(int? bps) {
+      if (bps == null || bps <= 0) return null;
+      if (bps >= 1000000) {
+        final mbps = bps / 1000000;
+        return '${mbps.toStringAsFixed(mbps >= 10 ? 0 : 1)} Mbps';
+      }
+      final kbps = (bps / 1000).round();
+      return '$kbps kbps';
+    }
+
+    String typeLabel(YtOptionType type) {
+      switch (type) {
+        case YtOptionType.muxed:
+          return context.l10n('browser.youtube.option.type.muxed');
+        case YtOptionType.videoAudio:
+          return context.l10n('browser.youtube.option.type.videoAudio');
+        case YtOptionType.videoOnly:
+          return context.l10n('browser.youtube.option.type.videoOnly');
+        case YtOptionType.audioOnly:
+          return context.l10n('browser.youtube.option.type.audioOnly');
+      }
+    }
+
+    IconData iconFor(YtStreamOption option) {
+      switch (option.type) {
+        case YtOptionType.audioOnly:
+          return Icons.audiotrack;
+        case YtOptionType.videoOnly:
+          return Icons.video_camera_back;
+        case YtOptionType.videoAudio:
+        case YtOptionType.muxed:
+          return Icons.ondemand_video;
+      }
+    }
+
+    String titleFor(YtStreamOption option) {
+      final quality =
+          option.qualityLabel ??
+          (option.height != null ? '${option.height}p' : '');
+      final container = option.fileExtension.toUpperCase();
+      final bitrate = formatBitrate(
+        option.totalBitrate ?? option.videoBitrate ?? option.audioBitrate,
+      );
+      final segments = <String>[
+        if (quality.isNotEmpty) quality,
+        if (container.isNotEmpty) container,
+        if (bitrate != null) bitrate,
+      ];
+      if (segments.isEmpty && option.type == YtOptionType.audioOnly) {
+        final audioRate = formatBitrate(option.audioBitrate);
+        if (audioRate != null) segments.add(audioRate);
+        segments.add(container);
+      }
+      return segments.join(' · ');
+    }
+
+    String subtitleFor(YtStreamOption option) {
+      final parts = <String>[typeLabel(option.type)];
+      if (option.type == YtOptionType.videoAudio) {
+        final audioRate = formatBitrate(option.audioBitrate);
+        if (audioRate != null) parts.add(audioRate);
+        parts.add(
+          context.l10n('browser.youtube.option.mergeHint'),
+        );
+      }
+      return parts.join(' · ');
+    }
+
+    _suppressLinkLongPress = true;
     showModalBottomSheet(
       context: context,
+      useSafeArea: true,
       isScrollControlled: true,
-      builder: (_) {
-        return SafeArea(
+      enableDrag: true,
+      backgroundColor: theme.colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (sheetContext) {
+        final media = MediaQuery.of(sheetContext);
+        final screenHeight = media.size.height;
+        const double minSheetHeight = 180;
+        const double headerHeight = 104;
+        const double itemExtent = 64;
+        final double maxSheetHeight = math.max(
+          minSheetHeight,
+          screenHeight * 0.7,
+        );
+        final double desiredHeight =
+            headerHeight + itemExtent * opts.length.toDouble();
+        final double sheetHeight = desiredHeight.clamp(
+          minSheetHeight,
+          maxSheetHeight,
+        );
+
+        return SizedBox(
+          height: sheetHeight,
           child: Column(
-            mainAxisSize: MainAxisSize.min,
             children: [
-              ListTile(
-                leading: const Icon(Icons.play_circle_fill),
-                title: Text(
-                  title,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                subtitle: Text(
-                  context.l10n('browser.dialog.downloadQuality.subtitle'),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 12, 8),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            title,
+                            style: theme.textTheme.titleMedium,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            context.l10n(
+                              'browser.dialog.downloadQuality.subtitle',
+                            ),
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onSurface.withOpacity(
+                                0.7,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: context.l10n('common.close'),
+                      onPressed: () => Navigator.of(sheetContext).pop(),
+                      icon: const Icon(Icons.close),
+                    ),
+                  ],
                 ),
               ),
               const Divider(height: 1),
-              Flexible(
-                child: ListView.builder(
-                  shrinkWrap: true,
+              Expanded(
+                child: ListView.separated(
+                  physics: const BouncingScrollPhysics(),
+                  padding: const EdgeInsets.symmetric(vertical: 8),
                   itemCount: opts.length,
+                  separatorBuilder: (_, __) => const Divider(height: 1),
                   itemBuilder: (_, i) {
                     final o = opts[i];
                     return ListTile(
-                      dense: false,
-                      leading: Icon(
-                        o.kind == 'audio'
-                            ? Icons.audiotrack
-                            : Icons.ondemand_video,
+                      dense: true,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 6,
                       ),
+                      leading: Icon(iconFor(o)),
                       title: Text(
-                        o.label,
+                        titleFor(o),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
                       subtitle: Text(
-                        '${o.kind.toUpperCase()} · ${o.container.toUpperCase()}${o.bitrate != null ? ' · ${(o.bitrate! / 1000).round()}kbps' : ''}',
+                        subtitleFor(o),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
                       trailing: const Icon(Icons.download),
                       onTap: () async {
-                        Navigator.pop(context);
-                        await AppRepo.I.enqueueDownload(o.url);
+                        Navigator.of(sheetContext).pop();
+                        await AppRepo.I.enqueueYoutubeOption(
+                          o,
+                          sourceUrl: repo.currentPageUrl.value,
+                          titleOverride: repo.ytTitle.value,
+                        );
                         if (mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
@@ -1089,7 +1420,6 @@ class _BrowserPageState extends State<BrowserPage>
                   },
                 ),
               ),
-              const SizedBox(height: 8),
             ],
           ),
         );
@@ -1099,6 +1429,7 @@ class _BrowserPageState extends State<BrowserPage>
       // 重置，不要重複彈出
       repo.ytOptions.value = null;
       repo.ytTitle.value = null;
+      _suppressLinkLongPress = false;
     });
   }
 
@@ -1557,7 +1888,44 @@ class _BrowserPageState extends State<BrowserPage>
     }
   }
 
+  Future<void> _handleLinkContextMenuWithFeedback(String url) async {
+    if (_suppressLinkLongPress) {
+      return;
+    }
+    try {
+      await HapticFeedback.selectionClick();
+    } catch (_) {}
+    await _handleLinkContextMenu(url);
+  }
+
+  bool _isOnYoutubeWatchPage() {
+    final current = repo.currentPageUrl.value ?? '';
+    if (current.isEmpty) return false;
+    final uri = Uri.tryParse(current);
+    if (uri == null) return false;
+    final host = uri.host.toLowerCase();
+    final path = uri.path.toLowerCase();
+    final isYoutubeHost =
+        host.contains('youtube.com') || host.contains('youtu.be');
+    if (!isYoutubeHost) return false;
+    if (host.contains('youtu.be')) {
+      return uri.pathSegments.isNotEmpty;
+    }
+    if (path == '/watch' || path.startsWith('/watch/')) return true;
+    if (path.startsWith('/shorts/')) return true;
+    return false;
+  }
+
   Future<void> _handleLinkContextMenu(String url) async {
+    if (AppRepo.I.isYoutubeUrl(url)) {
+      if (_isOnYoutubeWatchPage()) {
+        final currentUrl = repo.currentPageUrl.value;
+        if (currentUrl != null && currentUrl.isNotEmpty) {
+          await _showYoutubePreviewDialog(currentUrl);
+        }
+      }
+      return;
+    }
     final action = await _showLinkContextMenu(url);
     if (action == null) return;
     switch (action) {
@@ -1579,6 +1947,75 @@ class _BrowserPageState extends State<BrowserPage>
         await _showAddToHomeDialog(initialUrl: url);
         break;
     }
+  }
+
+  Future<void> _showYoutubeDownloadOptions(
+    String url, {
+    YtVideoInfo? preloaded,
+  }) async {
+    if (!mounted) return;
+    if (_ytMenuOpen) {
+      return;
+    }
+
+    YtVideoInfo? info = preloaded;
+    if (info == null && _cachedYoutubeInfo != null) {
+      final cached = _cachedYoutubeInfo!;
+      final cachedWatch = cached.watchUrl;
+      final requestedId = extractYoutubeVideoId(url);
+      if (requestedId != null && requestedId == cached.videoId) {
+        info = cached;
+      } else if (cachedWatch != null && cachedWatch == url) {
+        info = cached;
+      }
+    }
+    if (info == null) {
+      if (_ytFetchInFlight) {
+        return;
+      }
+      final now = DateTime.now();
+      if (_lastYtOptionsRequest != null &&
+          now.difference(_lastYtOptionsRequest!) <
+              const Duration(milliseconds: 800)) {
+        return;
+      }
+      _lastYtOptionsRequest = now;
+      _ytFetchInFlight = true;
+
+      try {
+        FocusScope.of(context).unfocus();
+      } catch (_) {}
+
+      _insertYtFetchBarrier();
+      try {
+        info = await AppRepo.I.prepareYoutubeOptions(url);
+      } finally {
+        _removeYtFetchBarrier();
+        _ytFetchInFlight = false;
+      }
+    }
+
+    if (!mounted) {
+      return;
+    }
+    if (info == null || info.options.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 2),
+          content: Text(context.l10n('browser.youtube.error.noStreams')),
+        ),
+      );
+      if (!_ytMenuOpen) {
+        _suppressLinkLongPress = false;
+      }
+      return;
+    }
+
+    _cachedYoutubeInfo = info;
+    AppRepo.I.ytTitle.value = info.title;
+    // Reset before assigning so listeners fire even if same list reference is reused.
+    AppRepo.I.ytOptions.value = null;
+    AppRepo.I.ytOptions.value = info.options;
   }
 
   Future<_LinkContextMenuAction?> _showLinkContextMenu(String url) {
@@ -1875,7 +2312,15 @@ class _BrowserPageState extends State<BrowserPage>
     }
   }
 
-  Future<Uint8List?> _captureTabThumbnail(_TabData tab) async {
+  Future<Uint8List?> _captureTabThumbnail(
+    _TabData tab, {
+    bool force = false,
+  }) async {
+    if (!force &&
+        tab.cachedThumbnail != null &&
+        tab.cachedThumbnail!.isNotEmpty) {
+      return tab.cachedThumbnail;
+    }
     final controller = tab.controller;
     if (controller == null) {
       return tab.cachedThumbnail;
@@ -1904,7 +2349,7 @@ class _BrowserPageState extends State<BrowserPage>
       return;
     }
     final tab = _tabs[_currentTabIndex];
-    unawaited(_captureTabThumbnail(tab));
+    unawaited(_captureTabThumbnail(tab, force: true));
   }
 
   /// Navigate to the tab management view. This view displays all open tabs
@@ -3658,6 +4103,7 @@ class _BrowserPageState extends State<BrowserPage>
     repo.pendingNewTab.removeListener(_onPendingNewTab);
     repo.adBlockFilterSets.removeListener(_onAdBlockFilterSetsChanged);
     _urlFocus.dispose();
+    _removeYtFetchBarrier();
     super.dispose();
   }
 
@@ -3917,6 +4363,9 @@ class _BrowserPageState extends State<BrowserPage>
                                 if (args.isEmpty) {
                                   return {'handled': false};
                                 }
+                                if (_suppressLinkLongPress) {
+                                  return {'handled': false};
+                                }
                                 final dynamic raw = args.first;
                                 if (raw is! String) {
                                   return {'handled': false};
@@ -3931,13 +4380,16 @@ class _BrowserPageState extends State<BrowserPage>
                                 }
                                 _lastIosLinkMenuUrl = normalized;
                                 _lastIosLinkMenuTime = DateTime.now();
-                                await _handleLinkContextMenu(normalized);
+                                await _handleLinkContextMenuWithFeedback(
+                                  normalized,
+                                );
                                 return {'handled': true};
                               },
                             );
                           }
                         },
                         onLoadStart: (c, u) async {
+                          _cachedYoutubeInfo = null;
                           // 雙保險：硬攔非 Web scheme（極少數情況仍可能觸發）
                           final blocked = _shouldPreventExternalNavigation(
                             u,
@@ -4030,7 +4482,7 @@ class _BrowserPageState extends State<BrowserPage>
 
                             // about:blank 不寫入歷史；復原的第一筆載入也跳過
                             if (!isBlank) {
-                              unawaited(_captureTabThumbnail(tab));
+                              unawaited(_captureTabThumbnail(tab, force: true));
                               if (tab.restoringInitialHistory) {
                                 tab.restoringInitialHistory = false;
                               }
@@ -4171,6 +4623,9 @@ class _BrowserPageState extends State<BrowserPage>
                           return NavigationActionPolicy.ALLOW;
                         },
                         onLongPressHitTestResult: (c, res) async {
+                          if (_suppressLinkLongPress) {
+                            return;
+                          }
                           final extra = res.extra?.toString();
                           InAppWebViewHitTestResultType? hitType;
                           String typeString = '';
@@ -4197,6 +4652,8 @@ class _BrowserPageState extends State<BrowserPage>
                           final candidate = extra?.trim();
                           final hasCandidateLink =
                               candidate != null && candidate.isNotEmpty;
+                          final bool isYoutubeWatch =
+                              _isOnYoutubeWatchPage();
                           if (hasCandidateLink &&
                               (isAnchorHit ||
                                   (!isImageHit &&
@@ -4228,7 +4685,13 @@ class _BrowserPageState extends State<BrowserPage>
                                   _lastIosLinkMenuUrl = normalizedResolved;
                                   _lastIosLinkMenuTime = DateTime.now();
                                 }
-                                await _handleLinkContextMenu(
+                                if ((_ytFetchInFlight || _ytMenuOpen) &&
+                                    AppRepo.I.isYoutubeUrl(
+                                      normalizedResolved,
+                                    )) {
+                                  return;
+                                }
+                                await _handleLinkContextMenuWithFeedback(
                                   normalizedResolved,
                                 );
                                 return;
@@ -4288,6 +4751,11 @@ class _BrowserPageState extends State<BrowserPage>
 
                           final resolvedLink = link!;
                           final lowerUrl = resolvedLink.toLowerCase();
+                          final bool isYoutubeContext =
+                              AppRepo.I.isYoutubeUrl(
+                                repo.currentPageUrl.value ?? '',
+                              ) ||
+                              AppRepo.I.isYoutubeUrl(resolvedLink);
                           if (lowerUrl.endsWith('.png') ||
                               lowerUrl.endsWith('.jpg') ||
                               lowerUrl.endsWith('.jpeg') ||
@@ -4313,6 +4781,15 @@ class _BrowserPageState extends State<BrowserPage>
                           }
 
                           if (!mounted) return;
+                          if (isYoutubeContext) {
+                            if (isYoutubeWatch) {
+                              final current = repo.currentPageUrl.value;
+                              if (current != null && current.isNotEmpty) {
+                                await _showYoutubePreviewDialog(current);
+                              }
+                            }
+                            return;
+                          }
                           showDialog(
                             context: context,
                             builder: (_) {
@@ -5553,7 +6030,7 @@ class _BrowserPageState extends State<BrowserPage>
           false;
     }
     if (!ok) return;
-    await AppRepo.I.enqueueDownload(url);
+    await AppRepo.I.enqueueDownload(url, skipYoutubeHandling: true);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -6066,6 +6543,9 @@ class _BrowserPageState extends State<BrowserPage>
 
   /// key => snapshot (key can be url or savePath+phase)
   final Map<String, _RateSnapshot> _rateSnaps = {};
+  /// Cache the most recent non-null speed so the UI can keep showing a value
+  /// while the next sample is still being gathered.
+  final Map<String, double> _lastSpeeds = {};
 
   String _fmtSpeed(num bps) {
     // bytes per second to human friendly string without specifying colors
@@ -6113,6 +6593,7 @@ class _BrowserPageState extends State<BrowserPage>
   /// provides quick visibility into ongoing and completed downloads without
   /// navigating away from the browser tab.
   void _openDownloadsSheet() {
+    _suppressLinkLongPress = true;
     showModalBottomSheet(
       context: context,
       builder: (_) {
@@ -6206,7 +6687,9 @@ class _BrowserPageState extends State<BrowserPage>
           ),
         );
       },
-    );
+    ).whenComplete(() {
+      _suppressLinkLongPress = false;
+    });
   }
 
   /// Build a ListTile for a given download task. This encapsulates all the logic
@@ -6587,6 +7070,7 @@ class _BrowserPageState extends State<BrowserPage>
           final keyDirect = '${t.savePath}|bytes';
           final spDirect = _computeSpeed(keyDirect, t.received);
           if (spDirect != null) {
+            _lastSpeeds[keyDirect] = spDirect;
             subtitleWidgets.add(
               Text(
                 context.l10n(
@@ -6597,10 +7081,16 @@ class _BrowserPageState extends State<BrowserPage>
               ),
             );
           } else {
-            _rateSnaps[keyDirect] = _snapNow(t.received);
+            _rateSnaps.putIfAbsent(keyDirect, () => _snapNow(t.received));
+            final cached = _lastSpeeds[keyDirect];
             subtitleWidgets.add(
               Text(
-                context.l10n('browser.download.speedMeasuring'),
+                cached != null
+                    ? context.l10n(
+                        'browser.download.speedLabel',
+                        params: {'speed': _fmtSpeed(cached)},
+                      )
+                    : context.l10n('browser.download.speedMeasuring'),
                 style: const TextStyle(fontSize: 12),
               ),
             );
@@ -6662,6 +7152,7 @@ class _BrowserPageState extends State<BrowserPage>
         final key = '${t.savePath}|$speedKeyPhase';
         final sp = _computeSpeed(key, speedBytesNow!);
         if (sp != null) {
+          _lastSpeeds[key] = sp;
           subtitleWidgets.add(
             Text(
               context.l10n(
@@ -6673,10 +7164,16 @@ class _BrowserPageState extends State<BrowserPage>
           );
         } else {
           // 首次建立快照時先不顯示數值（避免顯示 0）
-          _rateSnaps[key] = _snapNow(speedBytesNow!);
+          _rateSnaps.putIfAbsent(key, () => _snapNow(speedBytesNow!));
+          final cached = _lastSpeeds[key];
           subtitleWidgets.add(
             Text(
-              context.l10n('browser.download.speedMeasuring'),
+              cached != null
+                  ? context.l10n(
+                      'browser.download.speedLabel',
+                      params: {'speed': _fmtSpeed(cached)},
+                    )
+                  : context.l10n('browser.download.speedMeasuring'),
               style: const TextStyle(fontSize: 12),
             ),
           );
@@ -6764,14 +7261,27 @@ class _BrowserPageState extends State<BrowserPage>
               icon: const Icon(Icons.delete_outline),
               tooltip: context.l10n('common.delete'),
               onPressed: () async {
-                await AppRepo.I.removeTasks([t], deleteFiles: false);
+                final state = t.state.toLowerCase();
+                final isCompleted = state == 'done';
+                final shouldDeleteFile = !isCompleted;
+                if (!isCompleted && state == 'downloading') {
+                  await AppRepo.I.pauseTask(t);
+                }
+                await AppRepo.I.removeTasks(
+                  [t],
+                  deleteFiles: shouldDeleteFile,
+                );
                 await AppRepo.I.rescanDownloadsFolder();
                 if (!mounted) return;
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     duration: const Duration(seconds: 1),
                     content: Text(
-                      context.l10n('browser.snack.downloadRemovedKeepFile'),
+                      context.l10n(
+                        shouldDeleteFile
+                            ? 'browser.snack.downloadRemovedDeletedFile'
+                            : 'browser.snack.downloadRemovedKeepFile',
+                      ),
                     ),
                   ),
                 );

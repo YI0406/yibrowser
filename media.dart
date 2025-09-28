@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'dart:async';
 import 'dart:math' as math;
@@ -40,6 +41,17 @@ String formatFileSize(int bytes) {
   } else {
     return '$bytes B';
   }
+}
+
+class _TaskActionOption {
+  final String key;
+  final IconData icon;
+  final String label;
+  const _TaskActionOption({
+    required this.key,
+    required this.icon,
+    required this.label,
+  });
 }
 
 String _fmtSpeed(num bytesPerSecond) {
@@ -811,6 +823,148 @@ class _MediaPageState extends State<MediaPage>
     );
   }
 
+  List<_TaskActionOption> _taskActionOptions(
+    BuildContext context, {
+    required bool hiddenContext,
+  }) {
+    return [
+      _TaskActionOption(
+        key: 'rename',
+        icon: Icons.edit,
+        label: context.l10n('media.action.editName'),
+      ),
+      if (!hiddenContext)
+        _TaskActionOption(
+          key: 'move',
+          icon: Icons.folder_open,
+          label: context.l10n('media.action.moveTo'),
+        ),
+      _TaskActionOption(
+        key: 'edit-export',
+        icon: Icons.content_cut,
+        label: context.l10n('media.action.editExport'),
+      ),
+      _TaskActionOption(
+        key: 'share',
+        icon: Icons.share,
+        label: context.l10n('media.action.export'),
+      ),
+      _TaskActionOption(
+        key: hiddenContext ? 'unhide' : 'hide',
+        icon: hiddenContext ? Icons.visibility : Icons.visibility_off,
+        label:
+            hiddenContext
+                ? context.l10n('media.action.unhide')
+                : context.l10n('media.action.hide'),
+      ),
+      _TaskActionOption(
+        key: 'delete',
+        icon: Icons.delete,
+        label: context.l10n('common.delete'),
+      ),
+    ];
+  }
+
+  Future<String?> _showTaskActionsSheet(
+    BuildContext context,
+    List<_TaskActionOption> options,
+  ) {
+    return showModalBottomSheet<String>(
+      context: context,
+      builder:
+          (_) => SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children:
+                  options
+                      .map(
+                        (opt) => ListTile(
+                          leading: Icon(opt.icon),
+                          title: Text(opt.label),
+                          onTap: () => Navigator.pop(context, opt.key),
+                        ),
+                      )
+                      .toList(),
+            ),
+          ),
+    );
+  }
+
+  Future<void> _handleTaskAction(
+    BuildContext context,
+    DownloadTask task,
+    String? action,
+    String resolvedType, {
+    required bool hiddenContext,
+  }) async {
+    if (action == null) return;
+    if (action == 'rename') {
+      _renameTask(context, task);
+      return;
+    }
+    if (action == 'move') {
+      await _moveTasksToFolder(context, [task]);
+      return;
+    }
+    if (action == 'edit-export') {
+      final ok = await PurchaseService().ensurePremium(
+        context: context,
+        featureName: context.l10n('feature.editExport'),
+      );
+      if (!ok) return;
+      if (!_fileHasContent(task.savePath)) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(context.l10n('media.error.incompleteFile'))),
+        );
+        return;
+      }
+      if (!mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder:
+              (_) => MediaSegmentExportPage(
+                sourcePath: task.savePath,
+                displayName: task.name ?? path.basename(task.savePath),
+                mediaType: resolvedType,
+                initialDuration: task.duration,
+              ),
+        ),
+      );
+      if (!mounted) return;
+      await AppRepo.I.rescanDownloadsFolder();
+      if (mounted) setState(() {});
+      return;
+    }
+    if (action == 'share') {
+      final ok = await PurchaseService().ensurePremium(
+        context: context,
+        featureName: context.l10n('feature.export'),
+      );
+      if (!ok) return;
+      if (File(task.savePath).existsSync()) {
+        await Share.shareXFiles([XFile(task.savePath)]);
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(context.l10n('media.error.missingFile'))),
+        );
+      }
+      return;
+    }
+    if (action == 'hide') {
+      _hideTasks(context, [task]);
+      return;
+    }
+    if (action == 'unhide') {
+      _unhideTasks(context, [task]);
+      return;
+    }
+    if (action == 'delete') {
+      await AppRepo.I.removeTasks([task]);
+      return;
+    }
+  }
+
   Widget _buildTaskTile({
     required BuildContext context,
     required DownloadTask task,
@@ -879,6 +1033,11 @@ class _MediaPageState extends State<MediaPage>
     } else if (resolvedType == 'image') {
       leadingThumb = const Icon(Icons.image);
     }
+
+    final actionOptions = _taskActionOptions(
+      context,
+      hiddenContext: hiddenContext,
+    );
 
     return ListTile(
       selected: selected,
@@ -960,109 +1119,14 @@ class _MediaPageState extends State<MediaPage>
           onToggleSelect(task);
           return;
         }
-        final action = await showModalBottomSheet<String>(
-          context: context,
-          builder:
-              (_) => SafeArea(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    ListTile(
-                      leading: const Icon(Icons.edit),
-                      title: Text(context.l10n('media.action.editName')),
-                      onTap: () => Navigator.pop(context, 'rename'),
-                    ),
-                    if (!hiddenContext)
-                      ListTile(
-                        leading: const Icon(Icons.folder_open),
-                        title: Text(context.l10n('media.action.moveTo')),
-                        onTap: () => Navigator.pop(context, 'move'),
-                      ),
-                    ListTile(
-                      leading: const Icon(Icons.content_cut),
-                      title: Text(context.l10n('media.action.editExport')),
-                      onTap: () => Navigator.pop(context, 'edit-export'),
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.share),
-                      title: Text(context.l10n('media.action.export')),
-                      onTap: () => Navigator.pop(context, 'share'),
-                    ),
-                    if (hiddenContext)
-                      ListTile(
-                        leading: const Icon(Icons.visibility),
-                        title: Text(context.l10n('media.action.unhide')),
-                        onTap: () => Navigator.pop(context, 'unhide'),
-                      )
-                    else
-                      ListTile(
-                        leading: const Icon(Icons.visibility_off),
-                        title: Text(context.l10n('media.action.hide')),
-                        onTap: () => Navigator.pop(context, 'hide'),
-                      ),
-                    ListTile(
-                      leading: const Icon(Icons.delete),
-                      title: Text(context.l10n('common.delete')),
-                      onTap: () => Navigator.pop(context, 'delete'),
-                    ),
-                  ],
-                ),
-              ),
+        final action = await _showTaskActionsSheet(context, actionOptions);
+        await _handleTaskAction(
+          context,
+          task,
+          action,
+          resolvedType,
+          hiddenContext: hiddenContext,
         );
-        if (action == 'rename') {
-          _renameTask(context, task);
-        } else if (action == 'move') {
-          await _moveTasksToFolder(context, [task]);
-        } else if (action == 'edit-export') {
-          final ok = await PurchaseService().ensurePremium(
-            context: context,
-            featureName: context.l10n('feature.editExport'),
-          );
-          if (!ok) return;
-          if (!_fileHasContent(task.savePath)) {
-            if (!mounted) return;
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(context.l10n('media.error.incompleteFile')),
-              ),
-            );
-            return;
-          }
-          if (!mounted) return;
-          await Navigator.of(context).push(
-            MaterialPageRoute(
-              builder:
-                  (_) => MediaSegmentExportPage(
-                    sourcePath: task.savePath,
-                    displayName: task.name ?? path.basename(task.savePath),
-                    mediaType: resolvedType,
-                    initialDuration: task.duration,
-                  ),
-            ),
-          );
-          if (!mounted) return;
-          await AppRepo.I.rescanDownloadsFolder();
-          if (mounted) setState(() {});
-        } else if (action == 'share') {
-          final ok = await PurchaseService().ensurePremium(
-            context: context,
-            featureName: context.l10n('feature.export'),
-          );
-          if (!ok) return;
-          if (File(task.savePath).existsSync()) {
-            await Share.shareXFiles([XFile(task.savePath)]);
-          } else if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text(context.l10n('media.error.missingFile'))),
-            );
-          }
-        } else if (action == 'hide') {
-          _hideTasks(context, [task]);
-        } else if (action == 'unhide') {
-          _unhideTasks(context, [task]);
-        } else if (action == 'delete') {
-          await AppRepo.I.removeTasks([task]);
-        }
       },
       trailing:
           isEditing
@@ -1070,16 +1134,59 @@ class _MediaPageState extends State<MediaPage>
                 value: selected,
                 onChanged: (_) => onToggleSelect(task),
               )
-              : IconButton(
-                icon: Icon(
-                  task.favorite ? Icons.favorite : Icons.favorite_border,
-                  color: task.favorite ? Colors.redAccent : null,
-                ),
-                tooltip:
-                    task.favorite
-                        ? context.l10n('media.action.unfavorite')
-                        : context.l10n('media.action.favorite'),
-                onPressed: () => _toggleFavorite(task),
+              : Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    icon: Icon(
+                      task.favorite ? Icons.favorite : Icons.favorite_border,
+                      color: task.favorite ? Colors.redAccent : null,
+                    ),
+                    tooltip:
+                        task.favorite
+                            ? context.l10n('media.action.unfavorite')
+                            : context.l10n('media.action.favorite'),
+                    onPressed: () => _toggleFavorite(task),
+                    constraints: const BoxConstraints.tightFor(
+                      width: 40,
+                      height: 40,
+                    ),
+                    iconSize: 22,
+                    padding: EdgeInsets.zero,
+                    splashRadius: 22,
+                  ),
+                  const SizedBox(width: 4),
+                  PopupMenuButton<String>(
+                    padding: EdgeInsets.zero,
+                    iconSize: 24,
+                    constraints: const BoxConstraints(minWidth: 40),
+                    icon: const Icon(CupertinoIcons.ellipsis_circle),
+                    onSelected:
+                        (value) => _handleTaskAction(
+                          context,
+                          task,
+                          value,
+                          resolvedType,
+                          hiddenContext: hiddenContext,
+                        ),
+                    itemBuilder:
+                        (_) =>
+                            actionOptions
+                                .map(
+                                  (opt) => PopupMenuItem<String>(
+                                    value: opt.key,
+                                    child: Row(
+                                      children: [
+                                        Icon(opt.icon, size: 20),
+                                        const SizedBox(width: 12),
+                                        Expanded(child: Text(opt.label)),
+                                      ],
+                                    ),
+                                  ),
+                                )
+                                .toList(),
+                  ),
+                ],
               ),
     );
   }

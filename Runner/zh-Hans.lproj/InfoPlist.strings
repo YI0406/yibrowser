@@ -1,0 +1,4 @@
+"CFBundleDisplayName" = "YiBrowser";
+"QuickAction.NewTab.Title" = "New Tab";
+"QuickAction.Media.Title" = "Media";
+"NSFaceIDUsageDescription" = "Used to unlock hidden media.";
