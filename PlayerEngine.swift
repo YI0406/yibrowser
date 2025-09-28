@@ -1,6 +1,8 @@
 import AVFoundation
 import AVKit
 import Flutter
+import VideoToolbox
+
 
 /// Centralized video player engine that owns a single AVPlayer instance and exposes
 /// playback/PiP control over Flutter channels. The same player drives the inline view,
@@ -164,6 +166,7 @@ final class PlayerEngine: NSObject, FlutterStreamHandler, AVPictureInPictureCont
     }
     let asset = AVURLAsset(url: url)
     let item = AVPlayerItem(asset: asset)
+      logAssetDiagnostics(for: asset, source: url)
     attachObservers(to: item)
     player.replaceCurrentItem(with: item)
     ensurePiPController()
@@ -319,7 +322,65 @@ final class PlayerEngine: NSObject, FlutterStreamHandler, AVPictureInPictureCont
     guard let sink = eventSink else { return }
     sink(payload)
   }
-
+    private static func fourCCString(_ code: FourCharCode) -> String {
+       let bytes: [UInt8] = [
+         UInt8((code >> 24) & 0xff),
+         UInt8((code >> 16) & 0xff),
+         UInt8((code >> 8) & 0xff),
+         UInt8(code & 0xff),
+       ]
+       if let string = String(bytes: bytes, encoding: .ascii),
+          string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+         return string
+       }
+       return String(format: "0x%08X", code)
+     }
+     private func emitDiagnosticsEvent(_ info: [String: Any]) {
+       DispatchQueue.main.async { [weak self] in
+         guard let self else { return }
+         var payload = info
+         payload["type"] = "diagnostics"
+         self.sendEvent(payload)
+       }
+     }
+     private func logAssetDiagnostics(for asset: AVAsset, source url: URL) {
+       asset.loadValuesAsynchronously(forKeys: ["tracks"]) { [weak self] in
+         guard let self else { return }
+         var error: NSError?
+         let status = asset.statusOfValue(forKey: "tracks", error: &error)
+         guard status == .loaded else {
+           if let error {
+             NSLog("[PlayerEngine] diagnostics tracks failed: %@", error.localizedDescription)
+           }
+           return
+         }
+         guard let track = asset.tracks(withMediaType: .video).first else {
+           NSLog("[PlayerEngine] diagnostics: no video tracks for %@", url.lastPathComponent)
+           return
+         }
+         let descriptions = track.formatDescriptions as? [CMFormatDescription] ?? []
+         if descriptions.isEmpty {
+           NSLog("[PlayerEngine] diagnostics: empty format descriptions for %@", url.lastPathComponent)
+         }
+         for desc in descriptions {
+           let codec = CMFormatDescriptionGetMediaSubType(desc)
+           let codecString = Self.fourCCString(codec)
+           let dimensions = CMVideoFormatDescriptionGetDimensions(desc)
+           let hardwareSupported = VTIsHardwareDecodeSupported(codec)
+           let nominalFps = track.nominalFrameRate
+           let diagnostics: [String: Any] = [
+             "source": url.lastPathComponent,
+             "codec": codecString,
+             "width": Int(dimensions.width),
+             "height": Int(dimensions.height),
+             "nominalFps": nominalFps,
+             "hardwareSupported": hardwareSupported,
+           ]
+           NSLog("[PlayerEngine] diagnostics %@", diagnostics.description)
+           self.emitDiagnosticsEvent(diagnostics)
+         }
+       }
+     }
   private func ensureRateObserver() {
     guard !observingRate else { return }
     player.addObserver(self, forKeyPath: #keyPath(AVPlayer.rate), options: [.initial, .new], context: nil)
