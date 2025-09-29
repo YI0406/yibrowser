@@ -3201,8 +3201,21 @@ class _BrowserPageState extends State<BrowserPage>
           }
         } catch (_) {}
         try {
-          const evt = new Event('touchcancel', { bubbles: true, cancelable: false });
-          document.dispatchEvent(evt);
+         const selection = typeof window.getSelection === 'function'
+            ? window.getSelection()
+            : null;
+          if (selection && typeof selection.removeAllRanges === 'function') {
+            selection.removeAllRanges();
+          }
+        } catch (_) {}
+        try {
+          const events = ['touchcancel', 'touchend', 'pointercancel', 'pointerup'];
+          for (let i = 0; i < events.length; i += 1) {
+            try {
+              const evt = new Event(events[i], { bubbles: true, cancelable: true });
+              document.dispatchEvent(evt);
+            } catch (_) {}
+          }
         } catch (_) {}
       })();
     ''';
@@ -7379,7 +7392,7 @@ class _BrowserPageState extends State<BrowserPage>
           }
           if (filePath != null) {
             try {
-              await Share.shareXFiles([XFile(filePath)]);
+              await AppRepo.I.sharePaths([filePath]);
             } catch (e) {
               if (mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(

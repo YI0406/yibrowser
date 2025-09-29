@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:path/path.dart' as path;
 import 'package:share_plus/share_plus.dart';
 import 'app_localizations.dart';
+import 'soure.dart';
 
 /// Displays a local image with pinch-to-zoom support and an option to share.
 class ImagePreviewPage extends StatefulWidget {
@@ -36,7 +37,17 @@ class _ImagePreviewPageState extends State<ImagePreviewPage>
               );
               if (!ok) return;
               if (!File(widget.filePath).existsSync()) return;
-              await Share.shareXFiles([XFile(widget.filePath)]);
+              try {
+                await AppRepo.I.sharePaths([widget.filePath]);
+              } catch (err) {
+                if (!context.mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    duration: const Duration(seconds: 2),
+                    content: Text(context.l10n('media.error.shareFailed')),
+                  ),
+                );
+              }
             },
           ),
         ],

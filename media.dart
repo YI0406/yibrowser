@@ -947,7 +947,7 @@ class _MediaPageState extends State<MediaPage>
       );
       if (!ok) return;
       if (File(task.savePath).existsSync()) {
-        await Share.shareXFiles([XFile(task.savePath)]);
+        await _sharePaths(context, [task.savePath]);
       } else if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(context.l10n('media.error.missingFile'))),
@@ -1609,13 +1609,13 @@ class _MediaPageState extends State<MediaPage>
       featureName: context.l10n('feature.export'),
     );
     if (!ok) return false;
-    final files = <XFile>[];
+    final paths = <String>[];
     for (final task in tasks) {
       if (File(task.savePath).existsSync()) {
-        files.add(XFile(task.savePath));
+        paths.add(task.savePath);
       }
     }
-    if (files.isEmpty) {
+    if (paths.isEmpty) {
       if (!mounted) return false;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -1625,8 +1625,7 @@ class _MediaPageState extends State<MediaPage>
       );
       return false;
     }
-    await Share.shareXFiles(files);
-    return true;
+    return await _sharePaths(context, paths);
   }
 
   Future<void> _exportSelected(BuildContext context) async {
@@ -1742,6 +1741,33 @@ class _MediaPageState extends State<MediaPage>
     );
   }
 
+  Future<bool> _sharePaths(BuildContext context, List<String> paths) async {
+    if (paths.isEmpty) {
+      if (!mounted) return false;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 1),
+          content: Text(context.l10n('media.snack.noExportable')),
+        ),
+      );
+      return false;
+    }
+    try {
+      await AppRepo.I.sharePaths(paths);
+      return true;
+    } catch (err) {
+      debugPrint('[Media] Share failed: $err');
+      if (!mounted) return false;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 2),
+          content: Text(context.l10n('media.error.shareFailed')),
+        ),
+      );
+      return false;
+    }
+  }
+
   Future<void> _handleShare(BuildContext context, DownloadTask task) async {
     final ok = await PurchaseService().ensurePremium(
       context: context,
@@ -1758,7 +1784,7 @@ class _MediaPageState extends State<MediaPage>
       );
       return;
     }
-    await Share.shareXFiles([XFile(task.savePath)]);
+    await _sharePaths(context, [task.savePath]);
   }
 
   Future<void> _openTask(
@@ -2078,7 +2104,17 @@ class _MyFavorites extends StatelessWidget {
       );
       return;
     }
-    await Share.shareXFiles([XFile(task.savePath)]);
+    try {
+      await AppRepo.I.sharePaths([task.savePath]);
+    } catch (err) {
+      debugPrint('[Favorites] Share failed: $err');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 2),
+          content: Text(context.l10n('media.error.shareFailed')),
+        ),
+      );
+    }
   }
 
   Future<void> _handleOpen(
@@ -2154,7 +2190,17 @@ class _MyFavorites extends StatelessWidget {
         featureName: context.l10n('feature.export'),
       );
       if (!ok) return;
-      await Share.shareXFiles([XFile(task.savePath)]);
+      try {
+        await AppRepo.I.sharePaths([task.savePath]);
+      } catch (err) {
+        debugPrint('[Favorites] Share failed: $err');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            duration: const Duration(seconds: 2),
+            content: Text(context.l10n('media.error.shareFailed')),
+          ),
+        );
+      }
     }
   }
 

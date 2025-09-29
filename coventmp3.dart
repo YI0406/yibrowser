@@ -13,6 +13,7 @@ import 'package:video_player/video_player.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'app_localizations.dart';
+import 'soure.dart';
 
 enum _DragHandle { none, start, end }
 
@@ -1572,8 +1573,10 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage>
     } catch (_) {}
     if (!mounted) return;
     try {
-      await Share.shareXFiles([XFile(outputPath)]);
-    } catch (_) {}
+      await AppRepo.I.sharePaths([outputPath]);
+    } catch (err) {
+      debugPrint('[_handleExportSuccessFeedback] Share failed: $err');
+    }
     if (!mounted) return;
     final messenger = ScaffoldMessenger.of(context);
     messenger.showSnackBar(

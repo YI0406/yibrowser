@@ -3293,9 +3293,165 @@ class AppRepo extends ChangeNotifier {
     await ImageGallerySaver.saveFile(path, isReturnPathOfIOS: true);
   }
 
-  /// Shares a file via share_plus.
+  /// Shares a file via share_plus. Falls back to copying files into a
+  /// temporary share-safe location on iOS when the system refuses to open
+  /// files from the app's Documents directory directly.
   Future<void> shareFile(String path) async {
-    await Share.shareXFiles([XFile(path)]);
+    await sharePaths([path]);
+  }
+
+  /// Shares multiple files. When iOS refuses to load files from the Documents
+  /// directory (observed on some devices when file names contain certain
+  /// characters), this method copies them to the temporary directory with a
+  /// sanitized ASCII name before invoking the share sheet.
+  Future<void> sharePaths(List<String> paths) async {
+    if (paths.isEmpty) {
+      throw Exception('No files to share');
+    }
+    final normalized = paths.map(_canonicalPath).toList();
+    final primary = await _prepareShareFiles(normalized, copyToTemp: false);
+    if (primary.isEmpty) {
+      throw Exception('No files to share');
+    }
+    try {
+      await Share.shareXFiles(primary);
+      return;
+    } catch (error, stack) {
+      debugPrint('[Share] Primary share failed: $error\n$stack');
+      if (!Platform.isIOS) {
+        rethrow;
+      }
+      final cleanup = <String>[];
+      try {
+        final fallback = await _prepareShareFiles(
+          normalized,
+          copyToTemp: true,
+          cleanupTargets: cleanup,
+        );
+        if (fallback.isEmpty) {
+          throw error;
+        }
+        await Share.shareXFiles(fallback);
+      } catch (fallbackErr, fallbackStack) {
+        debugPrint(
+          '[Share] Fallback share failed: $fallbackErr\n$fallbackStack',
+        );
+        rethrow;
+      } finally {
+        for (final tempPath in cleanup) {
+          try {
+            final tempFile = File(tempPath);
+            if (await tempFile.exists()) {
+              await tempFile.delete();
+            }
+          } catch (_) {}
+        }
+      }
+    }
+  }
+
+  String? _shareMimeTypeForPath(String path) {
+    final ext = p.extension(path).toLowerCase();
+    switch (ext) {
+      case '.mp4':
+      case '.m4v':
+        return 'video/mp4';
+      case '.mov':
+        return 'video/quicktime';
+      case '.webm':
+        return 'video/webm';
+      case '.mkv':
+        return 'video/x-matroska';
+      case '.ts':
+        return 'video/mp2t';
+      case '.mp3':
+        return 'audio/mpeg';
+      case '.m4a':
+        return 'audio/mp4';
+      case '.aac':
+        return 'audio/aac';
+      case '.wav':
+        return 'audio/wav';
+      case '.flac':
+        return 'audio/flac';
+      case '.ogg':
+      case '.opus':
+        return 'audio/ogg';
+      case '.jpg':
+      case '.jpeg':
+        return 'image/jpeg';
+      case '.png':
+        return 'image/png';
+      case '.gif':
+        return 'image/gif';
+      case '.bmp':
+        return 'image/bmp';
+      case '.webp':
+        return 'image/webp';
+      case '.pdf':
+        return 'application/pdf';
+      case '.txt':
+        return 'text/plain';
+      case '.zip':
+        return 'application/zip';
+      default:
+        return null;
+    }
+  }
+
+  String _safeShareFileName(String original) {
+    final micro = DateTime.now().microsecondsSinceEpoch;
+    final rawStem = p.basenameWithoutExtension(original).trim();
+    final sanitizedStem = rawStem.replaceAll(RegExp(r'[^A-Za-z0-9_-]+'), '_');
+    final stem = sanitizedStem.isNotEmpty ? sanitizedStem : 'share_$micro';
+    final rawExt = p.extension(original);
+    final normalizedExt = rawExt.replaceAll(RegExp(r'[^A-Za-z0-9]'), '');
+    final ext =
+        normalizedExt.isNotEmpty ? '.${normalizedExt.toLowerCase()}' : '.bin';
+    return '$stem$ext';
+  }
+
+  Future<File> _createTemporaryShareCopy(
+    File source,
+    String displayName,
+  ) async {
+    final tempDir = await getTemporaryDirectory();
+    final safeName = _safeShareFileName(displayName);
+    final tempPath = p.join(
+      tempDir.path,
+      'share_${DateTime.now().microsecondsSinceEpoch}_$safeName',
+    );
+    return source.copy(tempPath);
+  }
+
+  Future<List<XFile>> _prepareShareFiles(
+    List<String> paths, {
+    required bool copyToTemp,
+    List<String>? cleanupTargets,
+  }) async {
+    final List<XFile> files = [];
+    for (final original in paths) {
+      final canonical = _canonicalPath(original);
+      try {
+        final file = File(canonical);
+        if (!await file.exists()) {
+          debugPrint('[Share] Skipping missing file $canonical');
+          continue;
+        }
+        final displayName = p.basename(canonical);
+        final mimeType = _shareMimeTypeForPath(displayName);
+        if (copyToTemp) {
+          final copy = await _createTemporaryShareCopy(file, displayName);
+          cleanupTargets?.add(copy.path);
+          files.add(XFile(copy.path, name: displayName, mimeType: mimeType));
+        } else {
+          files.add(XFile(file.path, name: displayName, mimeType: mimeType));
+        }
+      } catch (err, stack) {
+        debugPrint('[Share] Failed to prepare $original: $err\n$stack');
+      }
+    }
+    return files;
   }
 
   /// Enqueue a new download task for the given URL. Infers the type

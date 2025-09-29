@@ -1238,11 +1238,17 @@ final Map<String, Map<AppLanguage, String>> _translations = {
     AppLanguage.zhHans: '文件尚未完成或已损坏',
     AppLanguage.en: 'File is incomplete or corrupted',
   },
+  'media.error.shareFailed': {
+    AppLanguage.zhHant: '分享失敗，請稍後再試',
+    AppLanguage.zhHans: '分享失敗，請稍後再試',
+    AppLanguage.en: '無法分享所選檔案',
+  },
   'media.error.missingFile': {
     AppLanguage.zhHant: '檔案已不存在',
     AppLanguage.zhHans: '文件已不存在',
     AppLanguage.en: 'File no longer exists',
   },
+
   'media.error.photoPermissionDenied': {
     AppLanguage.zhHant: '相簿權限被拒絕',
     AppLanguage.zhHans: '相册权限被拒绝',
@@ -1466,6 +1472,7 @@ final Map<String, Map<AppLanguage, String>> _translations = {
     AppLanguage.zhHans: '视频+音频（原生）',
     AppLanguage.en: 'Video + audio (single file)',
   },
+
   'browser.youtube.option.type.videoAudio': {
     AppLanguage.zhHant: '視訊+音訊（需合併）',
     AppLanguage.zhHans: '视频+音频（需合并）',
