@@ -2503,6 +2503,20 @@ class AppRepo extends ChangeNotifier {
   }) async {
     final current = [...downloads.value];
     for (final t in tasks) {
+      final cancelToken = _dioTokens.remove(t);
+      if (cancelToken != null && !cancelToken.isCancelled) {
+        try {
+          cancelToken.cancel('task removed');
+        } catch (_) {}
+      }
+      final ffmpegSessionId = _ffmpegSessions.remove(t);
+      if (ffmpegSessionId != null) {
+        try {
+          await FFmpegKit.cancel(ffmpegSessionId);
+        } catch (_) {}
+      }
+      _hlsActiveOutputs.remove(t);
+      _lastHlsSize.remove(t);
       current.remove(t);
       if (deleteFiles) {
         try {
@@ -2523,6 +2537,8 @@ class AppRepo extends ChangeNotifier {
       }
       if (t.kind == 'yt-merge') {
         await _cleanupYtMergeWorkspace(t);
+      } else if (t.kind == 'hls') {
+        await _cleanupHlsWorkspace(t);
       }
     }
     downloads.value = current;
@@ -5110,10 +5126,9 @@ class AppRepo extends ChangeNotifier {
       );
       final framePattern = p.join(framesDir.path, 'frame_%06d$frameExt');
       final WidgetsBinding binding = WidgetsBinding.instance;
-      final appLifecycle = binding.lifecycleState;
-      final bool appIsActive =
-          appLifecycle == null || appLifecycle == AppLifecycleState.resumed;
-      final bool useHardwareEncoder = Platform.isIOS && appIsActive;
+      final AppLifecycleState? lifecycle = binding.lifecycleState;
+      final bool useHardwareEncoder =
+          Platform.isIOS && lifecycle != AppLifecycleState.detached;
       const evenScaleFilter = 'scale=trunc(iw/2)*2:trunc(ih/2)*2';
       const encoderFilterHw = 'nv12';
       const encoderFilterSw = 'yuv420p';
