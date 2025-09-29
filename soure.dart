@@ -3785,22 +3785,6 @@ class AppRepo extends ChangeNotifier {
         t.total = null;
       }
 
-      await downloadPart(videoUrl, videoTemp, videoHeaders);
-      if (token.isCancelled) {
-        t.paused = true;
-        t.state = 'paused';
-
-        await _saveState();
-        return;
-      }
-      final videoBytesNow = await existingLength(videoTemp);
-      final preAudioBytes = await existingLength(audioTemp);
-      final diskTotalBeforeAudio = videoBytesNow + preAudioBytes;
-      if (diskTotalBeforeAudio > aggregate) {
-        aggregate = diskTotalBeforeAudio;
-        t.received = aggregate;
-        _notifyDownloadsUpdated();
-      }
       Future<void> ensureLocalStream({
         required String path,
         required String kind,
@@ -3873,6 +3857,25 @@ class AppRepo extends ChangeNotifier {
         );
       }
 
+      await Future.wait([
+        downloadPart(videoUrl, videoTemp, videoHeaders),
+        downloadPart(audioUrl, audioTemp, audioHeaders),
+      ]);
+      if (token.isCancelled) {
+        t.paused = true;
+        t.state = 'paused';
+
+        await _saveState();
+        return;
+      }
+      final videoBytesNow = await existingLength(videoTemp);
+      final audioBytesNow = await existingLength(audioTemp);
+      final diskTotal = videoBytesNow + audioBytesNow;
+      if (diskTotal > aggregate) {
+        aggregate = diskTotal;
+        t.received = aggregate;
+        _notifyDownloadsUpdated();
+      }
       if (videoId != null && videoItag != null) {
         try {
           await ensureLocalStream(
@@ -3890,21 +3893,6 @@ class AppRepo extends ChangeNotifier {
         }
       }
 
-      await downloadPart(audioUrl, audioTemp, audioHeaders);
-      if (token.isCancelled) {
-        t.paused = true;
-        t.state = 'paused';
-
-        await _saveState();
-        return;
-      }
-      final audioBytesNow = await existingLength(audioTemp);
-      final diskTotal = await existingLength(videoTemp) + audioBytesNow;
-      if (diskTotal > aggregate) {
-        aggregate = diskTotal;
-        t.received = aggregate;
-        _notifyDownloadsUpdated();
-      }
       if (videoId != null && audioItag != null) {
         try {
           await ensureLocalStream(

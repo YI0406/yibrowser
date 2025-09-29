@@ -739,12 +739,21 @@ class _YoutubeParallelDownloader {
   }
 
   List<_SegmentProgress> _buildSegments(int total) {
+    const minChunkSize = 4 * 1024 * 1024;
     final segments = <_SegmentProgress>[];
-    final desiredSegments = math.max(
+    var desiredSegments = math.max(
       parallelConnections * 2,
       parallelConnections,
     );
-    final chunkSize = math.max(1024 * 1024, (total / desiredSegments).ceil());
+    if (desiredSegments > 0) {
+      desiredSegments = math.min(
+        desiredSegments,
+        math.max(1, (total / minChunkSize).ceil()),
+      );
+    }
+    final approximate =
+        desiredSegments > 0 ? (total / desiredSegments).ceil() : total;
+    final chunkSize = math.max(minChunkSize, approximate);
     var start = 0;
     while (start < total) {
       final end = math.min(start + chunkSize - 1, total - 1);
