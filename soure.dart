@@ -3304,7 +3304,7 @@ class AppRepo extends ChangeNotifier {
   /// directory (observed on some devices when file names contain certain
   /// characters), this method copies them to the temporary directory with a
   /// sanitized ASCII name before invoking the share sheet.
-  Future<void> sharePaths(List<String> paths) async {
+  Future<void> sharePaths(List<String> paths, {Rect? shareOrigin}) async {
     if (paths.isEmpty) {
       throw Exception('No files to share');
     }
@@ -3313,8 +3313,9 @@ class AppRepo extends ChangeNotifier {
     if (primary.isEmpty) {
       throw Exception('No files to share');
     }
+    final origin = _resolveShareOrigin(shareOrigin);
     try {
-      await Share.shareXFiles(primary);
+      await Share.shareXFiles(primary, sharePositionOrigin: origin);
       return;
     } catch (error, stack) {
       debugPrint('[Share] Primary share failed: $error\n$stack');
@@ -3331,7 +3332,7 @@ class AppRepo extends ChangeNotifier {
         if (fallback.isEmpty) {
           throw error;
         }
-        await Share.shareXFiles(fallback);
+        await Share.shareXFiles(fallback, sharePositionOrigin: origin);
       } catch (fallbackErr, fallbackStack) {
         debugPrint(
           '[Share] Fallback share failed: $fallbackErr\n$fallbackStack',
@@ -3347,6 +3348,37 @@ class AppRepo extends ChangeNotifier {
           } catch (_) {}
         }
       }
+    }
+  }
+
+  Rect? _resolveShareOrigin(Rect? requested) {
+    if (!Platform.isIOS) {
+      return requested;
+    }
+    if (requested != null) {
+      if (requested.width > 0 && requested.height > 0) {
+        return requested;
+      }
+    }
+    try {
+      final dispatcher = WidgetsBinding.instance.platformDispatcher;
+      if (dispatcher.views.isEmpty) {
+        return null;
+      }
+      final view = dispatcher.views.first;
+      final size = view.physicalSize;
+      final dpr = view.devicePixelRatio;
+      if (dpr <= 0) {
+        return null;
+      }
+      final width = size.width / dpr;
+      final height = size.height / dpr;
+      if (width <= 0 || height <= 0) {
+        return null;
+      }
+      return Rect.fromLTWH(0, 0, width, height);
+    } catch (_) {
+      return null;
     }
   }
 

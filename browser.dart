@@ -4774,14 +4774,14 @@ class _BrowserPageState extends State<BrowserPage>
                               if (raw is String && raw.startsWith('[')) {
                                 final List<dynamic> decoded = jsonDecode(raw);
                                 if (decoded.isNotEmpty) {
-                                  final Map<String, dynamic> first =
+                                  final Map<String, dynamic> entry =
                                       Map<String, dynamic>.from(
-                                        decoded.first as Map,
+                                        decoded.last as Map,
                                       );
-                                  link = (first['url'] ?? '') as String;
+                                  link = (entry['url'] ?? '') as String;
 
                                   final rawType =
-                                      (first['type'] ?? '') as String;
+                                      (entry['type'] ?? '') as String;
                                   final lowerUrl = link!.toLowerCase();
                                   if (rawType.startsWith('image/') ||
                                       lowerUrl.endsWith('.png') ||
