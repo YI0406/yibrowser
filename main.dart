@@ -133,7 +133,8 @@ class RootNav extends StatefulWidget {
   State<RootNav> createState() => _RootNavState();
 }
 
-class _RootNavState extends State<RootNav> with LanguageAwareState<RootNav> {
+class _RootNavState extends State<RootNav>
+    with LanguageAwareState<RootNav>, WidgetsBindingObserver {
   // Index of the selected tab.
   // Start on home tab by default (index 1).
   int index = 1;
@@ -154,6 +155,7 @@ class _RootNavState extends State<RootNav> with LanguageAwareState<RootNav> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     // Initialize pages with callbacks. Use lazy initialization so that
     // callbacks capture the correct context.
     pages = [
@@ -179,6 +181,14 @@ class _RootNavState extends State<RootNav> with LanguageAwareState<RootNav> {
     ];
     _configureQuickActions();
     _initShareHandling();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.resumed) {
+      unawaited(AppRepo.I.resumeIncompleteDownloads());
+    }
   }
 
   void _configureQuickActions() {
@@ -588,6 +598,7 @@ class _RootNavState extends State<RootNav> with LanguageAwareState<RootNav> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _sharedMediaSubscription?.cancel();
     super.dispose();
   }

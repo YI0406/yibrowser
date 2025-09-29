@@ -88,6 +88,8 @@ class _BlockedExternalNavigation {
 
 enum _BlockedNavigationFallbackResult { openedNewTab, suppressed, unavailable }
 
+enum _DetectedMediaAction { play, download }
+
 class _ExternalNavigationIntent {
   final bool shouldBlock;
   final bool isAppLink;
@@ -4785,9 +4787,9 @@ class _BrowserPageState extends State<BrowserPage>
                             }
                             return;
                           }
-                          showDialog(
+                          final action = await showDialog<_DetectedMediaAction>(
                             context: context,
-                            builder: (_) {
+                            builder: (dialogContext) {
                               return AlertDialog(
                                 title: Text(
                                   context.l10n(
@@ -4849,35 +4851,42 @@ class _BrowserPageState extends State<BrowserPage>
                                 ),
                                 actions: [
                                   TextButton(
-                                    onPressed: () => Navigator.pop(context),
+                                    onPressed:
+                                        () => Navigator.of(dialogContext).pop(),
                                     child: Text(context.l10n('common.cancel')),
                                   ),
                                   if (type != 'image')
                                     TextButton.icon(
                                       icon: const Icon(Icons.play_arrow),
                                       label: Text(context.l10n('common.play')),
-                                      onPressed: () {
-                                        Navigator.pop(context);
-                                        _playMedia(resolvedLink);
-                                      },
+                                      onPressed:
+                                          () => Navigator.of(
+                                            dialogContext,
+                                          ).pop(_DetectedMediaAction.play),
                                     ),
                                   FilledButton.icon(
                                     icon: const Icon(Icons.download),
                                     label: Text(
                                       context.l10n('common.download'),
                                     ),
-                                    onPressed: () {
-                                      Navigator.pop(context);
-                                      _confirmDownload(
-                                        resolvedLink,
-                                        skipPrompt: true,
-                                      );
-                                    },
+                                    onPressed:
+                                        () => Navigator.of(
+                                          dialogContext,
+                                        ).pop(_DetectedMediaAction.download),
                                   ),
                                 ],
                               );
                             },
                           );
+                          if (!mounted) return;
+                          if (action == _DetectedMediaAction.play) {
+                            _playMedia(resolvedLink);
+                          } else if (action == _DetectedMediaAction.download) {
+                            await _confirmDownload(
+                              resolvedLink,
+                              skipPrompt: true,
+                            );
+                          }
                         },
                       ),
                       Positioned.fill(
