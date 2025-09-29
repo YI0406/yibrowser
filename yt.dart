@@ -467,12 +467,12 @@ class YoutubeStreamCancelled implements Exception {
 
 int _pickParallelConnectionCount(int totalBytes) {
   if (totalBytes < 8 * 1024 * 1024) {
-    return 6;
+    return 4;
   }
   if (totalBytes < 48 * 1024 * 1024) {
-    return 8;
+    return 6;
   }
-  return 12;
+  return 10;
 }
 
 Future<int> _downloadStreamSequential({
