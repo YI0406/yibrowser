@@ -272,6 +272,9 @@ class _MediaPageState extends State<MediaPage>
         _selected.clear();
       });
     }
+    if (index == 0) {
+      AppRepo.I.refreshDownloadsView();
+    }
 
     _lastTabIndex = index;
   }

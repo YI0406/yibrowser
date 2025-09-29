@@ -86,7 +86,12 @@ class _BlockedExternalNavigation {
   });
 }
 
-enum _BlockedNavigationFallbackResult { openedNewTab, suppressed, unavailable }
+enum _BlockedNavigationFallbackResult {
+  openedNewTab,
+  openedInCurrentTab,
+  suppressed,
+  unavailable,
+}
 
 enum _DetectedMediaAction { play, download }
 
@@ -3083,6 +3088,8 @@ class _BrowserPageState extends State<BrowserPage>
     final fallbackResult = _openBlockedNavigationInNewTab(blocked);
     final openedInNewTab =
         fallbackResult == _BlockedNavigationFallbackResult.openedNewTab;
+    final openedInCurrentTab =
+        fallbackResult == _BlockedNavigationFallbackResult.openedInCurrentTab;
     final shouldAttemptBypass =
         controller != null &&
         fallbackResult == _BlockedNavigationFallbackResult.unavailable &&
@@ -3090,7 +3097,7 @@ class _BrowserPageState extends State<BrowserPage>
     _showExternalAppBlockedSnackBar(
       blocked,
       openedInNewTab: openedInNewTab,
-      bypassedInWebView: shouldAttemptBypass,
+      bypassedInWebView: shouldAttemptBypass || openedInCurrentTab,
     );
     if (shouldAttemptBypass) {
       _attemptAppLinkBypass(controller!, blocked);
@@ -3150,10 +3157,58 @@ class _BrowserPageState extends State<BrowserPage>
     addHostCandidate(_extractHostFromString(blocked.rawUrl));
     addHostCandidate(_extractHostFromWebUri(blocked.resolvedUri));
 
+    final bool canReuseCurrentTab =
+        _currentTabIndex >= 0 &&
+        _currentTabIndex < _tabs.length &&
+        (() {
+          final tab = _tabs[_currentTabIndex];
+          final current = tab.currentUrl?.trim() ?? '';
+          return current.isEmpty;
+        })();
+
+    if (canReuseCurrentTab) {
+      final tab = _tabs[_currentTabIndex];
+      if (allowedHosts.isNotEmpty) {
+        tab.allowedAppLinkHosts.addAll(allowedHosts);
+      }
+      tab.urlCtrl.text = normalizedFallback;
+      tab.currentUrl = normalizedFallback;
+      unawaited(
+        tab.controller?.loadUrl(
+          urlRequest: URLRequest(url: WebUri(normalizedFallback)),
+        ),
+      );
+      _updateOpenTabs();
+      if (mounted) setState(() {});
+      return _BlockedNavigationFallbackResult.openedInCurrentTab;
+    }
+
     unawaited(
       _openLinkInNewTab(normalizedFallback, allowedAppLinkHosts: allowedHosts),
     );
     return _BlockedNavigationFallbackResult.openedNewTab;
+  }
+
+  Future<void> _releaseWebViewAfterContextMenu(
+    InAppWebViewController controller,
+  ) async {
+    const script = r'''
+      (function() {
+        try {
+          const active = document.activeElement;
+          if (active && typeof active.blur === 'function') {
+            active.blur();
+          }
+        } catch (_) {}
+        try {
+          const evt = new Event('touchcancel', { bubbles: true, cancelable: false });
+          document.dispatchEvent(evt);
+        } catch (_) {}
+      })();
+    ''';
+    try {
+      await controller.evaluateJavascript(source: script);
+    } catch (_) {}
   }
 
   bool _flagTruthy(dynamic value) {
@@ -4787,97 +4842,117 @@ class _BrowserPageState extends State<BrowserPage>
                             }
                             return;
                           }
-                          final action = await showDialog<_DetectedMediaAction>(
-                            context: context,
-                            builder: (dialogContext) {
-                              return AlertDialog(
-                                title: Text(
-                                  context.l10n(
-                                    'browser.detectMedia.dialog.title',
-                                  ),
-                                ),
-                                content: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    SelectableText(
-                                      resolvedLink,
-                                      maxLines: 4,
-                                      onTap: () {},
+                          _suppressLinkLongPress = true;
+                          _DetectedMediaAction? action;
+                          try {
+                            action = await showDialog<_DetectedMediaAction>(
+                              context: context,
+                              builder: (dialogContext) {
+                                return AlertDialog(
+                                  title: Text(
+                                    context.l10n(
+                                      'browser.detectMedia.dialog.title',
                                     ),
-                                    const SizedBox(height: 6),
-                                    Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Chip(
-                                          label: Text(
-                                            _localizedMediaType(context, type),
-                                          ),
-                                          visualDensity: VisualDensity.compact,
-                                          materialTapTargetSize:
-                                              MaterialTapTargetSize.shrinkWrap,
-                                        ),
-                                        const SizedBox(width: 8),
-                                        IconButton(
-                                          tooltip: context.l10n(
-                                            'browser.context.copyLink',
-                                          ),
-                                          icon: const Icon(Icons.copy),
-                                          onPressed: () async {
-                                            await Clipboard.setData(
-                                              ClipboardData(text: resolvedLink),
-                                            );
-                                            if (context.mounted) {
-                                              ScaffoldMessenger.of(
+                                  ),
+                                  content: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      SelectableText(
+                                        resolvedLink,
+                                        maxLines: 4,
+                                        onTap: () {},
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Chip(
+                                            label: Text(
+                                              _localizedMediaType(
                                                 context,
-                                              ).showSnackBar(
-                                                SnackBar(
-                                                  duration: const Duration(
-                                                    seconds: 1,
-                                                  ),
-                                                  content: Text(
-                                                    context.l10n(
-                                                      'browser.snack.copiedLink',
-                                                    ),
-                                                  ),
+                                                type,
+                                              ),
+                                            ),
+                                            visualDensity:
+                                                VisualDensity.compact,
+                                            materialTapTargetSize:
+                                                MaterialTapTargetSize
+                                                    .shrinkWrap,
+                                          ),
+                                          const SizedBox(width: 8),
+                                          IconButton(
+                                            tooltip: context.l10n(
+                                              'browser.context.copyLink',
+                                            ),
+                                            icon: const Icon(Icons.copy),
+                                            onPressed: () async {
+                                              await Clipboard.setData(
+                                                ClipboardData(
+                                                  text: resolvedLink,
                                                 ),
                                               );
-                                            }
-                                          },
-                                        ),
-                                      ],
-                                    ),
-                                  ],
-                                ),
-                                actions: [
-                                  TextButton(
-                                    onPressed:
-                                        () => Navigator.of(dialogContext).pop(),
-                                    child: Text(context.l10n('common.cancel')),
+                                              if (context.mounted) {
+                                                ScaffoldMessenger.of(
+                                                  context,
+                                                ).showSnackBar(
+                                                  SnackBar(
+                                                    duration: const Duration(
+                                                      seconds: 1,
+                                                    ),
+                                                    content: Text(
+                                                      context.l10n(
+                                                        'browser.snack.copiedLink',
+                                                      ),
+                                                    ),
+                                                  ),
+                                                );
+                                              }
+                                            },
+                                          ),
+                                        ],
+                                      ),
+                                    ],
                                   ),
-                                  if (type != 'image')
-                                    TextButton.icon(
-                                      icon: const Icon(Icons.play_arrow),
-                                      label: Text(context.l10n('common.play')),
+                                  actions: [
+                                    TextButton(
+                                      onPressed:
+                                          () =>
+                                              Navigator.of(dialogContext).pop(),
+                                      child: Text(
+                                        context.l10n('common.cancel'),
+                                      ),
+                                    ),
+                                    if (type != 'image')
+                                      TextButton.icon(
+                                        icon: const Icon(Icons.play_arrow),
+                                        label: Text(
+                                          context.l10n('common.play'),
+                                        ),
+                                        onPressed:
+                                            () => Navigator.of(
+                                              dialogContext,
+                                            ).pop(_DetectedMediaAction.play),
+                                      ),
+                                    FilledButton.icon(
+                                      icon: const Icon(Icons.download),
+                                      label: Text(
+                                        context.l10n('common.download'),
+                                      ),
                                       onPressed:
                                           () => Navigator.of(
                                             dialogContext,
-                                          ).pop(_DetectedMediaAction.play),
+                                          ).pop(_DetectedMediaAction.download),
                                     ),
-                                  FilledButton.icon(
-                                    icon: const Icon(Icons.download),
-                                    label: Text(
-                                      context.l10n('common.download'),
-                                    ),
-                                    onPressed:
-                                        () => Navigator.of(
-                                          dialogContext,
-                                        ).pop(_DetectedMediaAction.download),
-                                  ),
-                                ],
-                              );
-                            },
-                          );
+                                  ],
+                                );
+                              },
+                            );
+                          } finally {
+                            _suppressLinkLongPress = false;
+                            unawaited(_releaseWebViewAfterContextMenu(c));
+                          }
                           if (!mounted) return;
                           if (action == _DetectedMediaAction.play) {
                             _playMedia(resolvedLink);

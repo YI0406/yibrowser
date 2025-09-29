@@ -23,6 +23,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'app_localizations.dart';
 import 'dart:math' as math;
+import 'package:dio/io.dart';
 import 'package:crypto/crypto.dart';
 import 'package:video_player/video_player.dart';
 import 'package:flutter_hls_parser/flutter_hls_parser.dart';
@@ -1492,7 +1493,7 @@ class AppRepo extends ChangeNotifier {
 
   Future<String?> _pickBestHlsVariant(String masterUrl) async {
     try {
-      final dio = Dio();
+      final dio = _createDio();
       final hdrs = await _headersFor(masterUrl);
       // Fetch playlist text with headers
       final resp = await dio.get<String>(
@@ -1548,7 +1549,7 @@ class AppRepo extends ChangeNotifier {
       final hdrs = await _headersFor(url);
 
       // 1) Fetch and parse the playlist at `url`
-      final dio = Dio();
+      final dio = _createDio();
       final r = await dio.get<String>(
         url,
         options: Options(
@@ -1737,7 +1738,7 @@ class AppRepo extends ChangeNotifier {
     Map<String, String> hdrs,
   ) async {
     try {
-      final dio = Dio();
+      final dio = _createDio();
       final r = await dio.get<String>(
         u,
         options: Options(
@@ -2865,7 +2866,7 @@ class AppRepo extends ChangeNotifier {
       try {
         await _ensureHomeIconDirectory();
         final file = _homeIconFileForHost(host);
-        final dio = Dio();
+        final dio = _createDio();
         final candidates = <String>[
           'https://$host/favicon.ico',
           'https://$host/apple-touch-icon.png',
@@ -3638,7 +3639,7 @@ class AppRepo extends ChangeNotifier {
     final fileExt = fileExtRaw.isEmpty ? 'mp4' : fileExtRaw;
     final audioExt = audioExtRaw.isEmpty ? 'm4a' : audioExtRaw;
 
-    final dio = Dio();
+    final dio = _createDio();
     final token = CancelToken();
     _dioTokens[t] = token;
 
@@ -4095,7 +4096,7 @@ class AppRepo extends ChangeNotifier {
     var resetName = false;
     try {
       final hdrs = await _headersFor(url);
-      final dio = Dio();
+      final dio = _createDio();
       final r = await dio.get<String>(
         url,
         options: Options(
@@ -4507,7 +4508,7 @@ class AppRepo extends ChangeNotifier {
         (a, b) => (b.format?.bitrate ?? 0).compareTo(a.format?.bitrate ?? 0),
       );
 
-      final dio = client ?? Dio();
+      final dio = client ?? _createDio();
       for (final variant in variants) {
         final variantUrl = variant.url.toString();
         if (variantUrl.isEmpty || visited.contains(variantUrl)) {
@@ -4609,7 +4610,7 @@ class AppRepo extends ChangeNotifier {
       String inputUrl = t.url;
       try {
         final hdrsProbe = await _headersFor(t.url);
-        final dioProbe = Dio();
+        final dioProbe = _createDio();
         final probe = await dioProbe.get<String>(
           t.url,
           options: Options(
@@ -5058,7 +5059,7 @@ class AppRepo extends ChangeNotifier {
       t.state = 'downloading';
       _notifyDownloadsUpdated();
       notifyListeners();
-      final dio = Dio();
+      final dio = _createDio();
       final headers = await _headersFor(t.url);
       final frameNames = <String>[];
       var downloadedCount = resumeData.completed.length;
@@ -5282,6 +5283,30 @@ class AppRepo extends ChangeNotifier {
     downloads.value = List<DownloadTask>.from(downloads.value);
   }
 
+  void refreshDownloadsView() {
+    _notifyDownloadsUpdated();
+  }
+
+  Dio _createDio({Duration? timeout}) {
+    final dio = Dio();
+    final Duration effectiveTimeout = timeout ?? const Duration(seconds: 30);
+    dio.options
+      ..connectTimeout = effectiveTimeout
+      ..receiveTimeout = effectiveTimeout
+      ..sendTimeout = effectiveTimeout;
+    if (!kIsWeb) {
+      dio.httpClientAdapter = IOHttpClientAdapter(
+        createHttpClient: () {
+          final client = HttpClient();
+          client.connectionTimeout = effectiveTimeout;
+          client.maxConnectionsPerHost = 8;
+          return client;
+        },
+      );
+    }
+    return dio;
+  }
+
   /// Returns the active temporary output file for an ongoing HLS conversion
   /// if one is available. When null, the task is either not active or is
   /// writing directly to its final destination path.
@@ -5307,7 +5332,7 @@ class AppRepo extends ChangeNotifier {
       }
       final token = CancelToken();
       _dioTokens[t] = token;
-      final dio = Dio();
+      final dio = _createDio();
       // Inject UA/Referer/Cookie headers for direct file download
       final baseHeaders = await _headersFor(t.url);
       final hdrs = Map<String, String>.from(baseHeaders);

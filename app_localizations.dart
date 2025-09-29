@@ -1543,6 +1543,11 @@ final Map<String, Map<AppLanguage, String>> _translations = {
     AppLanguage.zhHans: '复制链接',
     AppLanguage.en: 'Copy link',
   },
+  'browser.detectMedia.dialog.chooseSource': {
+    AppLanguage.zhHant: '選擇媒體來源',
+    AppLanguage.zhHans: '选择媒体来源',
+    AppLanguage.en: 'Select media source',
+  },
   'browser.context.downloadLink': {
     AppLanguage.zhHant: '下載連結網址',
     AppLanguage.zhHans: '下载链接网址',
