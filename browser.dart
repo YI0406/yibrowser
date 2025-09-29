@@ -3201,20 +3201,35 @@ class _BrowserPageState extends State<BrowserPage>
           }
         } catch (_) {}
         try {
-         const selection = typeof window.getSelection === 'function'
+       const selection = typeof window.getSelection === 'function'
             ? window.getSelection()
             : null;
           if (selection && typeof selection.removeAllRanges === 'function') {
             selection.removeAllRanges();
           }
         } catch (_) {}
-        try {
-          const events = ['touchcancel', 'touchend', 'pointercancel', 'pointerup'];
+   const dispatchAll = (events, targets) => {
           for (let i = 0; i < events.length; i += 1) {
-            try {
-              const evt = new Event(events[i], { bubbles: true, cancelable: true });
-              document.dispatchEvent(evt);
-            } catch (_) {}
+           for (let j = 0; j < targets.length; j += 1) {
+              const target = targets[j];
+              if (!target) continue;
+              try {
+                const evt = new Event(events[i], { bubbles: true, cancelable: true });
+                target.dispatchEvent(evt);
+              } catch (_) {}
+            }
+          }
+        };
+        try {
+          const events = ['touchcancel', 'touchend', 'pointercancel', 'pointerup', 'mouseup'];
+          const active = document.activeElement;
+          const win = (typeof window !== 'undefined') ? window : null;
+          const targets = [win, document, document.documentElement, document.body, active].filter(Boolean);
+          dispatchAll(events, targets);
+          if (typeof window !== 'undefined' && window.requestAnimationFrame) {
+            window.requestAnimationFrame(() => dispatchAll(events, targets));
+          } else {
+            setTimeout(() => dispatchAll(events, targets), 0);
           }
         } catch (_) {}
       })();
@@ -6639,6 +6654,16 @@ class _BrowserPageState extends State<BrowserPage>
   /// Cache the most recent non-null speed so the UI can keep showing a value
   /// while the next sample is still being gathered.
   final Map<String, double> _lastSpeeds = {};
+  void _clearSpeedSnapshotsForTask(String savePath) {
+    final prefix = '$savePath|';
+    _rateSnaps.removeWhere((key, _) => key.startsWith(prefix));
+    _lastSpeeds.removeWhere((key, _) => key.startsWith(prefix));
+  }
+
+  void _resetAllSpeedTracking() {
+    _rateSnaps.clear();
+    _lastSpeeds.clear();
+  }
 
   String _fmtSpeed(num bps) {
     // bytes per second to human friendly string without specifying colors
@@ -6687,6 +6712,7 @@ class _BrowserPageState extends State<BrowserPage>
   /// navigating away from the browser tab.
   void _openDownloadsSheet() {
     _suppressLinkLongPress = true;
+    _resetAllSpeedTracking();
     showModalBottomSheet(
       context: context,
       builder: (_) {
@@ -6896,6 +6922,9 @@ class _BrowserPageState extends State<BrowserPage>
         (t.total != null && t.received < t.total!);
     final repo = AppRepo.I;
     final resolvedType = repo.resolvedTaskType(t);
+    if (t.state != 'downloading' || t.paused) {
+      _clearSpeedSnapshotsForTask(t.savePath);
+    }
     final activeHlsPath = repo.activeHlsOutputFor(t) ?? t.savePath;
     final int? activeHlsBytes =
         isHls
