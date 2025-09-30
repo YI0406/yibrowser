@@ -723,6 +723,7 @@ class _BrowserPageState extends State<BrowserPage>
   const MOVE_TOLERANCE = 14;
   const SUPPRESS_TIMEOUT = 800;
   let suppressNextClick = false;
+    let suppressedAnchor = null;
   let activeAnchor = null;
   let longPressTimer = null;
   let startX = 0;
@@ -743,6 +744,7 @@ class _BrowserPageState extends State<BrowserPage>
 
   const resetClickSuppression = () => {
     suppressNextClick = false;
+    suppressedAnchor = null;
     if (suppressResetTimer !== null) {
       clearTimeout(suppressResetTimer);
       suppressResetTimer = null;
@@ -756,6 +758,7 @@ class _BrowserPageState extends State<BrowserPage>
     suppressResetTimer = setTimeout(() => {
       suppressResetTimer = null;
       suppressNextClick = false;
+      suppressedAnchor = null;
     }, SUPPRESS_TIMEOUT);
   };
 
@@ -838,11 +841,12 @@ class _BrowserPageState extends State<BrowserPage>
       startX = touch.clientX;
       startY = touch.clientY;
       longPressTimer = setTimeout(() => {
-       if (!isEnabled()) {
+         if (!isEnabled()) {
           resetState();
           return;
         }
-        const resolved = resolveHref(activeAnchor);
+       const anchor = activeAnchor;
+        const resolved = resolveHref(anchor);
         try {
           const selection = window.getSelection && window.getSelection();
           if (selection && selection.removeAllRanges) {
@@ -856,6 +860,7 @@ class _BrowserPageState extends State<BrowserPage>
           window.flutter_inappwebview.callHandler
         ) {
          suppressNextClick = true;
+          suppressedAnchor = anchor;
           scheduleSuppressReset();
           window.flutter_inappwebview.callHandler('linkLongPress', resolved);
         }
@@ -926,9 +931,19 @@ class _BrowserPageState extends State<BrowserPage>
       if (!suppressNextClick) {
         return;
       }
+       const anchor = suppressedAnchor;
+      if (anchor && event && event.target) {
+        const target = event.target;
+        const shouldSuppress =
+          target === anchor ||
+          (typeof anchor.contains === 'function' && anchor.contains(target));
+        if (shouldSuppress) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      }
       resetClickSuppression();
-      event.preventDefault();
-      event.stopPropagation();
+    
     },
     { capture: true }
   );
