@@ -370,7 +370,7 @@ class _BrowserPageState extends State<BrowserPage>
       }
     } finally {
       if (releaseController != null) {
-        unawaited(_releaseWebViewAfterContextMenu(releaseController));
+        unawaited(_resetAndReleaseWebViewAfterContextMenu(releaseController));
       }
     }
   }
@@ -718,11 +718,31 @@ class _BrowserPageState extends State<BrowserPage>
 
   const LONG_PRESS_DELAY = 650;
   const MOVE_TOLERANCE = 14;
+  const SUPPRESS_TIMEOUT = 800;
   let suppressNextClick = false;
   let activeAnchor = null;
   let longPressTimer = null;
   let startX = 0;
   let startY = 0;
+  let suppressResetTimer = null;
+
+  const resetClickSuppression = () => {
+    suppressNextClick = false;
+    if (suppressResetTimer !== null) {
+      clearTimeout(suppressResetTimer);
+      suppressResetTimer = null;
+    }
+  };
+
+  const scheduleSuppressReset = () => {
+    if (suppressResetTimer !== null) {
+      clearTimeout(suppressResetTimer);
+    }
+    suppressResetTimer = setTimeout(() => {
+      suppressResetTimer = null;
+      suppressNextClick = false;
+    }, SUPPRESS_TIMEOUT);
+  };
 
   const ensureStyle = () => {
     if (document.getElementById('flutter-ios-link-menu-style')) {
@@ -799,7 +819,8 @@ class _BrowserPageState extends State<BrowserPage>
           window.flutter_inappwebview &&
           window.flutter_inappwebview.callHandler
         ) {
-        suppressNextClick = true;
+         suppressNextClick = true;
+          scheduleSuppressReset();
           window.flutter_inappwebview.callHandler('linkLongPress', resolved);
         }
       }, LONG_PRESS_DELAY);
@@ -841,14 +862,20 @@ class _BrowserPageState extends State<BrowserPage>
 
   document.addEventListener('touchend', clearPending, { passive: true });
   document.addEventListener('touchcancel', clearPending, { passive: true });
-  
+
+    const resetState = () => {
+    clearPending();
+    resetClickSuppression();
+  };
+
+  window.__flutterResetLinkMenu = resetState;
   document.addEventListener(
     'click',
     (event) => {
       if (!suppressNextClick) {
         return;
       }
-      suppressNextClick = false;
+      resetClickSuppression();
       event.preventDefault();
       event.stopPropagation();
     },
@@ -1916,13 +1943,31 @@ class _BrowserPageState extends State<BrowserPage>
     }
   }
 
+  Future<void> _resetIosLinkContextMenuBridge(
+    InAppWebViewController controller,
+  ) async {
+    if (!Platform.isIOS) {
+      return;
+    }
+    const script = r'''
+      try {
+        if (typeof window !== 'undefined' && window.__flutterResetLinkMenu) {
+          window.__flutterResetLinkMenu();
+        }
+      } catch (_) {}
+    ''';
+    try {
+      await controller.evaluateJavascript(source: script);
+    } catch (_) {}
+  }
+
   Future<void> _handleLinkContextMenuWithFeedback(
     String url, {
     InAppWebViewController? releaseController,
   }) async {
     if (_suppressLinkLongPress) {
       if (releaseController != null) {
-        unawaited(_releaseWebViewAfterContextMenu(releaseController));
+        unawaited(_resetAndReleaseWebViewAfterContextMenu(releaseController));
       }
       return;
     }
@@ -1933,7 +1978,7 @@ class _BrowserPageState extends State<BrowserPage>
       await _handleLinkContextMenu(url);
     } finally {
       if (releaseController != null) {
-        unawaited(_releaseWebViewAfterContextMenu(releaseController));
+        unawaited(_resetAndReleaseWebViewAfterContextMenu(releaseController));
       }
     }
   }
@@ -3277,6 +3322,13 @@ class _BrowserPageState extends State<BrowserPage>
     try {
       await controller.evaluateJavascript(source: script);
     } catch (_) {}
+  }
+
+  Future<void> _resetAndReleaseWebViewAfterContextMenu(
+    InAppWebViewController controller,
+  ) async {
+    await _resetIosLinkContextMenuBridge(controller);
+    await _releaseWebViewAfterContextMenu(controller);
   }
 
   bool _flagTruthy(dynamic value) {
@@ -4915,7 +4967,9 @@ class _BrowserPageState extends State<BrowserPage>
                                 );
                               }
                             } else {
-                              unawaited(_releaseWebViewAfterContextMenu(c));
+                              unawaited(
+                                _resetAndReleaseWebViewAfterContextMenu(c),
+                              );
                             }
                             return;
                           }
@@ -5028,7 +5082,9 @@ class _BrowserPageState extends State<BrowserPage>
                             );
                           } finally {
                             _suppressLinkLongPress = false;
-                            unawaited(_releaseWebViewAfterContextMenu(c));
+                            unawaited(
+                              _resetAndReleaseWebViewAfterContextMenu(c),
+                            );
                           }
                           if (!mounted) return;
                           if (action == _DetectedMediaAction.play) {
