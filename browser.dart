@@ -1902,14 +1902,26 @@ class _BrowserPageState extends State<BrowserPage>
     }
   }
 
-  Future<void> _handleLinkContextMenuWithFeedback(String url) async {
+  Future<void> _handleLinkContextMenuWithFeedback(
+    String url, {
+    InAppWebViewController? releaseController,
+  }) async {
     if (_suppressLinkLongPress) {
+      if (releaseController != null) {
+        unawaited(_releaseWebViewAfterContextMenu(releaseController));
+      }
       return;
     }
     try {
       await HapticFeedback.selectionClick();
     } catch (_) {}
-    await _handleLinkContextMenu(url);
+    try {
+      await _handleLinkContextMenu(url);
+    } finally {
+      if (releaseController != null) {
+        unawaited(_releaseWebViewAfterContextMenu(releaseController));
+      }
+    }
   }
 
   bool _isOnYoutubeWatchPage() {
@@ -4397,6 +4409,8 @@ class _BrowserPageState extends State<BrowserPage>
                         initialSettings: InAppWebViewSettings(
                           userAgent: _userAgent,
                           allowsInlineMediaPlayback: true,
+                          allowsPictureInPictureMediaPlayback: true,
+                          allowsAirPlayForMediaPlayback: true,
                           mediaPlaybackRequiresUserGesture: false,
                           useOnLoadResource: true,
                           useShouldOverrideUrlLoading: true,
@@ -4477,6 +4491,7 @@ class _BrowserPageState extends State<BrowserPage>
                                 _lastIosLinkMenuTime = DateTime.now();
                                 await _handleLinkContextMenuWithFeedback(
                                   normalized,
+                                  releaseController: c,
                                 );
                                 return {'handled': true};
                               },
@@ -4787,6 +4802,7 @@ class _BrowserPageState extends State<BrowserPage>
                                 }
                                 await _handleLinkContextMenuWithFeedback(
                                   normalizedResolved,
+                                  releaseController: c,
                                 );
                                 return;
                               }
