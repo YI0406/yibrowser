@@ -165,6 +165,7 @@ class _MediaPageState extends State<MediaPage>
     try {
       _hiddenSearchCtl.dispose();
     } catch (_) {}
+    _directSpeedSnaps.clear();
     super.dispose();
   }
 
@@ -273,6 +274,7 @@ class _MediaPageState extends State<MediaPage>
       });
     }
     if (index == 0) {
+      _directSpeedSnaps.clear();
       AppRepo.I.refreshDownloadsView();
     }
 
@@ -1229,25 +1231,29 @@ class _MediaPageState extends State<MediaPage>
     final key = task.savePath;
     final now = DateTime.now();
     final prev = _directSpeedSnaps[key];
-    double? computed;
+    double? speed;
+    int elapsedMs = 0;
+    int? delta;
     if (prev != null) {
-      final elapsedMs = now.difference(prev.timestamp).inMilliseconds;
+      elapsedMs = now.difference(prev.timestamp).inMilliseconds;
       if (elapsedMs > 0) {
-        final delta = task.received - prev.bytes;
+        delta = task.received - prev.bytes;
         if (delta > 0) {
-          computed = delta / (elapsedMs / 1000.0);
-        } else if (delta == 0) {
-          computed = prev.speed;
+          speed = delta / (elapsedMs / 1000.0);
+        } else if (delta == 0 && elapsedMs <= 1200) {
+          speed = prev.speed;
         } else {
-          computed = null;
+          speed = null;
         }
       } else {
-        computed = prev.speed;
+        speed = prev.speed;
+      }
+      if ((delta == null || delta <= 0) && elapsedMs > 1200) {
+        speed = null;
       }
     }
-    final cached = computed ?? prev?.speed;
-    _directSpeedSnaps[key] = _RateSnapshot(task.received, now, cached);
-    return cached;
+    _directSpeedSnaps[key] = _RateSnapshot(task.received, now, speed);
+    return speed;
   }
 
   void _purgeDirectSpeedSnapshot(String key) {

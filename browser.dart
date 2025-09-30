@@ -715,6 +715,9 @@ class _BrowserPageState extends State<BrowserPage>
     return;
   }
   window.__flutterIosLinkMenuInstalled = true;
+  if (typeof window.flutterIosLinkMenuEnabled === 'undefined') {
+    window.flutterIosLinkMenuEnabled = true;
+  }
 
   const LONG_PRESS_DELAY = 650;
   const MOVE_TOLERANCE = 14;
@@ -725,6 +728,18 @@ class _BrowserPageState extends State<BrowserPage>
   let startX = 0;
   let startY = 0;
   let suppressResetTimer = null;
+   const styleId = 'flutter-ios-link-menu-style';
+  let styleNode = null;
+
+  const isEnabled = () => !!window.flutterIosLinkMenuEnabled;
+
+  const removeStyle = () => {
+    const node = styleNode || document.getElementById(styleId);
+    if (node && node.parentNode) {
+      node.parentNode.removeChild(node);
+    }
+    styleNode = null;
+  };
 
   const resetClickSuppression = () => {
     suppressNextClick = false;
@@ -745,13 +760,22 @@ class _BrowserPageState extends State<BrowserPage>
   };
 
   const ensureStyle = () => {
-    if (document.getElementById('flutter-ios-link-menu-style')) {
+    if (!isEnabled()) {
+      removeStyle();
       return;
     }
-    const style = document.createElement('style');
-    style.id = 'flutter-ios-link-menu-style';
-    style.textContent = 'a, a * { -webkit-touch-callout: none !important; }';
-    document.documentElement.appendChild(style);
+    if (styleNode && styleNode.parentNode) {
+      return;
+    }
+    styleNode = styleNode || document.getElementById(styleId);
+    if (!styleNode) {
+      styleNode = document.createElement('style');
+      styleNode.id = styleId;
+      styleNode.textContent = 'a, a * { -webkit-touch-callout: none !important; }';
+    }
+    if (styleNode && !styleNode.parentNode) {
+      document.documentElement.appendChild(styleNode);
+    }
   };
 
   const resolveHref = (anchor) => {
@@ -781,10 +805,18 @@ class _BrowserPageState extends State<BrowserPage>
     startX = 0;
     startY = 0;
   };
+   const resetState = () => {
+    clearPending();
+    resetClickSuppression();
+  };
 
   document.addEventListener(
     'touchstart',
     (event) => {
+     if (!isEnabled()) {
+        clearPending();
+        return;
+      }
       if (!event || !event.touches || event.touches.length !== 1) {
         clearPending();
         return;
@@ -806,6 +838,10 @@ class _BrowserPageState extends State<BrowserPage>
       startX = touch.clientX;
       startY = touch.clientY;
       longPressTimer = setTimeout(() => {
+       if (!isEnabled()) {
+          resetState();
+          return;
+        }
         const resolved = resolveHref(activeAnchor);
         try {
           const selection = window.getSelection && window.getSelection();
@@ -832,6 +868,10 @@ class _BrowserPageState extends State<BrowserPage>
     'touchmove',
     (event) => {
       if (!activeAnchor) {
+        return;
+      }
+       if (!isEnabled()) {
+        clearPending();
         return;
       }
       const touch =
@@ -863,15 +903,26 @@ class _BrowserPageState extends State<BrowserPage>
   document.addEventListener('touchend', clearPending, { passive: true });
   document.addEventListener('touchcancel', clearPending, { passive: true });
 
-    const resetState = () => {
-    clearPending();
-    resetClickSuppression();
-  };
+   
 
   window.__flutterResetLinkMenu = resetState;
+   window.__flutterSetLinkMenuEnabled = (value) => {
+    const enabled = !!value;
+    window.flutterIosLinkMenuEnabled = enabled;
+    if (enabled) {
+      ensureStyle();
+      resetClickSuppression();
+    } else {
+      removeStyle();
+      resetState();
+    }
+  };
   document.addEventListener(
     'click',
     (event) => {
+     if (!isEnabled()) {
+        return;
+      }
       if (!suppressNextClick) {
         return;
       }
@@ -884,6 +935,9 @@ class _BrowserPageState extends State<BrowserPage>
   document.addEventListener(
     'contextmenu',
     (event) => {
+      if (!isEnabled()) {
+        return;
+      }
       const anchor =
         event && event.target && event.target.closest
           ? event.target.closest('a[href]')
@@ -1676,6 +1730,24 @@ class _BrowserPageState extends State<BrowserPage>
     }
   }
 
+  void _onLongPressDetectionChanged() {
+    if (!Platform.isIOS) {
+      return;
+    }
+    final enabled = repo.longPressDetectionEnabled.value;
+    if (!enabled) {
+      _iosLinkMenuBridgeReady = false;
+    }
+    for (final tab in _tabs) {
+      final controller = tab.controller;
+      if (controller == null) continue;
+      unawaited(_setIosLinkContextMenuBridgeEnabled(controller, enabled));
+      if (!enabled) {
+        unawaited(_resetAndReleaseWebViewAfterContextMenu(controller));
+      }
+    }
+  }
+
   // All tab‑specific controllers live on the individual [_TabData] instances.
   final repo = AppRepo.I;
   final Map<String, String> _thumbCache = {};
@@ -1935,12 +2007,14 @@ class _BrowserPageState extends State<BrowserPage>
     if (!Platform.isIOS) {
       return;
     }
+    final enabled = repo.longPressDetectionEnabled.value;
     try {
       await controller.evaluateJavascript(source: _kIosLinkContextMenuJS);
-      _iosLinkMenuBridgeReady = true;
+      _iosLinkMenuBridgeReady = enabled;
     } catch (_) {
       _iosLinkMenuBridgeReady = false;
     }
+    await _setIosLinkContextMenuBridgeEnabled(controller, enabled);
   }
 
   Future<void> _resetIosLinkContextMenuBridge(
@@ -1961,13 +2035,34 @@ class _BrowserPageState extends State<BrowserPage>
     } catch (_) {}
   }
 
+  Future<void> _setIosLinkContextMenuBridgeEnabled(
+    InAppWebViewController controller,
+    bool enabled,
+  ) async {
+    if (!Platform.isIOS) {
+      return;
+    }
+    final script = '''
+      try {
+        if (typeof window !== 'undefined' && window.__flutterSetLinkMenuEnabled) {
+          window.__flutterSetLinkMenuEnabled(${enabled ? 'true' : 'false'});
+        } else if (typeof window !== 'undefined') {
+          window.flutterIosLinkMenuEnabled = ${enabled ? 'true' : 'false'};
+        }
+      } catch (_) {}
+    ''';
+    try {
+      await controller.evaluateJavascript(source: script);
+    } catch (_) {}
+  }
+
   Future<void> _handleLinkContextMenuWithFeedback(
     String url, {
     InAppWebViewController? releaseController,
   }) async {
     if (_suppressLinkLongPress) {
       if (releaseController != null) {
-        unawaited(_resetAndReleaseWebViewAfterContextMenu(releaseController));
+        await _resetAndReleaseWebViewAfterContextMenu(releaseController);
       }
       return;
     }
@@ -1978,7 +2073,7 @@ class _BrowserPageState extends State<BrowserPage>
       await _handleLinkContextMenu(url);
     } finally {
       if (releaseController != null) {
-        unawaited(_resetAndReleaseWebViewAfterContextMenu(releaseController));
+        await _resetAndReleaseWebViewAfterContextMenu(releaseController);
       }
     }
   }
@@ -2837,6 +2932,7 @@ class _BrowserPageState extends State<BrowserPage>
     repo.ytOptions.addListener(_onYtOptionsChanged);
     repo.pendingNewTab.addListener(_onPendingNewTab);
     repo.adBlockFilterSets.addListener(_onAdBlockFilterSetsChanged);
+    repo.longPressDetectionEnabled.addListener(_onLongPressDetectionChanged);
     // Listen to focus changes to handle paste button
     _urlFocus.addListener(() {
       if (_urlFocus.hasFocus) {
@@ -4286,6 +4382,7 @@ class _BrowserPageState extends State<BrowserPage>
     repo.ytOptions.removeListener(_onYtOptionsChanged);
     repo.pendingNewTab.removeListener(_onPendingNewTab);
     repo.adBlockFilterSets.removeListener(_onAdBlockFilterSetsChanged);
+    repo.longPressDetectionEnabled.removeListener(_onLongPressDetectionChanged);
     _urlFocus.dispose();
     _removeYtFetchBarrier();
     super.dispose();
@@ -4547,6 +4644,12 @@ class _BrowserPageState extends State<BrowserPage>
                               handlerName: 'linkLongPress',
                               callback: (args) async {
                                 if (args.isEmpty) {
+                                  return {'handled': false};
+                                }
+                                if (!repo.longPressDetectionEnabled.value) {
+                                  unawaited(
+                                    _resetAndReleaseWebViewAfterContextMenu(c),
+                                  );
                                   return {'handled': false};
                                 }
                                 if (_suppressLinkLongPress) {
@@ -4813,10 +4916,8 @@ class _BrowserPageState extends State<BrowserPage>
                           if (_suppressLinkLongPress) {
                             return;
                           }
-                          if (!repo.snifferEnabled.value ||
-                              !repo.longPressDetectionEnabled.value) {
-                            return;
-                          }
+                          final bool detectionEnabled =
+                              repo.longPressDetectionEnabled.value;
                           final extra = res.extra?.toString();
                           InAppWebViewHitTestResultType? hitType;
                           String typeString = '';
@@ -4889,7 +4990,9 @@ class _BrowserPageState extends State<BrowserPage>
                               }
                             }
                           }
-
+                          if (!detectionEnabled) {
+                            return;
+                          }
                           String? link = extra;
                           String type = isImageHit ? 'image' : 'video';
                           if (link == null || link.isEmpty) {
@@ -6815,13 +6918,21 @@ class _BrowserPageState extends State<BrowserPage>
   /// Returns null if not enough data yet.
   double? _computeSpeed(String key, int bytesNow) {
     final prev = _rateSnaps[key];
+    final now = DateTime.now();
     _rateSnaps[key] = _snapNow(bytesNow);
     if (prev == null) return null;
-    final dt = DateTime.now().difference(prev.ts).inMilliseconds / 1000.0;
-    if (dt <= 0) return null;
+    final elapsedMs = now.difference(prev.ts).inMilliseconds;
+    if (elapsedMs <= 0) {
+      return null;
+    }
     final db = bytesNow - prev.bytes;
-    if (db <= 0) return null;
-    return db / dt;
+    if (db <= 0) {
+      if (elapsedMs > 1200) {
+        _lastSpeeds.remove(key);
+      }
+      return null;
+    }
+    return db / (elapsedMs / 1000.0);
   }
 
   /// --- end helpers ---
