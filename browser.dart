@@ -4985,6 +4985,9 @@ class _BrowserPageState extends State<BrowserPage>
                             }
                           }
                           if (!detectionEnabled) {
+                            unawaited(
+                              _resetAndReleaseWebViewAfterContextMenu(c),
+                            );
                             return;
                           }
                           String? link = extra;
