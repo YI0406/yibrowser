@@ -5041,8 +5041,12 @@ class _BrowserPageState extends State<BrowserPage>
                               }
                             } catch (_) {}
                           }
-                          if (link == null || link.isEmpty) return;
-
+                          if (link == null || link.isEmpty) {
+                            unawaited(
+                              _resetAndReleaseWebViewAfterContextMenu(c),
+                            );
+                            return;
+                          }
                           final resolvedLink = link!;
                           final lowerUrl = resolvedLink.toLowerCase();
                           final bool isYoutubeContext =
@@ -5083,12 +5087,12 @@ class _BrowserPageState extends State<BrowserPage>
                                   current,
                                   releaseController: c,
                                 );
+                                return;
                               }
-                            } else {
-                              unawaited(
-                                _resetAndReleaseWebViewAfterContextMenu(c),
-                              );
                             }
+                            unawaited(
+                              _resetAndReleaseWebViewAfterContextMenu(c),
+                            );
                             return;
                           }
                           _suppressLinkLongPress = true;
