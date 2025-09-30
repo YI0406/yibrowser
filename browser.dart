@@ -3260,23 +3260,27 @@ class _BrowserPageState extends State<BrowserPage>
     _BlockedExternalNavigation blocked, {
     InAppWebViewController? controller,
   }) {
+    _TabData? requestingTab;
     if (controller != null) {
       try {
         unawaited(controller.stopLoading());
       } catch (_) {}
-      final tab = _tabForController(controller);
-      if (tab != null) {
-        tab.isLoading.value = false;
-        tab.progress.value = 0.0;
-        final current = tab.currentUrl;
+      requestingTab = _tabForController(controller);
+      if (requestingTab != null) {
+        requestingTab.isLoading.value = false;
+        requestingTab.progress.value = 0.0;
+        final current = requestingTab.currentUrl;
         if (current != null && current.isNotEmpty) {
-          tab.urlCtrl.text = current;
-        } else if (tab.urlCtrl.text.isNotEmpty) {
-          tab.urlCtrl.clear();
+          requestingTab.urlCtrl.text = current;
+        } else if (requestingTab.urlCtrl.text.isNotEmpty) {
+          requestingTab.urlCtrl.clear();
         }
       }
     }
-    final fallbackResult = _openBlockedNavigationInNewTab(blocked);
+    final fallbackResult = _openBlockedNavigationInNewTab(
+      blocked,
+      requestingTab: requestingTab,
+    );
     final openedInNewTab =
         fallbackResult == _BlockedNavigationFallbackResult.openedNewTab;
     final openedInCurrentTab =
@@ -3296,25 +3300,40 @@ class _BrowserPageState extends State<BrowserPage>
   }
 
   _BlockedNavigationFallbackResult _openBlockedNavigationInNewTab(
-    _BlockedExternalNavigation blocked,
-  ) {
+    _BlockedExternalNavigation blocked, {
+    _TabData? requestingTab,
+  }) {
     final normalizedFallback = _normalizeHttpUrl(blocked.fallbackUrl);
     if (normalizedFallback == null) {
       return _BlockedNavigationFallbackResult.unavailable;
     }
     final fallbackVariants = _normalizedBypassCandidates(normalizedFallback)
       ..add(normalizedFallback);
+    String? normalizedRequestingCurrent;
+    if (requestingTab != null) {
+      normalizedRequestingCurrent = _normalizeHttpUrl(
+        requestingTab.currentUrl ?? requestingTab.urlCtrl.text,
+      );
+    }
+    final bool sameAsRequestingTab =
+        normalizedRequestingCurrent != null &&
+        normalizedRequestingCurrent == normalizedFallback;
     final now = DateTime.now();
     _recentBlockedFallbacks.removeWhere(
       (_, ts) => now.difference(ts) > _kBlockedFallbackCooldown,
     );
     for (final variant in fallbackVariants) {
       final ts = _recentBlockedFallbacks[variant];
-      if (ts != null && now.difference(ts) <= _kBlockedFallbackCooldown) {
+      if (!sameAsRequestingTab &&
+          ts != null &&
+          now.difference(ts) <= _kBlockedFallbackCooldown) {
         return _BlockedNavigationFallbackResult.suppressed;
       }
     }
     for (final tab in _tabs) {
+      if (identical(tab, requestingTab)) {
+        continue;
+      }
       final normalizedTabUrl = _normalizeHttpUrl(tab.currentUrl);
       if (normalizedTabUrl == null) {
         continue;
@@ -3348,24 +3367,57 @@ class _BrowserPageState extends State<BrowserPage>
     addHostCandidate(_extractHostFromString(blocked.rawUrl));
     addHostCandidate(_extractHostFromWebUri(blocked.resolvedUri));
 
-    final bool canReuseCurrentTab =
-        _currentTabIndex >= 0 &&
-        _currentTabIndex < _tabs.length &&
-        (() {
-          final tab = _tabs[_currentTabIndex];
-          final current = tab.currentUrl?.trim() ?? '';
-          return current.isEmpty;
-        })();
-
-    if (canReuseCurrentTab) {
-      final tab = _tabs[_currentTabIndex];
-      if (allowedHosts.isNotEmpty) {
-        tab.allowedAppLinkHosts.addAll(allowedHosts);
+    bool handledByRequestingTab() {
+      if (requestingTab == null) {
+        return false;
       }
-      tab.urlCtrl.text = normalizedFallback;
-      tab.currentUrl = normalizedFallback;
+      if (!sameAsRequestingTab) {
+        return false;
+      }
+      if (allowedHosts.isNotEmpty) {
+        requestingTab.allowedAppLinkHosts.addAll(allowedHosts);
+      }
+      requestingTab.urlCtrl.text = normalizedFallback;
+      requestingTab.currentUrl = normalizedFallback;
       unawaited(
-        tab.controller?.loadUrl(
+        requestingTab.controller?.loadUrl(
+          urlRequest: URLRequest(url: WebUri(normalizedFallback)),
+        ),
+      );
+      _updateOpenTabs();
+      if (mounted) setState(() {});
+      return true;
+    }
+
+    if (handledByRequestingTab()) {
+      return _BlockedNavigationFallbackResult.openedInCurrentTab;
+    }
+
+    _TabData? reusableTab;
+    if (requestingTab != null) {
+      final current = requestingTab.currentUrl?.trim() ?? '';
+      if (current.isEmpty) {
+        reusableTab = requestingTab;
+      }
+    }
+    if (reusableTab == null &&
+        _currentTabIndex >= 0 &&
+        _currentTabIndex < _tabs.length) {
+      final candidate = _tabs[_currentTabIndex];
+      final current = candidate.currentUrl?.trim() ?? '';
+      if (current.isEmpty) {
+        reusableTab = candidate;
+      }
+    }
+
+    if (reusableTab != null) {
+      if (allowedHosts.isNotEmpty) {
+        reusableTab.allowedAppLinkHosts.addAll(allowedHosts);
+      }
+      reusableTab.urlCtrl.text = normalizedFallback;
+      reusableTab.currentUrl = normalizedFallback;
+      unawaited(
+        reusableTab.controller?.loadUrl(
           urlRequest: URLRequest(url: WebUri(normalizedFallback)),
         ),
       );
@@ -6884,9 +6936,11 @@ class _BrowserPageState extends State<BrowserPage>
     _lastSpeeds.removeWhere((key, _) => key.startsWith(prefix));
   }
 
-  void _resetAllSpeedTracking() {
+  void _resetAllSpeedTracking({bool clearCachedSpeeds = true}) {
     _rateSnaps.clear();
-    _lastSpeeds.clear();
+    if (clearCachedSpeeds) {
+      _lastSpeeds.clear();
+    }
   }
 
   String _fmtSpeed(num bps) {
@@ -6944,7 +6998,7 @@ class _BrowserPageState extends State<BrowserPage>
   /// navigating away from the browser tab.
   void _openDownloadsSheet() {
     _suppressLinkLongPress = true;
-    _resetAllSpeedTracking();
+    _resetAllSpeedTracking(clearCachedSpeeds: false);
     showModalBottomSheet(
       context: context,
       builder: (_) {
