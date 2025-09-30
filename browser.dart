@@ -5097,7 +5097,7 @@ class _BrowserPageState extends State<BrowserPage>
                                 if (decoded.isNotEmpty) {
                                   final Map<String, dynamic> entry =
                                       Map<String, dynamic>.from(
-                                        decoded.first as Map,
+                                        decoded.last as Map,
                                       );
                                   link = (entry['url'] ?? '') as String;
 
@@ -5186,107 +5186,144 @@ class _BrowserPageState extends State<BrowserPage>
                           _suppressLinkLongPress = true;
                           _DetectedMediaAction? action;
                           try {
-                            action = await showDialog<_DetectedMediaAction>(
+                            action = await showModalBottomSheet<
+                              _DetectedMediaAction
+                            >(
                               context: context,
-                              builder: (dialogContext) {
-                                return AlertDialog(
-                                  title: Text(
-                                    context.l10n(
-                                      'browser.detectMedia.dialog.title',
+                              builder: (sheetContext) {
+                                final typeLabel = _localizedMediaType(
+                                  sheetContext,
+                                  type,
+                                );
+                                return SafeArea(
+                                  child: Padding(
+                                    padding: const EdgeInsets.fromLTRB(
+                                      16,
+                                      16,
+                                      16,
+                                      24,
                                     ),
-                                  ),
-                                  content: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      SelectableText(
-                                        resolvedLink,
-                                        maxLines: 4,
-                                        onTap: () {},
-                                      ),
-                                      const SizedBox(height: 6),
-                                      Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          Chip(
-                                            label: Text(
-                                              _localizedMediaType(
-                                                context,
-                                                type,
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          sheetContext.l10n(
+                                            'browser.detectMedia.dialog.title',
+                                          ),
+                                          style:
+                                              Theme.of(
+                                                sheetContext,
+                                              ).textTheme.titleMedium,
+                                        ),
+                                        const SizedBox(height: 12),
+                                        Row(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Expanded(
+                                              child: SelectableText(
+                                                resolvedLink,
+                                                maxLines: 4,
+                                                onTap: () {},
                                               ),
                                             ),
-                                            visualDensity:
-                                                VisualDensity.compact,
-                                            materialTapTargetSize:
-                                                MaterialTapTargetSize
-                                                    .shrinkWrap,
-                                          ),
-                                          const SizedBox(width: 8),
-                                          IconButton(
-                                            tooltip: context.l10n(
-                                              'browser.context.copyLink',
-                                            ),
-                                            icon: const Icon(Icons.copy),
-                                            onPressed: () async {
-                                              await Clipboard.setData(
-                                                ClipboardData(
-                                                  text: resolvedLink,
-                                                ),
-                                              );
-                                              if (context.mounted) {
-                                                ScaffoldMessenger.of(
-                                                  context,
-                                                ).showSnackBar(
-                                                  SnackBar(
-                                                    duration: const Duration(
-                                                      seconds: 1,
-                                                    ),
-                                                    content: Text(
-                                                      context.l10n(
-                                                        'browser.snack.copiedLink',
-                                                      ),
-                                                    ),
+                                            IconButton(
+                                              tooltip: sheetContext.l10n(
+                                                'browser.context.copyLink',
+                                              ),
+                                              icon: const Icon(Icons.copy),
+                                              onPressed: () async {
+                                                await Clipboard.setData(
+                                                  ClipboardData(
+                                                    text: resolvedLink,
                                                   ),
                                                 );
-                                              }
-                                            },
-                                          ),
-                                        ],
-                                      ),
-                                    ],
-                                  ),
-                                  actions: [
-                                    TextButton(
-                                      onPressed:
-                                          () =>
-                                              Navigator.of(dialogContext).pop(),
-                                      child: Text(
-                                        context.l10n('common.cancel'),
-                                      ),
-                                    ),
-                                    if (type != 'image')
-                                      TextButton.icon(
-                                        icon: const Icon(Icons.play_arrow),
-                                        label: Text(
-                                          context.l10n('common.play'),
+                                                if (sheetContext.mounted) {
+                                                  ScaffoldMessenger.of(
+                                                    sheetContext,
+                                                  ).showSnackBar(
+                                                    SnackBar(
+                                                      duration: const Duration(
+                                                        seconds: 1,
+                                                      ),
+                                                      content: Text(
+                                                        sheetContext.l10n(
+                                                          'browser.snack.copiedLink',
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  );
+                                                }
+                                              },
+                                            ),
+                                          ],
                                         ),
-                                        onPressed:
-                                            () => Navigator.of(
-                                              dialogContext,
-                                            ).pop(_DetectedMediaAction.play),
-                                      ),
-                                    FilledButton.icon(
-                                      icon: const Icon(Icons.download),
-                                      label: Text(
-                                        context.l10n('common.download'),
-                                      ),
-                                      onPressed:
-                                          () => Navigator.of(
-                                            dialogContext,
-                                          ).pop(_DetectedMediaAction.download),
+                                        const SizedBox(height: 8),
+                                        Chip(
+                                          label: Text(typeLabel),
+                                          visualDensity: VisualDensity.compact,
+                                          materialTapTargetSize:
+                                              MaterialTapTargetSize.shrinkWrap,
+                                        ),
+                                        const SizedBox(height: 16),
+                                        Row(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.end,
+                                          children: [
+                                            TextButton(
+                                              onPressed:
+                                                  () =>
+                                                      Navigator.of(
+                                                        sheetContext,
+                                                      ).pop(),
+                                              child: Text(
+                                                sheetContext.l10n(
+                                                  'common.cancel',
+                                                ),
+                                              ),
+                                            ),
+                                            if (type != 'image') ...[
+                                              const SizedBox(width: 8),
+                                              TextButton.icon(
+                                                icon: const Icon(
+                                                  Icons.play_arrow,
+                                                ),
+                                                label: Text(
+                                                  sheetContext.l10n(
+                                                    'common.play',
+                                                  ),
+                                                ),
+                                                onPressed:
+                                                    () => Navigator.of(
+                                                      sheetContext,
+                                                    ).pop(
+                                                      _DetectedMediaAction.play,
+                                                    ),
+                                              ),
+                                            ],
+                                            const SizedBox(width: 8),
+                                            FilledButton.icon(
+                                              icon: const Icon(Icons.download),
+                                              label: Text(
+                                                sheetContext.l10n(
+                                                  'common.download',
+                                                ),
+                                              ),
+                                              onPressed:
+                                                  () => Navigator.of(
+                                                    sheetContext,
+                                                  ).pop(
+                                                    _DetectedMediaAction
+                                                        .download,
+                                                  ),
+                                            ),
+                                          ],
+                                        ),
+                                      ],
                                     ),
-                                  ],
+                                  ),
                                 );
                               },
                             );
