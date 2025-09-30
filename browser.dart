@@ -2959,6 +2959,17 @@ class _BrowserPageState extends State<BrowserPage>
         repo.setSnifferEnabled(saved);
       }
     }();
+    // Load saved long-press detection preference, default to true if not set.
+    () async {
+      final sp = await SharedPreferences.getInstance();
+      if (!sp.containsKey('detect_media_long_press')) {
+        repo.setLongPressDetectionEnabled(true);
+        await sp.setBool('detect_media_long_press', true);
+      } else {
+        final saved = sp.getBool('detect_media_long_press') ?? true;
+        repo.setLongPressDetectionEnabled(saved);
+      }
+    }();
     // Load saved blockExternalApp preference, default to false if not set.
     () async {
       final sp = await SharedPreferences.getInstance();
@@ -4800,6 +4811,10 @@ class _BrowserPageState extends State<BrowserPage>
                         },
                         onLongPressHitTestResult: (c, res) async {
                           if (_suppressLinkLongPress) {
+                            return;
+                          }
+                          if (!repo.snifferEnabled.value ||
+                              !repo.longPressDetectionEnabled.value) {
                             return;
                           }
                           final extra = res.extra?.toString();

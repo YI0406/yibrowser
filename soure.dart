@@ -3050,6 +3050,7 @@ class AppRepo extends ChangeNotifier {
   }
 
   final ValueNotifier<bool> snifferEnabled = ValueNotifier(true);
+  final ValueNotifier<bool> longPressDetectionEnabled = ValueNotifier(true);
 
   /// Detected media hits from the browser. Updated by the WebView sniffer.
   final ValueNotifier<List<MediaHit>> hits = ValueNotifier([]);
@@ -3157,6 +3158,14 @@ class AppRepo extends ChangeNotifier {
     final effective = isPremiumUnlocked ? on : false;
     if (snifferEnabled.value == effective) return;
     snifferEnabled.value = effective;
+    notifyListeners();
+  }
+
+  void setLongPressDetectionEnabled(bool on) {
+    if (longPressDetectionEnabled.value == on) {
+      return;
+    }
+    longPressDetectionEnabled.value = on;
     notifyListeners();
   }
 
