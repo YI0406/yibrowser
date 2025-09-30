@@ -5097,7 +5097,7 @@ class _BrowserPageState extends State<BrowserPage>
                                 if (decoded.isNotEmpty) {
                                   final Map<String, dynamic> entry =
                                       Map<String, dynamic>.from(
-                                        decoded.last as Map,
+                                        decoded.first as Map,
                                       );
                                   link = (entry['url'] ?? '') as String;
 
