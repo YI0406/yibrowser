@@ -370,7 +370,7 @@ class _BrowserPageState extends State<BrowserPage>
       }
     } finally {
       if (releaseController != null) {
-        unawaited(_resetAndReleaseWebViewAfterContextMenu(releaseController));
+        await _resetAndReleaseWebViewAfterContextMenu(releaseController);
       }
     }
   }
@@ -3261,15 +3261,22 @@ class _BrowserPageState extends State<BrowserPage>
     InAppWebViewController? controller,
   }) {
     _TabData? requestingTab;
+    String? previousUrl;
     if (controller != null) {
       try {
         unawaited(controller.stopLoading());
       } catch (_) {}
       requestingTab = _tabForController(controller);
       if (requestingTab != null) {
+        final current = requestingTab.currentUrl?.trim();
+        final text = requestingTab.urlCtrl.text.trim();
+        if (current != null && current.isNotEmpty) {
+          previousUrl = current;
+        } else if (text.isNotEmpty) {
+          previousUrl = text;
+        }
         requestingTab.isLoading.value = false;
         requestingTab.progress.value = 0.0;
-        final current = requestingTab.currentUrl;
         if (current != null && current.isNotEmpty) {
           requestingTab.urlCtrl.text = current;
         } else if (requestingTab.urlCtrl.text.isNotEmpty) {
@@ -3294,8 +3301,30 @@ class _BrowserPageState extends State<BrowserPage>
       openedInNewTab: openedInNewTab,
       bypassedInWebView: shouldAttemptBypass || openedInCurrentTab,
     );
+    final needsRestore =
+        fallbackResult == _BlockedNavigationFallbackResult.suppressed ||
+        fallbackResult == _BlockedNavigationFallbackResult.unavailable;
     if (shouldAttemptBypass) {
       _attemptAppLinkBypass(controller!, blocked);
+    } else if (needsRestore && requestingTab != null) {
+      final normalizedPrevious = _normalizeHttpUrl(previousUrl) ?? previousUrl;
+      if (normalizedPrevious != null && normalizedPrevious.isNotEmpty) {
+        requestingTab.urlCtrl.text = normalizedPrevious;
+        requestingTab.currentUrl = normalizedPrevious;
+        requestingTab.isLoading.value = true;
+        try {
+          unawaited(
+            requestingTab.controller?.loadUrl(
+              urlRequest: URLRequest(url: WebUri(normalizedPrevious)),
+            ),
+          );
+        } catch (_) {}
+      } else {
+        requestingTab.currentUrl = null;
+        requestingTab.urlCtrl.clear();
+      }
+      _updateOpenTabs();
+      if (mounted) setState(() {});
     }
   }
 
@@ -5037,9 +5066,7 @@ class _BrowserPageState extends State<BrowserPage>
                             }
                           }
                           if (!detectionEnabled) {
-                            unawaited(
-                              _resetAndReleaseWebViewAfterContextMenu(c),
-                            );
+                            await _resetAndReleaseWebViewAfterContextMenu(c);
                             return;
                           }
                           String? link = extra;
@@ -5060,7 +5087,7 @@ class _BrowserPageState extends State<BrowserPage>
 
                                   final rawType =
                                       (entry['type'] ?? '') as String;
-                                  final lowerUrl = link!.toLowerCase();
+                                  final lowerUrl = link.toLowerCase();
                                   if (rawType.startsWith('image/') ||
                                       lowerUrl.endsWith('.png') ||
                                       lowerUrl.endsWith('.jpg') ||
@@ -5091,9 +5118,7 @@ class _BrowserPageState extends State<BrowserPage>
                             } catch (_) {}
                           }
                           if (link == null || link.isEmpty) {
-                            unawaited(
-                              _resetAndReleaseWebViewAfterContextMenu(c),
-                            );
+                            await _resetAndReleaseWebViewAfterContextMenu(c);
                             return;
                           }
                           final resolvedLink = link!;
@@ -5139,9 +5164,7 @@ class _BrowserPageState extends State<BrowserPage>
                                 return;
                               }
                             }
-                            unawaited(
-                              _resetAndReleaseWebViewAfterContextMenu(c),
-                            );
+                            await _resetAndReleaseWebViewAfterContextMenu(c);
                             return;
                           }
                           _suppressLinkLongPress = true;
@@ -5253,9 +5276,7 @@ class _BrowserPageState extends State<BrowserPage>
                             );
                           } finally {
                             _suppressLinkLongPress = false;
-                            unawaited(
-                              _resetAndReleaseWebViewAfterContextMenu(c),
-                            );
+                            await _resetAndReleaseWebViewAfterContextMenu(c);
                           }
                           if (!mounted) return;
                           if (action == _DetectedMediaAction.play) {
