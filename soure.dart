@@ -2828,6 +2828,20 @@ class AppRepo extends ChangeNotifier {
     } catch (_) {}
   }
 
+  List<String> _faviconCandidatesForHost(String host) {
+    final normalized = host.toLowerCase();
+    if (normalized.isEmpty) {
+      return const <String>[];
+    }
+    return <String>[
+      'https://$normalized/favicon.ico',
+      'https://$normalized/apple-touch-icon.png',
+      'https://$normalized/apple-touch-icon-precomposed.png',
+      'https://$normalized/favicon.png',
+      'https://www.google.com/s2/favicons?domain=$normalized&sz=128',
+    ];
+  }
+
   Future<void> _refreshHomeItemIcon(HomeItem item, {bool force = false}) async {
     Uri? uri;
     try {
@@ -2867,13 +2881,7 @@ class AppRepo extends ChangeNotifier {
         await _ensureHomeIconDirectory();
         final file = _homeIconFileForHost(host);
         final dio = _createDio();
-        final candidates = <String>[
-          'https://$host/favicon.ico',
-          'https://$host/apple-touch-icon.png',
-          'https://$host/apple-touch-icon-precomposed.png',
-          'https://$host/favicon.png',
-          'https://www.google.com/s2/favicons?domain=$host&sz=128',
-        ];
+        final candidates = _faviconCandidatesForHost(host);
         for (final url in candidates) {
           try {
             final resp = await dio.get<List<int>>(
@@ -2911,6 +2919,107 @@ class AppRepo extends ChangeNotifier {
       await task;
     } finally {
       _homeIconTasks.remove(key);
+    }
+  }
+
+  void _updateFaviconCacheEntry(String key, String? path) {
+    final current = Map<String, String?>.from(faviconCache.value);
+    if (path == null || path.isEmpty) {
+      if (current.containsKey(key)) {
+        current.remove(key);
+        faviconCache.value = current;
+      }
+      return;
+    }
+    if (current[key] == path) {
+      return;
+    }
+    current[key] = path;
+    faviconCache.value = current;
+  }
+
+  Future<String?> ensureFaviconForUrl(String url) async {
+    Uri? uri;
+    try {
+      uri = Uri.tryParse(url);
+    } catch (_) {
+      uri = null;
+    }
+    final host = uri?.host ?? '';
+    if (host.isEmpty) {
+      return null;
+    }
+    final key = host.toLowerCase();
+
+    final cached = _faviconMemoryCache[key];
+    if (cached != null) {
+      if (cached.isEmpty) {
+        return null;
+      }
+      final file = File(cached);
+      if (await file.exists()) {
+        return cached;
+      }
+      _faviconMemoryCache.remove(key);
+      _updateFaviconCacheEntry(key, null);
+    } else {
+      try {
+        await _ensureHomeIconDirectory();
+        final file = _homeIconFileForHost(host);
+        if (await file.exists()) {
+          final path = file.path;
+          _faviconMemoryCache[key] = path;
+          _updateFaviconCacheEntry(key, path);
+          return path;
+        }
+      } catch (_) {}
+    }
+
+    if (_faviconFetchTasks.containsKey(key)) {
+      return await _faviconFetchTasks[key];
+    }
+
+    Future<String?> task() async {
+      try {
+        await _ensureHomeIconDirectory();
+        final file = _homeIconFileForHost(host);
+        final dio = _createDio();
+        final candidates = _faviconCandidatesForHost(host);
+        for (final candidate in candidates) {
+          try {
+            final resp = await dio.get<List<int>>(
+              candidate,
+              options: Options(
+                responseType: ResponseType.bytes,
+                followRedirects: true,
+                sendTimeout: const Duration(seconds: 10),
+                receiveTimeout: const Duration(seconds: 10),
+              ),
+            );
+            final data = resp.data;
+            if (data == null || data.isEmpty) {
+              continue;
+            }
+            await file.writeAsBytes(data, flush: true);
+            final path = file.path;
+            _faviconMemoryCache[key] = path;
+            _updateFaviconCacheEntry(key, path);
+            return path;
+          } catch (_) {
+            continue;
+          }
+        }
+      } catch (_) {}
+      _faviconMemoryCache[key] = '';
+      return null;
+    }
+
+    final future = task();
+    _faviconFetchTasks[key] = future;
+    try {
+      return await future;
+    } finally {
+      _faviconFetchTasks.remove(key);
     }
   }
 
@@ -3150,6 +3259,16 @@ class AppRepo extends ChangeNotifier {
   /// In-flight favicon download tasks keyed by host. Prevents duplicate
   /// network requests when multiple widgets request the same favicon.
   final Map<String, Future<void>> _homeIconTasks = {};
+
+  /// Cached favicon paths accessible across the app (e.g. history list).
+  final ValueNotifier<Map<String, String?>> faviconCache =
+      ValueNotifier<Map<String, String?>>({});
+
+  /// In-memory cache of resolved favicon file paths keyed by host.
+  final Map<String, String?> _faviconMemoryCache = {};
+
+  /// In-flight favicon fetch operations keyed by host to avoid duplicate downloads.
+  final Map<String, Future<String?>> _faviconFetchTasks = {};
 
   /// Path to the JSON file used to persist app state (tasks, favourites, settings).
   late String _stateFilePath;

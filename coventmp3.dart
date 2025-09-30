@@ -23,16 +23,61 @@ class _ExportFormatOption {
   final String extension;
   final String ffmpegArguments;
   final bool isVideo;
-
+  final String? Function()? hardwareArgumentsBuilder;
   const _ExportFormatOption({
     required this.id,
     required this.labelKey,
     required this.extension,
     required this.ffmpegArguments,
     this.isVideo = false,
+    this.hardwareArgumentsBuilder,
   });
 
   String label(BuildContext context) => context.l10n(labelKey);
+  String resolvedArguments() {
+    if (hardwareArgumentsBuilder != null) {
+      final value = hardwareArgumentsBuilder!.call();
+      if (value != null && value.trim().isNotEmpty) {
+        return value.trim();
+      }
+    }
+    return ffmpegArguments;
+  }
+}
+
+String? _hardwareH264Arguments({
+  required String audioArgs,
+  int videoBitrateKbps = 4500,
+}) {
+  final buffer = StringBuffer();
+  try {
+    if (Platform.isIOS || Platform.isMacOS) {
+      buffer
+        ..write('-c:v h264_videotoolbox ')
+        ..write('-b:v ${videoBitrateKbps}k ')
+        ..write('-maxrate ${videoBitrateKbps}k ')
+        ..write('-bufsize ${videoBitrateKbps * 2}k ')
+        ..write('-pix_fmt yuv420p ');
+    } else if (Platform.isAndroid) {
+      buffer
+        ..write('-c:v h264_mediacodec ')
+        ..write('-b:v ${videoBitrateKbps}k ')
+        ..write('-maxrate ${videoBitrateKbps}k ')
+        ..write('-bufsize ${videoBitrateKbps * 2}k ')
+        ..write('-pix_fmt yuv420p ')
+        ..write('-profile:v baseline ');
+    } else {
+      return null;
+    }
+  } catch (_) {
+    return null;
+  }
+  if (audioArgs.isNotEmpty) {
+    buffer
+      ..write(audioArgs)
+      ..write(' ');
+  }
+  return buffer.toString().trim();
 }
 
 const List<_ExportFormatOption> _audioFormatOptions = [
@@ -107,13 +152,15 @@ const List<_ExportFormatOption> _imageFormatOptions = [
   ),
 ];
 
-const List<_ExportFormatOption> _videoFormatOptions = [
+final List<_ExportFormatOption> _videoFormatOptions = [
   _ExportFormatOption(
     id: 'mp4_h264',
     labelKey: 'converter.format.mp4H264',
     extension: 'mp4',
     ffmpegArguments:
         '-c:v libx264 -preset medium -crf 23 -pix_fmt yuv420p -c:a aac -b:a 192k',
+    hardwareArgumentsBuilder:
+        () => _hardwareH264Arguments(audioArgs: '-c:a aac -b:a 192k'),
     isVideo: true,
   ),
   _ExportFormatOption(
@@ -122,6 +169,8 @@ const List<_ExportFormatOption> _videoFormatOptions = [
     extension: 'mov',
     ffmpegArguments:
         '-c:v libx264 -preset medium -crf 23 -pix_fmt yuv420p -c:a aac -b:a 192k',
+    hardwareArgumentsBuilder:
+        () => _hardwareH264Arguments(audioArgs: '-c:a aac -b:a 192k'),
     isVideo: true,
   ),
   _ExportFormatOption(
@@ -130,6 +179,8 @@ const List<_ExportFormatOption> _videoFormatOptions = [
     extension: 'mkv',
     ffmpegArguments:
         '-c:v libx264 -preset medium -crf 23 -pix_fmt yuv420p -c:a aac -b:a 192k',
+    hardwareArgumentsBuilder:
+        () => _hardwareH264Arguments(audioArgs: '-c:a aac -b:a 192k'),
     isVideo: true,
   ),
   _ExportFormatOption(
@@ -1701,7 +1752,10 @@ class _MediaSegmentExportPageState extends State<MediaSegmentExportPage>
     if (clipDuration > Duration.zero) {
       buffer.write('-t ${_ffmpegTimestamp(clipDuration)} ');
     }
-    buffer.write('${formatOption.ffmpegArguments} ');
+    final ffmpegArgs = formatOption.resolvedArguments();
+    if (ffmpegArgs.isNotEmpty) {
+      buffer.write('$ffmpegArgs ');
+    }
     buffer.write(_quotePath(outputPath));
 
     try {

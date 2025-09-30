@@ -1735,16 +1735,15 @@ class _BrowserPageState extends State<BrowserPage>
       return;
     }
     final enabled = repo.longPressDetectionEnabled.value;
-    if (!enabled) {
-      _iosLinkMenuBridgeReady = false;
-    }
+
     for (final tab in _tabs) {
       final controller = tab.controller;
       if (controller == null) continue;
-      unawaited(_setIosLinkContextMenuBridgeEnabled(controller, enabled));
+
       if (!enabled) {
         unawaited(_resetAndReleaseWebViewAfterContextMenu(controller));
       }
+      unawaited(_setIosLinkContextMenuBridgeEnabled(controller, true));
     }
   }
 
@@ -2007,14 +2006,14 @@ class _BrowserPageState extends State<BrowserPage>
     if (!Platform.isIOS) {
       return;
     }
-    final enabled = repo.longPressDetectionEnabled.value;
+
     try {
       await controller.evaluateJavascript(source: _kIosLinkContextMenuJS);
-      _iosLinkMenuBridgeReady = enabled;
+      _iosLinkMenuBridgeReady = true;
     } catch (_) {
       _iosLinkMenuBridgeReady = false;
     }
-    await _setIosLinkContextMenuBridgeEnabled(controller, enabled);
+    await _setIosLinkContextMenuBridgeEnabled(controller, true);
   }
 
   Future<void> _resetIosLinkContextMenuBridge(
@@ -4646,12 +4645,7 @@ class _BrowserPageState extends State<BrowserPage>
                                 if (args.isEmpty) {
                                   return {'handled': false};
                                 }
-                                if (!repo.longPressDetectionEnabled.value) {
-                                  unawaited(
-                                    _resetAndReleaseWebViewAfterContextMenu(c),
-                                  );
-                                  return {'handled': false};
-                                }
+
                                 if (_suppressLinkLongPress) {
                                   return {'handled': false};
                                 }
@@ -7964,6 +7958,52 @@ class _HistoryPageState extends State<HistoryPage>
     final theme = Theme.of(context);
     final localTs = entry.timestamp.toLocal();
     final title = entry.title.isNotEmpty ? entry.title : entry.url;
+    String hostKey = '';
+    try {
+      final uri = Uri.parse(entry.url);
+      hostKey = uri.host.toLowerCase();
+    } catch (_) {
+      hostKey = '';
+    }
+    if (hostKey.isNotEmpty) {
+      unawaited(repo.ensureFaviconForUrl(entry.url));
+    }
+    Widget defaultAvatar() {
+      return CircleAvatar(
+        radius: 18,
+        backgroundColor: theme.colorScheme.primaryContainer,
+        child: Icon(Icons.public, color: theme.colorScheme.onPrimaryContainer),
+      );
+    }
+
+    Widget leadingIcon;
+    if (hostKey.isEmpty) {
+      leadingIcon = defaultAvatar();
+    } else {
+      leadingIcon = ValueListenableBuilder<Map<String, String?>>(
+        valueListenable: repo.faviconCache,
+        builder: (context, cache, _) {
+          final path = cache[hostKey];
+          if (path != null && path.isNotEmpty) {
+            final file = File(path);
+            if (file.existsSync()) {
+              return SizedBox(
+                width: 36,
+                height: 36,
+                child: ClipOval(
+                  child: Image.file(
+                    file,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => defaultAvatar(),
+                  ),
+                ),
+              );
+            }
+          }
+          return defaultAvatar();
+        },
+      );
+    }
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Material(
@@ -7985,14 +8025,7 @@ class _HistoryPageState extends State<HistoryPage>
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    CircleAvatar(
-                      radius: 18,
-                      backgroundColor: theme.colorScheme.primaryContainer,
-                      child: Icon(
-                        Icons.public,
-                        color: theme.colorScheme.onPrimaryContainer,
-                      ),
-                    ),
+                    leadingIcon,
                     const SizedBox(width: 12),
                     Expanded(
                       child: Column(
