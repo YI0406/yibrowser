@@ -718,6 +718,7 @@ class _BrowserPageState extends State<BrowserPage>
 
   const LONG_PRESS_DELAY = 650;
   const MOVE_TOLERANCE = 14;
+  let suppressNextClick = false;
   let activeAnchor = null;
   let longPressTimer = null;
   let startX = 0;
@@ -798,6 +799,7 @@ class _BrowserPageState extends State<BrowserPage>
           window.flutter_inappwebview &&
           window.flutter_inappwebview.callHandler
         ) {
+        suppressNextClick = true;
           window.flutter_inappwebview.callHandler('linkLongPress', resolved);
         }
       }, LONG_PRESS_DELAY);
@@ -839,7 +841,19 @@ class _BrowserPageState extends State<BrowserPage>
 
   document.addEventListener('touchend', clearPending, { passive: true });
   document.addEventListener('touchcancel', clearPending, { passive: true });
-
+  
+  document.addEventListener(
+    'click',
+    (event) => {
+      if (!suppressNextClick) {
+        return;
+      }
+      suppressNextClick = false;
+      event.preventDefault();
+      event.stopPropagation();
+    },
+    { capture: true }
+  );
   document.addEventListener(
     'contextmenu',
     (event) => {
