@@ -238,129 +238,140 @@ class _BrowserPageState extends State<BrowserPage>
     );
   }
 
-  Future<void> _showYoutubePreviewDialog(String url) async {
+  Future<void> _showYoutubePreviewDialog(
+    String url, {
+    InAppWebViewController? releaseController,
+  }) async {
     if (!mounted) return;
     if (_ytMenuOpen) return;
     if (_ytFetchInFlight) return;
 
     _suppressLinkLongPress = true;
 
-    _ytFetchInFlight = true;
-    _insertYtFetchBarrier();
-
-    YtVideoInfo? info;
     try {
-      info = await AppRepo.I.prepareYoutubeOptions(url);
-    } finally {
-      _removeYtFetchBarrier();
-      _ytFetchInFlight = false;
-    }
+      _ytFetchInFlight = true;
+      _insertYtFetchBarrier();
 
-    if (!mounted) {
-      _suppressLinkLongPress = false;
-      return;
-    }
-    if (info == null || info.options.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          duration: const Duration(seconds: 2),
-          content: Text(context.l10n('browser.youtube.error.noStreams')),
-        ),
-      );
-      _suppressLinkLongPress = false;
-      return;
-    }
-
-    final resolvedInfo = info!;
-    _cachedYoutubeInfo = resolvedInfo;
-
-    final durationLabel =
-        resolvedInfo.duration != null
-            ? context.l10n(
-              'browser.media.durationLabel',
-              params: {
-                'duration': _fmtDur(
-                  resolvedInfo.duration!.inSeconds.toDouble(),
-                ),
-              },
-            )
-            : context.l10n('browser.media.durationResolving');
-    final thumbUrl =
-        'https://img.youtube.com/vi/${resolvedInfo.videoId}/hqdefault.jpg';
-
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) {
-        final theme = Theme.of(dialogContext);
-        return AlertDialog(
-          title: Text(
-            resolvedInfo.title,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
+      YtVideoInfo? info;
+      try {
+        info = await AppRepo.I.prepareYoutubeOptions(url);
+      } finally {
+        _removeYtFetchBarrier();
+        _ytFetchInFlight = false;
+      }
+      if (!mounted) {
+        _suppressLinkLongPress = false;
+        return;
+      }
+      if (info == null || info.options.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            duration: const Duration(seconds: 2),
+            content: Text(context.l10n('browser.youtube.error.noStreams')),
           ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: AspectRatio(
-                  aspectRatio: 16 / 9,
-                  child: Image.network(
-                    thumbUrl,
-                    fit: BoxFit.cover,
-                    errorBuilder:
-                        (_, __, ___) => Container(
-                          color: theme.colorScheme.surfaceVariant,
-                          alignment: Alignment.center,
-                          child: const Icon(Icons.image_not_supported),
-                        ),
+        );
+        _suppressLinkLongPress = false;
+        return;
+      }
+
+      final resolvedInfo = info!;
+      _cachedYoutubeInfo = resolvedInfo;
+
+      final durationLabel =
+          resolvedInfo.duration != null
+              ? context.l10n(
+                'browser.media.durationLabel',
+                params: {
+                  'duration': _fmtDur(
+                    resolvedInfo.duration!.inSeconds.toDouble(),
+                  ),
+                },
+              )
+              : context.l10n('browser.media.durationResolving');
+      final thumbUrl =
+          'https://img.youtube.com/vi/${resolvedInfo.videoId}/hqdefault.jpg';
+
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) {
+          final theme = Theme.of(dialogContext);
+          return AlertDialog(
+            title: Text(
+              resolvedInfo.title,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: AspectRatio(
+                    aspectRatio: 16 / 9,
+                    child: Image.network(
+                      thumbUrl,
+                      fit: BoxFit.cover,
+                      errorBuilder:
+                          (_, __, ___) => Container(
+                            color: theme.colorScheme.surfaceVariant,
+                            alignment: Alignment.center,
+                            child: const Icon(Icons.image_not_supported),
+                          ),
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(height: 12),
-              Text(durationLabel, style: theme.textTheme.bodyMedium),
-              const SizedBox(height: 8),
-              SelectableText(
-                url,
-                maxLines: 2,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurface.withOpacity(0.7),
+                const SizedBox(height: 12),
+                Text(durationLabel, style: theme.textTheme.bodyMedium),
+                const SizedBox(height: 8),
+                SelectableText(
+                  url,
+                  maxLines: 2,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurface.withOpacity(0.7),
+                  ),
                 ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: Text(context.l10n('common.cancel')),
+              ),
+              TextButton.icon(
+                icon: const Icon(Icons.copy),
+                label: Text(context.l10n('browser.context.copyLink')),
+                onPressed: () async {
+                  await Clipboard.setData(ClipboardData(text: url));
+                  if (mounted) {
+                    _showSnackBar(context.l10n('browser.snack.copiedLink'));
+                  }
+                  Navigator.of(dialogContext).pop();
+                },
+              ),
+              FilledButton.icon(
+                icon: const Icon(Icons.download),
+                label: Text(context.l10n('common.download')),
+                onPressed: () async {
+                  Navigator.of(dialogContext).pop();
+                  await _showYoutubeDownloadOptions(
+                    url,
+                    preloaded: resolvedInfo,
+                  );
+                },
               ),
             ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: Text(context.l10n('common.cancel')),
-            ),
-            TextButton.icon(
-              icon: const Icon(Icons.copy),
-              label: Text(context.l10n('browser.context.copyLink')),
-              onPressed: () async {
-                await Clipboard.setData(ClipboardData(text: url));
-                if (mounted) {
-                  _showSnackBar(context.l10n('browser.snack.copiedLink'));
-                }
-                Navigator.of(dialogContext).pop();
-              },
-            ),
-            FilledButton.icon(
-              icon: const Icon(Icons.download),
-              label: Text(context.l10n('common.download')),
-              onPressed: () async {
-                Navigator.of(dialogContext).pop();
-                await _showYoutubeDownloadOptions(url, preloaded: resolvedInfo);
-              },
-            ),
-          ],
-        );
-      },
-    );
+          );
+        },
+      );
 
-    if (!_ytMenuOpen) {
-      _suppressLinkLongPress = false;
+      if (!_ytMenuOpen) {
+        _suppressLinkLongPress = false;
+      }
+    } finally {
+      if (releaseController != null) {
+        unawaited(_releaseWebViewAfterContextMenu(releaseController));
+      }
     }
   }
 
@@ -1924,7 +1935,10 @@ class _BrowserPageState extends State<BrowserPage>
       if (_isOnYoutubeWatchPage()) {
         final currentUrl = repo.currentPageUrl.value;
         if (currentUrl != null && currentUrl.isNotEmpty) {
-          await _showYoutubePreviewDialog(currentUrl);
+          await _showYoutubePreviewDialog(
+            currentUrl,
+            releaseController: _tabs[_currentTabIndex].controller,
+          );
         }
       }
       return;
@@ -4865,8 +4879,13 @@ class _BrowserPageState extends State<BrowserPage>
                             if (isYoutubeWatch) {
                               final current = repo.currentPageUrl.value;
                               if (current != null && current.isNotEmpty) {
-                                await _showYoutubePreviewDialog(current);
+                                await _showYoutubePreviewDialog(
+                                  current,
+                                  releaseController: c,
+                                );
                               }
+                            } else {
+                              unawaited(_releaseWebViewAfterContextMenu(c));
                             }
                             return;
                           }
