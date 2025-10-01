@@ -412,7 +412,7 @@ class _BrowserPageState extends State<BrowserPage>
       }
     } finally {
       if (releaseController != null) {
-        await _resetAndReleaseWebViewAfterContextMenu(releaseController);
+        await _restoreIosLinkInteractions(controller: releaseController);
       }
     }
   }
@@ -2719,12 +2719,7 @@ const bindVideo = (video) => {
       // state – taps only emit touch events without the follow-up click. By
       // explicitly restoring the bridge here we guarantee the reset happens
       // even if the web view ignored the earlier request.
-      unawaited(_restoreIosLinkInteractions());
-      if (releaseController != null) {
-        try {
-          await _resetAndReleaseWebViewAfterContextMenu(releaseController);
-        } catch (_) {}
-      }
+      await _restoreIosLinkInteractions(controller: releaseController);
     }
   }
 
@@ -4575,28 +4570,33 @@ const bindVideo = (video) => {
     await _releaseWebViewAfterContextMenu(controller);
   }
 
-  Future<void> _restoreIosLinkInteractions() async {
+  Future<void> _restoreIosLinkInteractions({
+    InAppWebViewController? controller,
+  }) async {
     if (!Platform.isIOS) {
       return;
     }
-    if (_tabs.isEmpty || _currentTabIndex < 0) {
-      return;
+    InAppWebViewController? target = controller;
+    if (target == null) {
+      if (_tabs.isEmpty || _currentTabIndex < 0) {
+        return;
+      }
+      if (_currentTabIndex >= _tabs.length) {
+        return;
+      }
+      target = _tabs[_currentTabIndex].controller;
     }
-    if (_currentTabIndex >= _tabs.length) {
-      return;
-    }
-    final controller = _tabs[_currentTabIndex].controller;
-    if (controller == null) {
+    if (target == null) {
       return;
     }
     if (kDebugMode) {
       debugPrint('[Debug][LinkMenu] Restoring iOS link interactions.');
     }
     try {
-      await _resetAndReleaseWebViewAfterContextMenu(controller);
+      await _resetAndReleaseWebViewAfterContextMenu(target);
     } catch (_) {}
     try {
-      await _setIosLinkContextMenuBridgeEnabled(controller, true);
+      await _setIosLinkContextMenuBridgeEnabled(target, true);
     } catch (_) {}
   }
 
