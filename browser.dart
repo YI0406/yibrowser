@@ -868,6 +868,7 @@ class _BrowserPageState extends State<BrowserPage>
       }
       const touch = event.touches[0];
       ensureStyle();
+      resetClickSuppression();
       const anchor =
         event.target && event.target.closest
           ? event.target.closest('a[href]')
