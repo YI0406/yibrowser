@@ -2457,12 +2457,14 @@ const bindVideo = (video) => {
       }
       return;
     }
+    _suppressLinkLongPress = true;
     try {
       await HapticFeedback.selectionClick();
     } catch (_) {}
     try {
       await _handleLinkContextMenu(url, kind: kind, isYoutube: isYoutube);
     } finally {
+      _suppressLinkLongPress = false;
       if (releaseController != null) {
         await _resetAndReleaseWebViewAfterContextMenu(releaseController);
       }
@@ -2556,10 +2558,7 @@ const bindVideo = (video) => {
     if (lowerUrl.startsWith('blob:')) {
       return;
     }
-    if (AppRepo.I.isYoutubeUrl(normalizedUrl) ||
-        AppRepo.I.isYoutubeUrl(pageUrl)) {
-      return;
-    }
+
     final capture = payload['capture'] as String?;
     final poster = (payload['poster'] as String? ?? '').trim();
     final duration = _asDouble(payload['duration']);
@@ -2585,10 +2584,41 @@ const bindVideo = (video) => {
               orElse: () => fallbackTitle,
             )
             ?.trim();
+    final bool isYoutubeCandidate =
+        AppRepo.I.isYoutubeUrl(normalizedUrl) ||
+        AppRepo.I.isYoutubeUrl(effectiveUrl) ||
+        AppRepo.I.isYoutubeUrl(pageUrl) ||
+        AppRepo.I.isYoutubeUrl(repo.currentPageUrl.value ?? '');
+
+    String resolvedPageUrl = pageUrl;
+    if (isYoutubeCandidate) {
+      final candidates = <String?>[
+        pageUrl,
+        repo.currentPageUrl.value,
+        effectiveUrl,
+      ];
+      for (final candidateUrl in candidates) {
+        if (candidateUrl != null &&
+            candidateUrl.isNotEmpty &&
+            AppRepo.I.isYoutubeUrl(candidateUrl)) {
+          resolvedPageUrl = candidateUrl;
+          break;
+        }
+      }
+    }
+
+    resolvedPageUrl = resolvedPageUrl.trim();
+
+    final resolvedStreamUrl = rawUrl.isNotEmpty ? rawUrl : effectiveUrl;
+    final idSourceUrl =
+        isYoutubeCandidate && resolvedPageUrl.isNotEmpty
+            ? resolvedPageUrl
+            : resolvedStreamUrl;
+
     final candidate = PlayingVideoCandidate(
-      id: _buildPlayingCandidateId(effectiveUrl, pageUrl),
-      url: rawUrl.isNotEmpty ? rawUrl : effectiveUrl,
-      pageUrl: pageUrl,
+      id: _buildPlayingCandidateId(idSourceUrl, resolvedPageUrl),
+      url: resolvedStreamUrl,
+      pageUrl: resolvedPageUrl,
       title:
           (resolvedTitle == null || resolvedTitle.isEmpty)
               ? _prettyFileName(effectiveUrl)
@@ -2617,12 +2647,13 @@ const bindVideo = (video) => {
     );
     final timeline = _timelineLabel(sheetContext, candidate);
     final resolution = _resolutionLabel(sheetContext, candidate);
-    final directUrl = candidate.url.trim();
-    final isBlob = directUrl.toLowerCase().startsWith('blob:');
-    final hasDirectUrl = directUrl.isNotEmpty && !isBlob;
+
     final isYoutube =
         AppRepo.I.isYoutubeUrl(candidate.url) ||
         AppRepo.I.isYoutubeUrl(candidate.pageUrl);
+    final directUrl = candidate.url.trim();
+    final isBlob = directUrl.toLowerCase().startsWith('blob:');
+    final hasDirectUrl = directUrl.isNotEmpty && !isBlob && !isYoutube;
     final youtubeSource =
         displayUrl.isNotEmpty ? displayUrl : (repo.currentPageUrl.value ?? '');
     final copyUrl =
@@ -2630,6 +2661,12 @@ const bindVideo = (video) => {
             ? (displayUrl.isNotEmpty ? displayUrl : youtubeSource)
             : (hasDirectUrl ? directUrl : displayUrl);
     final canDownload = isYoutube ? youtubeSource.isNotEmpty : hasDirectUrl;
+    final openInNewTabUrl =
+        isYoutube ? youtubeSource : (hasDirectUrl ? directUrl : '');
+    final downloadLabel =
+        isYoutube
+            ? sheetContext.l10n('browser.playingNow.action.stream')
+            : sheetContext.l10n('common.download');
     final navigator = Navigator.of(sheetContext);
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -2689,8 +2726,8 @@ const bindVideo = (video) => {
               runSpacing: 8,
               children: [
                 FilledButton.icon(
-                  icon: const Icon(Icons.download),
-                  label: Text(sheetContext.l10n('common.download')),
+                  icon: Icon(isYoutube ? Icons.stream : Icons.download),
+                  label: Text(downloadLabel),
                   onPressed:
                       canDownload
                           ? () async {
@@ -2731,10 +2768,10 @@ const bindVideo = (video) => {
                     sheetContext.l10n('browser.context.openInNewTab'),
                   ),
                   onPressed:
-                      hasDirectUrl
+                      openInNewTabUrl.isNotEmpty
                           ? () async {
                             navigator.pop();
-                            await _openLinkInNewTab(directUrl);
+                            await _openLinkInNewTab(openInNewTabUrl);
                           }
                           : null,
                 ),
@@ -2771,58 +2808,63 @@ const bindVideo = (video) => {
     if (repo.playingVideos.value.isEmpty) {
       return;
     }
-    await showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      builder: (sheetContext) {
-        return FractionallySizedBox(
-          heightFactor: 0.75,
-          child: SafeArea(
-            child: Column(
-              children: [
-                ListTile(
-                  title: Text(
-                    sheetContext.l10n('browser.playingNow.sheetTitle'),
+    _suppressLinkLongPress = true;
+    try {
+      await showModalBottomSheet(
+        context: context,
+        isScrollControlled: true,
+        builder: (sheetContext) {
+          return FractionallySizedBox(
+            heightFactor: 0.75,
+            child: SafeArea(
+              child: Column(
+                children: [
+                  ListTile(
+                    title: Text(
+                      sheetContext.l10n('browser.playingNow.sheetTitle'),
+                    ),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () => Navigator.of(sheetContext).pop(),
+                    ),
                   ),
-                  trailing: IconButton(
-                    icon: const Icon(Icons.close),
-                    onPressed: () => Navigator.of(sheetContext).pop(),
-                  ),
-                ),
-                const Divider(height: 1),
-                Expanded(
-                  child: ValueListenableBuilder<List<PlayingVideoCandidate>>(
-                    valueListenable: repo.playingVideos,
-                    builder: (context, candidates, _) {
-                      if (candidates.isEmpty) {
-                        return Center(
-                          child: Text(
-                            sheetContext.l10n(
-                              'browser.mediaDetection.emptyState',
+                  const Divider(height: 1),
+                  Expanded(
+                    child: ValueListenableBuilder<List<PlayingVideoCandidate>>(
+                      valueListenable: repo.playingVideos,
+                      builder: (context, candidates, _) {
+                        if (candidates.isEmpty) {
+                          return Center(
+                            child: Text(
+                              sheetContext.l10n(
+                                'browser.mediaDetection.emptyState',
+                              ),
                             ),
-                          ),
-                        );
-                      }
-                      return ListView.builder(
-                        itemCount: candidates.length,
-                        itemBuilder: (context, index) {
-                          final candidate = candidates[index];
-                          return _buildPlayingVideoCard(
-                            sheetContext,
-                            candidate,
-                            isPrimary: index == 0,
                           );
-                        },
-                      );
-                    },
+                        }
+                        return ListView.builder(
+                          itemCount: candidates.length,
+                          itemBuilder: (context, index) {
+                            final candidate = candidates[index];
+                            return _buildPlayingVideoCard(
+                              sheetContext,
+                              candidate,
+                              isPrimary: index == 0,
+                            );
+                          },
+                        );
+                      },
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-        );
-      },
-    );
+          );
+        },
+      );
+    } finally {
+      _suppressLinkLongPress = false;
+    }
   }
 
   Future<void> _showYoutubeDownloadOptions(
@@ -5407,10 +5449,14 @@ const bindVideo = (video) => {
           if (candidates.isEmpty) {
             return const SizedBox.shrink();
           }
+          final label = context.l10n(
+            'browser.playingNow.button',
+            params: {'count': '${candidates.length}'},
+          );
           return FloatingActionButton.extended(
             onPressed: _showPlayingVideosSheet,
             icon: const Icon(Icons.playlist_play),
-            label: Text(context.l10n('browser.playingNow.button')),
+            label: Text(label),
           );
         },
       ),

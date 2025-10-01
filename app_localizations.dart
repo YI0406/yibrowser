@@ -1239,25 +1239,25 @@ final Map<String, Map<AppLanguage, String>> _translations = {
     AppLanguage.en: 'File is incomplete or corrupted',
   },
   'settings.detectMediaLongPress.title': {
-    AppLanguage.zhHant: '長按偵測媒體',
-    AppLanguage.zhHans: '长按侦测媒体',
-    AppLanguage.en: 'Detect media on long press',
+    AppLanguage.zhHant: '自動偵測媒體',
+    AppLanguage.zhHans: '自动侦测媒体',
+    AppLanguage.en: 'Auto-detect media',
   },
   'settings.detectMediaLongPress.subtitle': {
-    AppLanguage.zhHant: '開啟後長按網頁媒體會顯示偵測視窗',
-    AppLanguage.zhHans: '开启后长按网页媒体会显示侦测视窗',
+    AppLanguage.zhHant: '自動將正在播放的影片加入「播放中」列表',
+    AppLanguage.zhHans: '自动将正在播放的视频加入“播放中”列表',
     AppLanguage.en:
-        'Show a detection dialog when long-pressing media on web pages.',
+        'Automatically add playing videos to the Now Playing panel.',
   },
   'settings.detectMediaLongPress.snack.enabled': {
-    AppLanguage.zhHant: '已開啟長按偵測媒體',
-    AppLanguage.zhHans: '已开启长按侦测媒体',
-    AppLanguage.en: 'Long-press media detection enabled.',
+    AppLanguage.zhHant: '已開啟自動偵測媒體',
+    AppLanguage.zhHans: '已开启自动侦测媒体',
+    AppLanguage.en: 'Media auto-detection enabled.',
   },
   'settings.detectMediaLongPress.snack.disabled': {
-    AppLanguage.zhHant: '已關閉長按偵測媒體',
-    AppLanguage.zhHans: '已关闭长按侦测媒体',
-    AppLanguage.en: 'Long-press media detection disabled.',
+    AppLanguage.zhHant: '已關閉自動偵測媒體',
+    AppLanguage.zhHans: '已关闭自动侦测媒体',
+    AppLanguage.en: 'Media auto-detection disabled.',
   },
   'settings.detectMediaLongPress.title': {
     AppLanguage.zhHant: '偵測媒體長按',
@@ -1265,20 +1265,20 @@ final Map<String, Map<AppLanguage, String>> _translations = {
     AppLanguage.en: 'Detect media on long press',
   },
   'settings.detectMediaLongPress.subtitle': {
-    AppLanguage.zhHant: '長按連結或媒體時自動辨識可下載的內容',
-    AppLanguage.zhHans: '长按链接或媒体时自动辨识可下载的内容',
+    AppLanguage.zhHant: '自動將正在播放的影片加入「播放中」列表',
+    AppLanguage.zhHans: '自动将正在播放的视频加入“播放中”列表',
     AppLanguage.en:
-        'Identify downloadable media when long-pressing links or media.',
+        'Automatically add playing videos to the Now Playing panel.',
   },
   'settings.detectMediaLongPress.snack.enabled': {
-    AppLanguage.zhHant: '已開啟媒體長按偵測',
-    AppLanguage.zhHans: '已开启媒体长按侦测',
-    AppLanguage.en: 'Media long-press detection enabled.',
+    AppLanguage.zhHant: '已開啟自動偵測媒體',
+    AppLanguage.zhHans: '已开启自动侦测媒体',
+    AppLanguage.en: 'Media auto-detection enabled.',
   },
   'settings.detectMediaLongPress.snack.disabled': {
-    AppLanguage.zhHant: '已關閉媒體長按偵測',
-    AppLanguage.zhHans: '已关闭媒体长按侦测',
-    AppLanguage.en: 'Media long-press detection disabled.',
+    AppLanguage.zhHant: '已關閉自動偵測媒體',
+    AppLanguage.zhHans: '已关闭自动侦测媒体',
+    AppLanguage.en: 'Media auto-detection disabled.',
   },
   'media.error.shareFailed': {
     AppLanguage.zhHant: '分享失敗，請稍後再試',
@@ -1618,9 +1618,14 @@ final Map<String, Map<AppLanguage, String>> _translations = {
     AppLanguage.en: 'Download image',
   },
   'browser.playingNow.button': {
-    AppLanguage.zhHant: '播放中',
-    AppLanguage.zhHans: '播放中',
-    AppLanguage.en: 'Now playing',
+    AppLanguage.zhHant: '播放中({count})',
+    AppLanguage.zhHans: '播放中({count})',
+    AppLanguage.en: 'Now playing ({count})',
+  },
+  'browser.playingNow.action.stream': {
+    AppLanguage.zhHant: '串流',
+    AppLanguage.zhHans: '串流',
+    AppLanguage.en: 'Stream',
   },
   'browser.playingNow.sheetTitle': {
     AppLanguage.zhHant: '播放中的影片',
