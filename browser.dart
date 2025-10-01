@@ -279,6 +279,11 @@ class _BrowserPageState extends State<BrowserPage>
     if (_ytFetchInFlight) return;
 
     _suppressLinkLongPress = true;
+    if (kDebugMode) {
+      debugPrint(
+        '[Debug][YouTube] Long press interactions suppressed while preview dialog is open.',
+      );
+    }
 
     try {
       _ytFetchInFlight = true;
@@ -399,6 +404,11 @@ class _BrowserPageState extends State<BrowserPage>
 
       if (!_ytMenuOpen) {
         _suppressLinkLongPress = false;
+        if (kDebugMode) {
+          debugPrint(
+            '[Debug][YouTube] Long press interactions restored after preview dialog closed.',
+          );
+        }
       }
     } finally {
       if (releaseController != null) {
@@ -1037,7 +1047,7 @@ class _BrowserPageState extends State<BrowserPage>
   static const String _kVideoDetectorBridge = r'''
 (function () {
   if (window.__flutterVideoDetectorInstalled) {
-   if (window.__flutterVideoDetectorRefresh) {
+     if (window.__flutterVideoDetectorRefresh) {
       try {
         window.__flutterVideoDetectorRefresh();
       } catch (_) {}
@@ -1219,6 +1229,90 @@ const bindVideo = (video) => {
     childList: true,
     subtree: true,
   });
+})();
+''';
+
+  static const String _kDebugTapLoggerJS = r'''
+(function () {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+  if (window.__flutterDebugTapLoggerInstalled) {
+    return true;
+  }
+  if (!window.flutter_inappwebview || !window.flutter_inappwebview.callHandler) {
+    return false;
+  }
+
+  window.__flutterDebugTapLoggerInstalled = true;
+
+  const limit = (value) => {
+    if (!value) return null;
+    const text = ('' + value).trim();
+    if (!text) return null;
+    if (text.length <= 120) return text;
+    return text.slice(0, 117) + '...';
+  };
+
+  const safeClosest = (element, selector) => {
+    if (!element || typeof element.closest !== 'function') {
+      return null;
+    }
+    try {
+      return element.closest(selector);
+    } catch (_) {
+      return null;
+    }
+  };
+
+  const describe = (target) => {
+    if (!target) return {};
+    const info = {
+      tag: target.tagName || null,
+      id: target.id || null,
+      classes: typeof target.className === 'string' ? target.className : null,
+    };
+
+    const anchor = safeClosest(target, 'a,area');
+    if (anchor) {
+      info.linkHref = anchor.getAttribute('href') || anchor.href || null;
+      info.linkText = limit(anchor.innerText || anchor.textContent);
+    } else if (target.href) {
+      info.linkHref = target.getAttribute('href') || target.href || null;
+    }
+
+    const button = safeClosest(target, 'button');
+    if (button) {
+      info.buttonText = limit(button.innerText || button.textContent);
+    } else if (target.tagName === 'BUTTON') {
+      info.buttonText = limit(target.innerText || target.textContent);
+    }
+
+    info.text = limit(target.innerText || target.textContent);
+    return info;
+  };
+
+  const forward = (event) => {
+    try {
+      const payload = describe(event.target);
+      payload.eventType = event.type;
+      payload.timestamp = Date.now();
+      window.flutter_inappwebview.callHandler('debugTapLogger', payload);
+    } catch (err) {}
+  };
+
+  const install = () => {
+    document.addEventListener('click', forward, true);
+    document.addEventListener('touchend', forward, true);
+  };
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', install, { once: true });
+  } else {
+    install();
+  }
+
+  return true;
 })();
 ''';
 
@@ -1685,6 +1779,11 @@ const bindVideo = (video) => {
     }
 
     _suppressLinkLongPress = true;
+    if (kDebugMode) {
+      debugPrint(
+        '[Debug][YouTube] Long press interactions suppressed while download options sheet is open.',
+      );
+    }
     showModalBottomSheet(
       context: context,
       useSafeArea: true,
@@ -1811,6 +1910,11 @@ const bindVideo = (video) => {
       repo.ytOptions.value = null;
       repo.ytTitle.value = null;
       _suppressLinkLongPress = false;
+      if (kDebugMode) {
+        debugPrint(
+          '[Debug][YouTube] Long press interactions restored after download options sheet closed.',
+        );
+      }
     });
   }
 
@@ -1895,6 +1999,37 @@ const bindVideo = (video) => {
     final page = candidate.pageUrl.trim();
     if (page.isNotEmpty) return page;
     return candidate.url.trim();
+  }
+
+  String? _truncateForDebugLog(String? value, {int maxLength = 80}) {
+    if (value == null) {
+      return null;
+    }
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) {
+      return null;
+    }
+    if (trimmed.length <= maxLength) {
+      return trimmed;
+    }
+    if (maxLength <= 1) {
+      return trimmed.substring(0, 1);
+    }
+    return '${trimmed.substring(0, maxLength - 1)}…';
+  }
+
+  String? _stringFromPayload(dynamic value) {
+    if (value == null) {
+      return null;
+    }
+    if (value is String) {
+      return value;
+    }
+    try {
+      return value.toString();
+    } catch (_) {
+      return null;
+    }
   }
 
   String _hostnameFromUrl(String url) {
@@ -2446,6 +2581,24 @@ const bindVideo = (video) => {
     );
   }
 
+  Future<void> _injectDebugTapLogger(InAppWebViewController controller) async {
+    try {
+      final result = await controller.evaluateJavascript(
+        source: _kDebugTapLoggerJS,
+      );
+      if (kDebugMode && result != true) {
+        debugPrint(
+          '[Debug][WebTap] Tap logger injection reported result: $result',
+        );
+      }
+    } catch (err, stack) {
+      if (kDebugMode) {
+        debugPrint('[Debug][WebTap] Failed to inject tap logger: $err');
+        debugPrint('$stack');
+      }
+    }
+  }
+
   bool _hasKnownExtension(String lowerUrl, Set<String> extensions) {
     for (final ext in extensions) {
       if (lowerUrl.endsWith(ext)) {
@@ -2524,6 +2677,11 @@ const bindVideo = (video) => {
     bool isYoutube = false,
   }) async {
     if (_suppressLinkLongPress) {
+      if (kDebugMode) {
+        debugPrint(
+          '[Debug][LinkMenu] Ignoring context menu request for $url because long presses are suppressed.',
+        );
+      }
       if (releaseController != null) {
         try {
           await _resetAndReleaseWebViewAfterContextMenu(releaseController);
@@ -2531,7 +2689,16 @@ const bindVideo = (video) => {
       }
       return;
     }
+    debugPrint(
+      '[Debug][LinkMenu] Presenting context menu for $url '
+      '(kind: ${describeEnum(kind)}, isYoutube: $isYoutube)',
+    );
     _suppressLinkLongPress = true;
+    if (kDebugMode) {
+      debugPrint(
+        '[Debug][LinkMenu] Long press interactions suppressed while menu is open.',
+      );
+    }
     try {
       await HapticFeedback.selectionClick();
     } catch (_) {}
@@ -2539,6 +2706,11 @@ const bindVideo = (video) => {
       await _handleLinkContextMenu(url, kind: kind, isYoutube: isYoutube);
     } finally {
       _suppressLinkLongPress = false;
+      if (kDebugMode) {
+        debugPrint(
+          '[Debug][LinkMenu] Long press interactions restored after menu closed.',
+        );
+      }
       if (releaseController != null) {
         try {
           await _resetAndReleaseWebViewAfterContextMenu(releaseController);
@@ -2886,7 +3058,16 @@ const bindVideo = (video) => {
     if (repo.playingVideos.value.isEmpty) {
       return;
     }
+    debugPrint(
+      '[Debug][NowPlaying] Opening playing videos sheet with '
+      '${repo.playingVideos.value.length} candidate(s)',
+    );
     _suppressLinkLongPress = true;
+    if (kDebugMode) {
+      debugPrint(
+        '[Debug][NowPlaying] Long press interactions suppressed while sheet is visible.',
+      );
+    }
     try {
       await showModalBottomSheet(
         context: context,
@@ -2943,6 +3124,11 @@ const bindVideo = (video) => {
     } finally {
       Future.delayed(const Duration(milliseconds: 250), () {
         _suppressLinkLongPress = false;
+        if (kDebugMode) {
+          debugPrint(
+            '[Debug][NowPlaying] Long press interactions restored after sheet closed.',
+          );
+        }
         unawaited(_restoreIosLinkInteractions());
       });
     }
@@ -4373,6 +4559,9 @@ const bindVideo = (video) => {
   Future<void> _resetAndReleaseWebViewAfterContextMenu(
     InAppWebViewController controller,
   ) async {
+    if (kDebugMode) {
+      debugPrint('[Debug][LinkMenu] Resetting web view after context menu.');
+    }
     await _resetIosLinkContextMenuBridge(controller);
     await _releaseWebViewAfterContextMenu(controller);
   }
@@ -4390,6 +4579,9 @@ const bindVideo = (video) => {
     final controller = _tabs[_currentTabIndex].controller;
     if (controller == null) {
       return;
+    }
+    if (kDebugMode) {
+      debugPrint('[Debug][LinkMenu] Restoring iOS link interactions.');
     }
     try {
       await _resetAndReleaseWebViewAfterContextMenu(controller);
@@ -5640,6 +5832,81 @@ const bindVideo = (video) => {
                               }
                             },
                           );
+                          c.addJavaScriptHandler(
+                            handlerName: 'debugTapLogger',
+                            callback: (args) {
+                              if (args.isEmpty) {
+                                return {'logged': false};
+                              }
+                              final dynamic raw = args.first;
+                              if (raw is! Map) {
+                                return {'logged': false};
+                              }
+                              final data = Map<String, dynamic>.from(
+                                raw as Map,
+                              );
+                              if (kDebugMode) {
+                                final eventType =
+                                    _stringFromPayload(data['eventType']) ??
+                                    'unknown';
+                                final tag = _stringFromPayload(data['tag']);
+                                final elementId = _stringFromPayload(
+                                  data['id'],
+                                );
+                                final classes = _stringFromPayload(
+                                  data['classes'],
+                                );
+                                final href = _stringFromPayload(
+                                  data['linkHref'],
+                                );
+                                final linkText = _truncateForDebugLog(
+                                  _stringFromPayload(data['linkText']),
+                                );
+                                final buttonText = _truncateForDebugLog(
+                                  _stringFromPayload(data['buttonText']),
+                                );
+                                final elementText = _truncateForDebugLog(
+                                  _stringFromPayload(data['text']),
+                                );
+                                final buffer = StringBuffer(
+                                  '[Debug][WebTap] $eventType on',
+                                );
+                                if (tag != null && tag.isNotEmpty) {
+                                  buffer.write(' <$tag>');
+                                } else {
+                                  buffer.write(' <unknown>');
+                                }
+                                if (elementId != null && elementId.isNotEmpty) {
+                                  buffer.write(' #$elementId');
+                                }
+                                if (classes != null && classes.isNotEmpty) {
+                                  buffer.write(' .$classes');
+                                }
+                                if (href != null && href.isNotEmpty) {
+                                  buffer.write(' href=$href');
+                                }
+                                if (linkText != null && linkText.isNotEmpty) {
+                                  buffer.write(' linkText="$linkText"');
+                                }
+                                if (buttonText != null &&
+                                    buttonText.isNotEmpty) {
+                                  buffer.write(' buttonText="$buttonText"');
+                                }
+                                if (elementText != null &&
+                                    elementText.isNotEmpty &&
+                                    (buttonText == null ||
+                                        buttonText.isEmpty) &&
+                                    (linkText == null || linkText.isEmpty)) {
+                                  buffer.write(' text="$elementText"');
+                                }
+                                buffer.write(
+                                  ' (longPressSuppressed=$_suppressLinkLongPress)',
+                                );
+                                debugPrint(buffer.toString());
+                              }
+                              return {'logged': true};
+                            },
+                          );
                           if (Platform.isIOS) {
                             c.addJavaScriptHandler(
                               handlerName: 'linkLongPress',
@@ -5685,6 +5952,7 @@ const bindVideo = (video) => {
                             );
                           }
                           unawaited(_injectVideoDetector(c));
+                          unawaited(_injectDebugTapLogger(c));
                         },
                         onLoadStart: (c, u) async {
                           _cachedYoutubeInfo = null;
@@ -5703,6 +5971,7 @@ const bindVideo = (video) => {
                           _iosLinkMenuBridgeReady = false;
                           await _injectIosLinkContextMenuBridge(c);
                           await _injectVideoDetector(c);
+                          await _injectDebugTapLogger(c);
                           repo.clearPlayingVideos();
                           final tab = _tabs[tabIndex];
                           tab.isLoading.value = true;
@@ -5748,6 +6017,7 @@ const bindVideo = (video) => {
                         onLoadStop: (c, u) async {
                           await _injectIosLinkContextMenuBridge(c);
                           await _injectVideoDetector(c);
+                          await _injectDebugTapLogger(c);
                           // 注入嗅探腳本並同步開關
                           await c.evaluateJavascript(source: Sniffer.jsHook);
                           await c.evaluateJavascript(
@@ -5909,6 +6179,21 @@ const bindVideo = (video) => {
                           controller,
                           navigationAction,
                         ) async {
+                          final requestUrl = navigationAction.request.url;
+                          final navType = navigationAction.navigationType;
+                          final navTypeDescription =
+                              navType != null
+                                  ? describeEnum(navType)
+                                  : 'unknown';
+                          final requestDescription =
+                              requestUrl?.rawValue ??
+                              requestUrl?.toString() ??
+                              'unknown';
+                          debugPrint(
+                            '[Debug][WebView] shouldOverrideUrlLoading triggered '
+                            'for $requestDescription '
+                            '(type: $navTypeDescription)',
+                          );
                           final blocked = _shouldPreventExternalNavigation(
                             navigationAction.request.url,
                             controller: controller,
@@ -6007,6 +6292,12 @@ const bindVideo = (video) => {
                             isVideoHit: isVideoHit,
                             isAudioHit: isAudioHit,
                             isYoutube: isYoutubeContext,
+                          );
+                          debugPrint(
+                            '[Debug][LinkMenu] Long press detected on '
+                            '$normalizedResolved '
+                            '(kind: ${describeEnum(kind)}, '
+                            'isYoutube: $isYoutubeContext)',
                           );
                           await _handleLinkContextMenuWithFeedback(
                             normalizedResolved,
@@ -7830,6 +8121,11 @@ const bindVideo = (video) => {
       },
     ).whenComplete(() {
       _suppressLinkLongPress = false;
+      if (kDebugMode) {
+        debugPrint(
+          '[Debug][YouTube] Long press interactions restored after download options sheet closed.',
+        );
+      }
     });
   }
 
