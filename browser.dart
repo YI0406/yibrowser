@@ -891,10 +891,25 @@ class _BrowserPageState extends State<BrowserPage>
           window.flutter_inappwebview &&
           window.flutter_inappwebview.callHandler
         ) {
-         suppressNextClick = true;
+        suppressNextClick = true;
           suppressedAnchor = anchor;
           scheduleSuppressReset();
-          window.flutter_inappwebview.callHandler('linkLongPress', resolved);
+           try {
+            const maybePromise =
+              window.flutter_inappwebview.callHandler('linkLongPress', resolved);
+            if (
+              maybePromise &&
+              typeof maybePromise.catch === 'function'
+            ) {
+              maybePromise.catch(() => {});
+            }
+          } catch (err) {
+            if (typeof console !== 'undefined' && console.warn) {
+              console.warn('Failed to notify Flutter about link long press', err);
+            }
+          } finally {
+            resetState();
+          }
         }
       }, LONG_PRESS_DELAY);
     },
@@ -2353,15 +2368,51 @@ const bindVideo = (video) => {
       return;
     }
     const script = r'''
+ (function() {
+        try {
+          if (typeof window !== 'undefined' && window.__flutterResetLinkMenu) {
+            window.__flutterResetLinkMenu();
+            return true;
+          }
+        } catch (_) {}
+        return false;
+      })();
+    ''';
+    var resetSucceeded = false;
+    try {
+      final result = await controller.evaluateJavascript(source: script);
+      resetSucceeded = result == true;
+    } catch (err, _) {
+      if (kDebugMode) {
+        debugPrint('Failed to evaluate iOS link menu reset script: $err');
+      }
+    }
+    if (resetSucceeded) {
+      return;
+    }
+    const fallbackScript = r'''
       try {
-        if (typeof window !== 'undefined' && window.__flutterResetLinkMenu) {
+         if (typeof window === 'undefined') {
+          return;
+        }
+        if (window.__flutterSetLinkMenuEnabled) {
+          const previousEnabled = !!window.flutterIosLinkMenuEnabled;
+          window.__flutterSetLinkMenuEnabled(false);
+          if (previousEnabled) {
+            window.__flutterSetLinkMenuEnabled(true);
+          }
+        } else if (window.__flutterResetLinkMenu) {
           window.__flutterResetLinkMenu();
         }
       } catch (_) {}
     ''';
     try {
-      await controller.evaluateJavascript(source: script);
-    } catch (_) {}
+      await controller.evaluateJavascript(source: fallbackScript);
+    } catch (err, _) {
+      if (kDebugMode) {
+        debugPrint('Fallback reset for iOS link menu bridge failed: $err');
+      }
+    }
   }
 
   Future<void> _injectVideoDetector(InAppWebViewController controller) async {
@@ -4270,37 +4321,15 @@ const bindVideo = (video) => {
           }
         } catch (_) {}
         try {
-       const selection = typeof window.getSelection === 'function'
-            ? window.getSelection()
-            : null;
+       const selection =
+              typeof window.getSelection === 'function'
+                  ? window.getSelection()
+                  : null;
           if (selection && typeof selection.removeAllRanges === 'function') {
             selection.removeAllRanges();
           }
         } catch (_) {}
-   const dispatchAll = (events, targets) => {
-          for (let i = 0; i < events.length; i += 1) {
-           for (let j = 0; j < targets.length; j += 1) {
-              const target = targets[j];
-              if (!target) continue;
-              try {
-                const evt = new Event(events[i], { bubbles: true, cancelable: true });
-                target.dispatchEvent(evt);
-              } catch (_) {}
-            }
-          }
-        };
-        try {
-          const events = ['touchcancel', 'touchend', 'pointercancel', 'pointerup', 'mouseup'];
-          const active = document.activeElement;
-          const win = (typeof window !== 'undefined') ? window : null;
-          const targets = [win, document, document.documentElement, document.body, active].filter(Boolean);
-          dispatchAll(events, targets);
-          if (typeof window !== 'undefined' && window.requestAnimationFrame) {
-            window.requestAnimationFrame(() => dispatchAll(events, targets));
-          } else {
-            setTimeout(() => dispatchAll(events, targets), 0);
-          }
-        } catch (_) {}
+  
       })();
     ''';
     try {
