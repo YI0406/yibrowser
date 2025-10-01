@@ -4572,10 +4572,12 @@ const bindVideo = (video) => {
 
   Future<void> _restoreIosLinkInteractions({
     InAppWebViewController? controller,
+    int attemptIndex = 0,
   }) async {
     if (!Platform.isIOS) {
       return;
     }
+    const int maxAttempts = 3;
     InAppWebViewController? target = controller;
     if (target == null) {
       if (_tabs.isEmpty || _currentTabIndex < 0) {
@@ -4590,14 +4592,40 @@ const bindVideo = (video) => {
       return;
     }
     if (kDebugMode) {
-      debugPrint('[Debug][LinkMenu] Restoring iOS link interactions.');
+      if (attemptIndex == 0) {
+        debugPrint('[Debug][LinkMenu] Restoring iOS link interactions.');
+      } else {
+        debugPrint(
+          '[Debug][LinkMenu] Retrying iOS link interaction restore '
+          '(attempt ${attemptIndex + 1}/$maxAttempts).',
+        );
+      }
     }
     try {
       await _resetAndReleaseWebViewAfterContextMenu(target);
     } catch (_) {}
     try {
+      await _setIosLinkContextMenuBridgeEnabled(target, false);
+    } catch (_) {}
+    try {
       await _setIosLinkContextMenuBridgeEnabled(target, true);
     } catch (_) {}
+    if (attemptIndex + 1 >= maxAttempts) {
+      return;
+    }
+    final nextController = target;
+    final delay = Duration(milliseconds: 120 * (attemptIndex + 1));
+    Future.delayed(delay, () {
+      if (!mounted) {
+        return;
+      }
+      unawaited(
+        _restoreIosLinkInteractions(
+          controller: nextController,
+          attemptIndex: attemptIndex + 1,
+        ),
+      );
+    });
   }
 
   bool _flagTruthy(dynamic value) {
