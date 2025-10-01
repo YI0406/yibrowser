@@ -18,6 +18,7 @@ import 'package:photo_manager/photo_manager.dart';
 import 'package:image_gallery_saver/image_gallery_saver.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:local_auth/local_auth.dart';
+import 'dart:typed_data';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
@@ -281,6 +282,63 @@ class MediaHit {
     poster: poster ?? this.poster,
     durationSeconds: durationSeconds ?? this.durationSeconds,
   );
+}
+
+/// Snapshot of a video that the user long-pressed while it was playing.
+class PlayingVideoCandidate {
+  final String id;
+  final String url;
+  final String pageUrl;
+  final String title;
+  final double? durationSeconds;
+  final double? positionSeconds;
+  final int? videoWidth;
+  final int? videoHeight;
+  final Uint8List? snapshot;
+  final String? posterUrl;
+  final DateTime detectedAt;
+
+  const PlayingVideoCandidate({
+    required this.id,
+    required this.url,
+    required this.pageUrl,
+    required this.title,
+    this.durationSeconds,
+    this.positionSeconds,
+    this.videoWidth,
+    this.videoHeight,
+    this.snapshot,
+    this.posterUrl,
+    required this.detectedAt,
+  });
+
+  PlayingVideoCandidate copyWith({
+    String? id,
+    String? url,
+    String? pageUrl,
+    String? title,
+    double? durationSeconds,
+    double? positionSeconds,
+    int? videoWidth,
+    int? videoHeight,
+    Uint8List? snapshot,
+    String? posterUrl,
+    DateTime? detectedAt,
+  }) {
+    return PlayingVideoCandidate(
+      id: id ?? this.id,
+      url: url ?? this.url,
+      pageUrl: pageUrl ?? this.pageUrl,
+      title: title ?? this.title,
+      durationSeconds: durationSeconds ?? this.durationSeconds,
+      positionSeconds: positionSeconds ?? this.positionSeconds,
+      videoWidth: videoWidth ?? this.videoWidth,
+      videoHeight: videoHeight ?? this.videoHeight,
+      snapshot: snapshot ?? this.snapshot,
+      posterUrl: posterUrl ?? this.posterUrl,
+      detectedAt: detectedAt ?? this.detectedAt,
+    );
+  }
 }
 
 /// Represents a browsing history entry. Each entry stores the URL visited,
@@ -3161,6 +3219,10 @@ class AppRepo extends ChangeNotifier {
   final ValueNotifier<bool> snifferEnabled = ValueNotifier(true);
   final ValueNotifier<bool> longPressDetectionEnabled = ValueNotifier(true);
 
+  /// Candidates detected from long-pressing actively playing videos.
+  final ValueNotifier<List<PlayingVideoCandidate>> playingVideos =
+      ValueNotifier<List<PlayingVideoCandidate>>([]);
+
   /// Detected media hits from the browser. Updated by the WebView sniffer.
   final ValueNotifier<List<MediaHit>> hits = ValueNotifier([]);
 
@@ -3285,7 +3347,32 @@ class AppRepo extends ChangeNotifier {
       return;
     }
     longPressDetectionEnabled.value = on;
+    if (!on && playingVideos.value.isNotEmpty) {
+      playingVideos.value = [];
+    }
     notifyListeners();
+  }
+
+  void upsertPlayingVideo(PlayingVideoCandidate candidate) {
+    final list = [...playingVideos.value];
+    final index = list.indexWhere((element) => element.id == candidate.id);
+    if (index >= 0) {
+      list[index] = candidate;
+    } else {
+      list.insert(0, candidate);
+    }
+    const maxEntries = 8;
+    if (list.length > maxEntries) {
+      list.removeRange(maxEntries, list.length);
+    }
+    playingVideos.value = list;
+  }
+
+  void clearPlayingVideos() {
+    if (playingVideos.value.isEmpty) {
+      return;
+    }
+    playingVideos.value = [];
   }
 
   /// Adds a media hit or merges if URL already exists.

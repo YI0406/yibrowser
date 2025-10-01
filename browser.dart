@@ -965,6 +965,245 @@ class _BrowserPageState extends State<BrowserPage>
   );
 })();
 ''';
+
+  static const String _kVideoDetectorBridge = r'''
+(function () {
+  if (window.__flutterVideoDetectorInstalled) {
+    return;
+  }
+  window.__flutterVideoDetectorInstalled = true;
+  window.__flutterVideoDetectorEnabled = true;
+
+  const LONG_PRESS_MS = 650;
+  const MOVE_TOLERANCE = 14;
+  const timers = new WeakMap();
+
+  const resolveSrc = (video) => {
+    if (!video) return '';
+    if (video.currentSrc && video.currentSrc.startsWith('blob:')) {
+      return video.currentSrc;
+    }
+    const candidates = [video.currentSrc, video.src];
+    if (video.querySelectorAll) {
+      video.querySelectorAll('source').forEach((source) => {
+        if (source.src) {
+          candidates.push(source.src);
+        }
+      });
+    }
+    for (let i = 0; i < candidates.length; i += 1) {
+      const value = candidates[i];
+      if (value && ('' + value).trim().length > 0) {
+        return value;
+      }
+    }
+    if (video.dataset) {
+      const keys = ['src', 'source', 'video', 'stream'];
+      for (let i = 0; i < keys.length; i += 1) {
+        const key = keys[i];
+        if (video.dataset[key]) {
+          return video.dataset[key];
+        }
+      }
+    }
+    return video.currentSrc || video.src || '';
+  };
+
+  const inferTitle = (video) => {
+    const tryRead = (node) => {
+      if (!node) return '';
+      const attrs = ['data-title', 'aria-label', 'title', 'alt'];
+      for (let i = 0; i < attrs.length; i += 1) {
+        const attr = attrs[i];
+        const value = node.getAttribute && node.getAttribute(attr);
+        if (value && value.trim().length > 0) {
+          return value.trim();
+        }
+      }
+      return '';
+    };
+    let title = tryRead(video);
+    if (title) return title;
+    if (video.parentElement) {
+      title = tryRead(video.parentElement);
+      if (title) return title;
+    }
+    if (video.closest) {
+      const labelled = video.closest('[data-title], [aria-label], [title]');
+      if (labelled) {
+        title = tryRead(labelled);
+        if (title) return title;
+      }
+    }
+    return document.title || '';
+  };
+
+  const captureFrame = (video) => {
+    try {
+      const width = video.videoWidth || video.clientWidth;
+      const height = video.videoHeight || video.clientHeight;
+      if (!width || !height) return '';
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return '';
+      ctx.drawImage(video, 0, 0, width, height);
+      return canvas.toDataURL('image/jpeg', 0.75);
+    } catch (err) {
+      return '';
+    }
+  };
+
+  const isPlaying = (video) => {
+    if (!video) return false;
+    if (video.readyState < 2) return false;
+    return !video.paused && !video.ended;
+  };
+
+  const sendPayload = (video) => {
+    if (!window.__flutterVideoDetectorEnabled) {
+      return;
+    }
+    const now = Date.now();
+    const last = video.__flutterVideoDetectorLastSent || 0;
+    if (now - last < 400) {
+      return;
+    }
+    video.__flutterVideoDetectorLastSent = now;
+    const payload = {
+      src: resolveSrc(video) || '',
+      title: inferTitle(video) || '',
+      pageTitle: document.title || '',
+      pageUrl: window.location ? window.location.href : '',
+      duration: Number.isFinite(video.duration) ? video.duration : null,
+      currentTime: Number.isFinite(video.currentTime) ? video.currentTime : null,
+      width: video.videoWidth || null,
+      height: video.videoHeight || null,
+      poster: video.poster || '',
+      capture: captureFrame(video) || '',
+      timestamp: now,
+    };
+    try {
+      if (window.flutter_inappwebview && window.flutter_inappwebview.callHandler) {
+        window.flutter_inappwebview.callHandler('videoLongPress', payload);
+      }
+    } catch (_) {}
+  };
+
+  const cancelTimer = (video) => {
+    const existing = timers.get(video);
+    if (existing && existing.timer) {
+      clearTimeout(existing.timer);
+    }
+    timers.delete(video);
+  };
+
+  const handleMove = (video, point) => {
+    const existing = timers.get(video);
+    if (!existing) {
+      return;
+    }
+    const dx = Math.abs(point.clientX - existing.startX);
+    const dy = Math.abs(point.clientY - existing.startY);
+    if (dx > MOVE_TOLERANCE || dy > MOVE_TOLERANCE) {
+      cancelTimer(video);
+    }
+  };
+
+  const scheduleTimer = (video, point) => {
+    if (!window.__flutterVideoDetectorEnabled) {
+      return;
+    }
+    if (!isPlaying(video)) {
+      return;
+    }
+    cancelTimer(video);
+    const timer = setTimeout(() => {
+      cancelTimer(video);
+      if (!window.__flutterVideoDetectorEnabled) {
+        return;
+      }
+      if (!isPlaying(video)) {
+        return;
+      }
+      sendPayload(video);
+    }, LONG_PRESS_MS);
+    timers.set(video, {
+      timer,
+      startX: point.clientX,
+      startY: point.clientY,
+    });
+  };
+
+  const bindVideo = (video) => {
+    if (!video || video.__flutterVideoDetectorBound) {
+      return;
+    }
+    video.__flutterVideoDetectorBound = true;
+
+    const touchStart = (event) => {
+      if (!event || !event.touches || event.touches.length !== 1) {
+        return;
+      }
+      scheduleTimer(video, event.touches[0]);
+    };
+
+    const touchMove = (event) => {
+      if (!event || !event.touches || event.touches.length !== 1) {
+        return;
+      }
+      handleMove(video, event.touches[0]);
+    };
+
+    video.addEventListener('touchstart', touchStart, { passive: true });
+    video.addEventListener('touchmove', touchMove, { passive: true });
+    video.addEventListener('touchend', () => cancelTimer(video), { passive: true });
+    video.addEventListener('touchcancel', () => cancelTimer(video), { passive: true });
+    video.addEventListener('pointerdown', (event) => {
+      if (!event || event.pointerType === 'mouse') {
+        return;
+      }
+      scheduleTimer(video, event);
+    }, { passive: true });
+    video.addEventListener('pointermove', (event) => {
+      if (!event || event.pointerType === 'mouse') {
+        return;
+      }
+      handleMove(video, event);
+    }, { passive: true });
+    video.addEventListener('pointerup', () => cancelTimer(video), { passive: true });
+    video.addEventListener('pointercancel', () => cancelTimer(video), { passive: true });
+    video.addEventListener('contextmenu', (event) => {
+      if (isPlaying(video)) {
+        event.preventDefault();
+        sendPayload(video);
+      }
+    });
+  };
+
+  const scan = () => {
+    document.querySelectorAll('video').forEach((video) => bindVideo(video));
+  };
+
+  window.__flutterVideoDetectorSetEnabled = (value) => {
+    window.__flutterVideoDetectorEnabled = !!value;
+    if (!value) {
+      document.querySelectorAll('video').forEach((video) => cancelTimer(video));
+    }
+  };
+
+  window.__flutterVideoDetectorRefresh = scan;
+
+  scan();
+  const observer = new MutationObserver(scan);
+  observer.observe(document.documentElement || document.body, {
+    childList: true,
+    subtree: true,
+  });
+})();
+''';
+
   String _uaForMode(String mode) {
     switch (mode) {
       case 'ipad':
@@ -1578,6 +1817,126 @@ class _BrowserPageState extends State<BrowserPage>
     return '${two(h)}:${two(m)}:${two(sec)}';
   }
 
+  Uint8List? _decodeVideoSnapshot(String? dataUrl) {
+    if (dataUrl == null) return null;
+    final trimmed = dataUrl.trim();
+    if (trimmed.isEmpty) return null;
+    final comma = trimmed.indexOf(',');
+    final payload = comma >= 0 ? trimmed.substring(comma + 1) : trimmed;
+    try {
+      return base64Decode(payload);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  double? _asDouble(dynamic value) {
+    if (value is num) {
+      final v = value.toDouble();
+      return v.isFinite ? v : null;
+    }
+    if (value is String) {
+      final parsed = double.tryParse(value);
+      if (parsed == null || !parsed.isFinite) {
+        return null;
+      }
+      return parsed;
+    }
+    return null;
+  }
+
+  int? _asInt(dynamic value) {
+    if (value is num) {
+      final v = value.toInt();
+      return v > 0 ? v : null;
+    }
+    if (value is String) {
+      final parsed = int.tryParse(value);
+      if (parsed == null || parsed <= 0) {
+        return null;
+      }
+      return parsed;
+    }
+    return null;
+  }
+
+  String _buildPlayingCandidateId(String url, String pageUrl) {
+    final trimmedUrl = url.trim();
+    final trimmedPage = pageUrl.trim();
+    final base = trimmedUrl.isNotEmpty ? trimmedUrl : trimmedPage;
+    if (base.isEmpty) {
+      return 'candidate_${DateTime.now().microsecondsSinceEpoch}';
+    }
+    if (trimmedPage.isNotEmpty) {
+      return '$trimmedPage|$base';
+    }
+    return base;
+  }
+
+  String _effectiveDisplayUrl(PlayingVideoCandidate candidate) {
+    final page = candidate.pageUrl.trim();
+    if (page.isNotEmpty) return page;
+    return candidate.url.trim();
+  }
+
+  String _hostnameFromUrl(String url) {
+    if (url.isEmpty) {
+      return '';
+    }
+    try {
+      final uri = Uri.parse(url);
+      return uri.host;
+    } catch (_) {
+      return '';
+    }
+  }
+
+  String _timelineLabel(BuildContext context, PlayingVideoCandidate candidate) {
+    final duration = candidate.durationSeconds;
+    final position = candidate.positionSeconds ?? 0;
+    if (duration != null && duration.isFinite && duration > 0) {
+      final clamped = math.max(0.0, math.min(duration, position));
+      return '${_fmtDur(clamped)} / ${_fmtDur(duration)}';
+    }
+    return context.l10n('browser.playingNow.liveOrUnknown');
+  }
+
+  String _resolutionLabel(
+    BuildContext context,
+    PlayingVideoCandidate candidate,
+  ) {
+    final width = candidate.videoWidth;
+    final height = candidate.videoHeight;
+    if (width != null && width > 0 && height != null && height > 0) {
+      return '${width}×${height}';
+    }
+    return context.l10n('common.unknown');
+  }
+
+  Widget _buildPlayingVideoPreview(PlayingVideoCandidate candidate) {
+    final snapshot = candidate.snapshot;
+    if (snapshot != null && snapshot.isNotEmpty) {
+      return Image.memory(snapshot, fit: BoxFit.cover);
+    }
+    final poster = candidate.posterUrl;
+    if (poster != null && poster.isNotEmpty) {
+      return Image.network(
+        poster,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => _defaultVideoPreviewWidget(),
+      );
+    }
+    return _defaultVideoPreviewWidget();
+  }
+
+  Widget _defaultVideoPreviewWidget() {
+    return Container(
+      color: Colors.black12,
+      alignment: Alignment.center,
+      child: const Icon(Icons.ondemand_video),
+    );
+  }
+
   /// Format bytes into a human friendly string.
   /// Examples: 532 -> 532 B, 1_234 -> 1.21 KB, 5_678_901 -> 5.42 MB
   String _fmtSize(int? bytes) {
@@ -1746,19 +2105,21 @@ class _BrowserPageState extends State<BrowserPage>
   }
 
   void _onLongPressDetectionChanged() {
-    if (!Platform.isIOS) {
-      return;
-    }
     final enabled = repo.longPressDetectionEnabled.value;
-
+    if (!enabled) {
+      repo.clearPlayingVideos();
+    }
     for (final tab in _tabs) {
       final controller = tab.controller;
       if (controller == null) continue;
 
-      if (!enabled) {
-        unawaited(_resetAndReleaseWebViewAfterContextMenu(controller));
+      unawaited(_setVideoDetectorEnabled(controller, enabled));
+      if (Platform.isIOS) {
+        if (!enabled) {
+          unawaited(_resetAndReleaseWebViewAfterContextMenu(controller));
+        }
+        unawaited(_setIosLinkContextMenuBridgeEnabled(controller, true));
       }
-      unawaited(_setIosLinkContextMenuBridgeEnabled(controller, true));
     }
   }
 
@@ -2049,6 +2410,34 @@ class _BrowserPageState extends State<BrowserPage>
     } catch (_) {}
   }
 
+  Future<void> _injectVideoDetector(InAppWebViewController controller) async {
+    try {
+      await controller.evaluateJavascript(source: _kVideoDetectorBridge);
+    } catch (_) {}
+    await _setVideoDetectorEnabled(
+      controller,
+      repo.longPressDetectionEnabled.value,
+    );
+  }
+
+  Future<void> _setVideoDetectorEnabled(
+    InAppWebViewController controller,
+    bool enabled,
+  ) async {
+    final script = '''
+      try {
+        if (window.__flutterVideoDetectorSetEnabled) {
+          window.__flutterVideoDetectorSetEnabled(${enabled ? 'true' : 'false'});
+        } else {
+          window.__flutterVideoDetectorEnabled = ${enabled ? 'true' : 'false'};
+        }
+      } catch (_) {}
+    ''';
+    try {
+      await controller.evaluateJavascript(source: script);
+    } catch (_) {}
+  }
+
   Future<void> _setIosLinkContextMenuBridgeEnabled(
     InAppWebViewController controller,
     bool enabled,
@@ -2144,6 +2533,413 @@ class _BrowserPageState extends State<BrowserPage>
         await _showAddToHomeDialog(initialUrl: url);
         break;
     }
+  }
+
+  Future<void> _handleVideoLongPress(Map<String, dynamic> payload) async {
+    if (!repo.longPressDetectionEnabled.value) {
+      return;
+    }
+    final rawUrl = (payload['src'] as String? ?? '').trim();
+    final pageUrl = (payload['pageUrl'] as String? ?? '').trim();
+    if (rawUrl.isEmpty && pageUrl.isEmpty) {
+      return;
+    }
+    final capture = payload['capture'] as String?;
+    final poster = (payload['poster'] as String? ?? '').trim();
+    final duration = _asDouble(payload['duration']);
+    final position = _asDouble(payload['currentTime']);
+    final width = _asInt(payload['width']);
+    final height = _asInt(payload['height']);
+    final titleCandidates = <String?>[
+      (payload['title'] as String?)?.trim(),
+      (payload['label'] as String?)?.trim(),
+      (payload['ariaLabel'] as String?)?.trim(),
+      (payload['pageTitle'] as String?)?.trim(),
+      (_tabs.isNotEmpty ? _tabs[_currentTabIndex].pageTitle?.trim() : null),
+    ];
+    final effectiveUrl = rawUrl.isNotEmpty ? rawUrl : pageUrl;
+    final fallbackTitle =
+        effectiveUrl.isNotEmpty
+            ? _prettyFileName(effectiveUrl)
+            : (repo.currentPageTitle.value ?? '');
+    final resolvedTitle =
+        titleCandidates
+            .firstWhere(
+              (element) => element != null && element.isNotEmpty,
+              orElse: () => fallbackTitle,
+            )
+            ?.trim();
+    final candidate = PlayingVideoCandidate(
+      id: _buildPlayingCandidateId(effectiveUrl, pageUrl),
+      url: rawUrl.isNotEmpty ? rawUrl : effectiveUrl,
+      pageUrl: pageUrl,
+      title:
+          (resolvedTitle == null || resolvedTitle.isEmpty)
+              ? _prettyFileName(effectiveUrl)
+              : resolvedTitle,
+      durationSeconds: duration,
+      positionSeconds: position,
+      videoWidth: width,
+      videoHeight: height,
+      snapshot: _decodeVideoSnapshot(capture),
+      posterUrl: poster.isNotEmpty ? poster : null,
+      detectedAt: DateTime.now(),
+    );
+    repo.upsertPlayingVideo(candidate);
+    if (!mounted) return;
+    try {
+      await HapticFeedback.selectionClick();
+    } catch (_) {}
+    final isYoutube =
+        AppRepo.I.isYoutubeUrl(candidate.url) ||
+        AppRepo.I.isYoutubeUrl(pageUrl);
+    await _showVideoActionSheet(candidate, isYoutube: isYoutube);
+  }
+
+  Future<void> _showVideoActionSheet(
+    PlayingVideoCandidate candidate, {
+    required bool isYoutube,
+  }) async {
+    if (!mounted) return;
+    final displayUrl = _effectiveDisplayUrl(candidate);
+    final directUrl = candidate.url.trim();
+    final isBlob = directUrl.toLowerCase().startsWith('blob:');
+    final hasDirectUrl = directUrl.isNotEmpty && !isBlob;
+    final youtubeSource =
+        displayUrl.isNotEmpty ? displayUrl : (repo.currentPageUrl.value ?? '');
+    final copyUrl =
+        isYoutube
+            ? (displayUrl.isNotEmpty ? displayUrl : youtubeSource)
+            : (hasDirectUrl ? directUrl : displayUrl);
+    final canDownload = isYoutube ? youtubeSource.isNotEmpty : hasDirectUrl;
+    final navigator = Navigator.of(context);
+    await showModalBottomSheet(
+      context: context,
+      builder: (sheetContext) {
+        final theme = Theme.of(sheetContext);
+        final host = _hostnameFromUrl(
+          displayUrl.isNotEmpty ? displayUrl : directUrl,
+        );
+        final timeline = _timelineLabel(sheetContext, candidate);
+        final preview = _buildPlayingVideoPreview(candidate);
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  candidate.title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.titleMedium,
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: SizedBox(width: 120, height: 68, child: preview),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (host.isNotEmpty)
+                            Text(host, style: theme.textTheme.bodySmall),
+                          Text(timeline, style: theme.textTheme.bodySmall),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                SelectableText(
+                  displayUrl.isNotEmpty ? displayUrl : directUrl,
+                  maxLines: 2,
+                  style: theme.textTheme.bodySmall,
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    TextButton(
+                      onPressed: () => navigator.pop(),
+                      child: Text(sheetContext.l10n('common.cancel')),
+                    ),
+                    const SizedBox(width: 8),
+                    TextButton.icon(
+                      icon: const Icon(Icons.copy),
+                      label: Text(
+                        sheetContext.l10n('browser.context.copyLink'),
+                      ),
+                      onPressed:
+                          copyUrl.isNotEmpty
+                              ? () async {
+                                navigator.pop();
+                                await Clipboard.setData(
+                                  ClipboardData(text: copyUrl),
+                                );
+                                _showSnackBar(
+                                  sheetContext.l10n('browser.snack.copiedLink'),
+                                );
+                              }
+                              : null,
+                    ),
+                    const SizedBox(width: 8),
+                    FilledButton.icon(
+                      icon: const Icon(Icons.download),
+                      label: Text(sheetContext.l10n('common.download')),
+                      onPressed:
+                          canDownload
+                              ? () async {
+                                navigator.pop();
+                                if (isYoutube) {
+                                  final target =
+                                      youtubeSource.isNotEmpty
+                                          ? youtubeSource
+                                          : displayUrl;
+                                  if (target.isNotEmpty) {
+                                    await _showYoutubePreviewDialog(target);
+                                  }
+                                } else {
+                                  await _confirmDownload(directUrl);
+                                }
+                              }
+                              : null,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildPlayingVideoCard(
+    BuildContext sheetContext,
+    PlayingVideoCandidate candidate, {
+    required bool isPrimary,
+  }) {
+    final theme = Theme.of(sheetContext);
+    final preview = _buildPlayingVideoPreview(candidate);
+    final displayUrl = _effectiveDisplayUrl(candidate);
+    final host = _hostnameFromUrl(
+      displayUrl.isNotEmpty ? displayUrl : candidate.url,
+    );
+    final timeline = _timelineLabel(sheetContext, candidate);
+    final resolution = _resolutionLabel(sheetContext, candidate);
+    final directUrl = candidate.url.trim();
+    final isBlob = directUrl.toLowerCase().startsWith('blob:');
+    final hasDirectUrl = directUrl.isNotEmpty && !isBlob;
+    final isYoutube =
+        AppRepo.I.isYoutubeUrl(candidate.url) ||
+        AppRepo.I.isYoutubeUrl(candidate.pageUrl);
+    final youtubeSource =
+        displayUrl.isNotEmpty ? displayUrl : (repo.currentPageUrl.value ?? '');
+    final copyUrl =
+        isYoutube
+            ? (displayUrl.isNotEmpty ? displayUrl : youtubeSource)
+            : (hasDirectUrl ? directUrl : displayUrl);
+    final canDownload = isYoutube ? youtubeSource.isNotEmpty : hasDirectUrl;
+    final navigator = Navigator.of(sheetContext);
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: SizedBox(width: 120, height: 68, child: preview),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        candidate.title,
+                        style: theme.textTheme.titleMedium,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 4),
+                      if (host.isNotEmpty)
+                        Text(host, style: theme.textTheme.bodySmall),
+                      Text(resolution, style: theme.textTheme.bodySmall),
+                      Text(timeline, style: theme.textTheme.bodySmall),
+                      if (isPrimary)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Text(
+                            sheetContext.l10n('browser.playingNow.bestGuess'),
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.primary,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            SelectableText(
+              displayUrl.isNotEmpty ? displayUrl : directUrl,
+              maxLines: 2,
+              style: theme.textTheme.bodySmall,
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                FilledButton.icon(
+                  icon: const Icon(Icons.download),
+                  label: Text(sheetContext.l10n('common.download')),
+                  onPressed:
+                      canDownload
+                          ? () async {
+                            navigator.pop();
+                            if (isYoutube) {
+                              final target =
+                                  youtubeSource.isNotEmpty
+                                      ? youtubeSource
+                                      : displayUrl;
+                              if (target.isNotEmpty) {
+                                await _showYoutubePreviewDialog(target);
+                              }
+                            } else {
+                              await _confirmDownload(directUrl);
+                            }
+                          }
+                          : null,
+                ),
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.copy),
+                  label: Text(sheetContext.l10n('browser.context.copyLink')),
+                  onPressed:
+                      copyUrl.isNotEmpty
+                          ? () async {
+                            navigator.pop();
+                            await Clipboard.setData(
+                              ClipboardData(text: copyUrl),
+                            );
+                            _showSnackBar(
+                              sheetContext.l10n('browser.snack.copiedLink'),
+                            );
+                          }
+                          : null,
+                ),
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.open_in_new),
+                  label: Text(
+                    sheetContext.l10n('browser.context.openInNewTab'),
+                  ),
+                  onPressed:
+                      hasDirectUrl
+                          ? () async {
+                            navigator.pop();
+                            await _openLinkInNewTab(directUrl);
+                          }
+                          : null,
+                ),
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.play_arrow),
+                  label: Text(sheetContext.l10n('common.play')),
+                  onPressed:
+                      hasDirectUrl
+                          ? () {
+                            navigator.pop();
+                            final startAt = candidate.positionSeconds;
+                            _playMedia(
+                              directUrl,
+                              title: candidate.title,
+                              startAt:
+                                  startAt != null
+                                      ? Duration(
+                                        milliseconds: (startAt * 1000).round(),
+                                      )
+                                      : null,
+                            );
+                          }
+                          : null,
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showPlayingVideosSheet() async {
+    if (repo.playingVideos.value.isEmpty) {
+      return;
+    }
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        return FractionallySizedBox(
+          heightFactor: 0.75,
+          child: SafeArea(
+            child: Column(
+              children: [
+                ListTile(
+                  title: Text(
+                    sheetContext.l10n('browser.playingNow.sheetTitle'),
+                  ),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.of(sheetContext).pop(),
+                  ),
+                ),
+                const Divider(height: 1),
+                Expanded(
+                  child: ValueListenableBuilder<List<PlayingVideoCandidate>>(
+                    valueListenable: repo.playingVideos,
+                    builder: (context, candidates, _) {
+                      if (candidates.isEmpty) {
+                        return Center(
+                          child: Text(
+                            sheetContext.l10n(
+                              'browser.mediaDetection.emptyState',
+                            ),
+                          ),
+                        );
+                      }
+                      return ListView.builder(
+                        itemCount: candidates.length,
+                        itemBuilder: (context, index) {
+                          final candidate = candidates[index];
+                          return _buildPlayingVideoCard(
+                            sheetContext,
+                            candidate,
+                            isPrimary: index == 0,
+                          );
+                        },
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   Future<void> _showYoutubeDownloadOptions(
@@ -2480,12 +3276,20 @@ class _BrowserPageState extends State<BrowserPage>
   /// Launch the app’s built‑in media player for the given URL. The page
   /// title is derived from the URL to provide a reasonable default name.
   /// 直接啟動內建全螢幕播放器；如需背景瀏覽請使用 iOS 子母畫面（PiP）。
-  void _playMedia(String url) {
-    final title = _prettyFileName(url);
+  void _playMedia(String url, {String? title, Duration? startAt}) {
+    final resolvedTitle =
+        (title != null && title.trim().isNotEmpty)
+            ? title.trim()
+            : _prettyFileName(url);
     // 直接啟動內建全螢幕播放器；如需背景瀏覽請使用 iOS 子母畫面（PiP）。
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => VideoPlayerPage(path: url, title: title),
+        builder:
+            (_) => VideoPlayerPage(
+              path: url,
+              title: resolvedTitle,
+              startAt: startAt,
+            ),
       ),
     );
   }
@@ -4657,6 +5461,20 @@ class _BrowserPageState extends State<BrowserPage>
           ],
         ),
       ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
+      floatingActionButton: ValueListenableBuilder<List<PlayingVideoCandidate>>(
+        valueListenable: repo.playingVideos,
+        builder: (context, candidates, _) {
+          if (candidates.isEmpty) {
+            return const SizedBox.shrink();
+          }
+          return FloatingActionButton.extended(
+            onPressed: _showPlayingVideosSheet,
+            icon: const Icon(Icons.playlist_play),
+            label: Text(context.l10n('browser.playingNow.button')),
+          );
+        },
+      ),
       body: Column(
         children: [
           _toolbar(),
@@ -4734,6 +5552,27 @@ class _BrowserPageState extends State<BrowserPage>
                               return {'ok': true};
                             },
                           );
+                          c.addJavaScriptHandler(
+                            handlerName: 'videoLongPress',
+                            callback: (args) async {
+                              if (args.isEmpty) {
+                                return {'handled': false};
+                              }
+                              final raw = args.first;
+                              if (raw is! Map) {
+                                return {'handled': false};
+                              }
+                              try {
+                                final map = Map<String, dynamic>.from(
+                                  raw as Map,
+                                );
+                                await _handleVideoLongPress(map);
+                                return {'handled': true};
+                              } catch (_) {
+                                return {'handled': false};
+                              }
+                            },
+                          );
                           if (Platform.isIOS) {
                             c.addJavaScriptHandler(
                               handlerName: 'linkLongPress',
@@ -4767,6 +5606,7 @@ class _BrowserPageState extends State<BrowserPage>
                               },
                             );
                           }
+                          unawaited(_injectVideoDetector(c));
                         },
                         onLoadStart: (c, u) async {
                           _cachedYoutubeInfo = null;
@@ -4784,6 +5624,8 @@ class _BrowserPageState extends State<BrowserPage>
                           }
                           _iosLinkMenuBridgeReady = false;
                           await _injectIosLinkContextMenuBridge(c);
+                          await _injectVideoDetector(c);
+                          repo.clearPlayingVideos();
                           final tab = _tabs[tabIndex];
                           tab.isLoading.value = true;
                           tab.progress.value = 0.0;
@@ -4827,6 +5669,7 @@ class _BrowserPageState extends State<BrowserPage>
                         },
                         onLoadStop: (c, u) async {
                           await _injectIosLinkContextMenuBridge(c);
+                          await _injectVideoDetector(c);
                           // 注入嗅探腳本並同步開關
                           await c.evaluateJavascript(source: Sniffer.jsHook);
                           await c.evaluateJavascript(

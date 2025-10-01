@@ -1602,6 +1602,26 @@ final Map<String, Map<AppLanguage, String>> _translations = {
     AppLanguage.zhHans: '下载链接网址',
     AppLanguage.en: 'Download link URL',
   },
+  'browser.playingNow.button': {
+    AppLanguage.zhHant: '播放中',
+    AppLanguage.zhHans: '播放中',
+    AppLanguage.en: 'Now playing',
+  },
+  'browser.playingNow.sheetTitle': {
+    AppLanguage.zhHant: '播放中的影片',
+    AppLanguage.zhHans: '播放中的影片',
+    AppLanguage.en: 'Playing videos',
+  },
+  'browser.playingNow.bestGuess': {
+    AppLanguage.zhHant: '目前最可能',
+    AppLanguage.zhHans: '目前最可能',
+    AppLanguage.en: 'Best match',
+  },
+  'browser.playingNow.liveOrUnknown': {
+    AppLanguage.zhHant: '直播 / 未知',
+    AppLanguage.zhHans: '直播 / 未知',
+    AppLanguage.en: 'Live / Unknown',
+  },
   'browser.context.openInNewTab': {
     AppLanguage.zhHant: '在新分頁開啟',
     AppLanguage.zhHans: '在新分页打开',
