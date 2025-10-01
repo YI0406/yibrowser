@@ -24,7 +24,7 @@ import 'media.dart';
 import 'video_player_page.dart';
 import 'image_preview_page.dart';
 import 'package:share_plus/share_plus.dart';
-import 'dart:io' show Platform;
+
 import 'package:shared_preferences/shared_preferences.dart';
 import 'app_localizations.dart';
 import 'yt.dart';
@@ -2549,13 +2549,22 @@ const bindVideo = (video) => {
     final effectiveUrl = rawUrl.isNotEmpty ? rawUrl : pageUrl;
     final normalizedUrl = (rawUrl.isNotEmpty ? rawUrl : effectiveUrl).trim();
     final lowerUrl = normalizedUrl.toLowerCase();
+    final bool looksHttp =
+        lowerUrl.startsWith('http://') || lowerUrl.startsWith('https://');
+    final bool isBlobUrl = lowerUrl.startsWith('blob:');
+
+    final bool isYoutubeCandidate =
+        AppRepo.I.isYoutubeUrl(normalizedUrl) ||
+        AppRepo.I.isYoutubeUrl(effectiveUrl) ||
+        AppRepo.I.isYoutubeUrl(pageUrl) ||
+        AppRepo.I.isYoutubeUrl(repo.currentPageUrl.value ?? '');
     if (normalizedUrl.isEmpty) {
       return;
     }
-    if (!(lowerUrl.startsWith('http://') || lowerUrl.startsWith('https://'))) {
+    if (!looksHttp && !isYoutubeCandidate) {
       return;
     }
-    if (lowerUrl.startsWith('blob:')) {
+    if (isBlobUrl && !isYoutubeCandidate) {
       return;
     }
 
@@ -2584,11 +2593,6 @@ const bindVideo = (video) => {
               orElse: () => fallbackTitle,
             )
             ?.trim();
-    final bool isYoutubeCandidate =
-        AppRepo.I.isYoutubeUrl(normalizedUrl) ||
-        AppRepo.I.isYoutubeUrl(effectiveUrl) ||
-        AppRepo.I.isYoutubeUrl(pageUrl) ||
-        AppRepo.I.isYoutubeUrl(repo.currentPageUrl.value ?? '');
 
     String resolvedPageUrl = pageUrl;
     if (isYoutubeCandidate) {
@@ -2698,17 +2702,6 @@ const bindVideo = (video) => {
                         Text(host, style: theme.textTheme.bodySmall),
                       Text(resolution, style: theme.textTheme.bodySmall),
                       Text(timeline, style: theme.textTheme.bodySmall),
-                      if (isPrimary)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 4),
-                          child: Text(
-                            sheetContext.l10n('browser.playingNow.bestGuess'),
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: theme.colorScheme.primary,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
                     ],
                   ),
                 ),
@@ -2740,8 +2733,10 @@ const bindVideo = (video) => {
                               if (target.isNotEmpty) {
                                 await _showYoutubePreviewDialog(target);
                               }
-                            } else {
-                              await _confirmDownload(directUrl);
+                              await _confirmDownload(
+                                directUrl,
+                                skipPrompt: true,
+                              );
                             }
                           }
                           : null,
@@ -2863,7 +2858,9 @@ const bindVideo = (video) => {
         },
       );
     } finally {
-      _suppressLinkLongPress = false;
+      Future.delayed(const Duration(milliseconds: 250), () {
+        _suppressLinkLongPress = false;
+      });
     }
   }
 
@@ -5475,7 +5472,7 @@ const bindVideo = (video) => {
                         contextMenu: ContextMenu(
                           // ignore: deprecated_member_use
                           options: ContextMenuOptions(
-                            hideDefaultSystemContextMenuItems: false,
+                            hideDefaultSystemContextMenuItems: Platform.isIOS,
                           ),
                         ),
                         initialSettings: InAppWebViewSettings(
@@ -5491,6 +5488,7 @@ const bindVideo = (video) => {
                           supportMultipleWindows: true,
                           javaScriptCanOpenWindowsAutomatically: true,
                           allowsBackForwardNavigationGestures: true,
+                          allowsLinkPreview: false,
                           contentBlockers:
                               repo.adBlockEnabled.value
                                   ? _adBlockerRules

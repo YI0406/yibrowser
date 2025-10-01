@@ -1259,11 +1259,6 @@ final Map<String, Map<AppLanguage, String>> _translations = {
     AppLanguage.zhHans: '已关闭自动侦测媒体',
     AppLanguage.en: 'Media auto-detection disabled.',
   },
-  'settings.detectMediaLongPress.title': {
-    AppLanguage.zhHant: '偵測媒體長按',
-    AppLanguage.zhHans: '检测媒体长按',
-    AppLanguage.en: 'Detect media on long press',
-  },
   'settings.detectMediaLongPress.subtitle': {
     AppLanguage.zhHant: '自動將正在播放的影片加入「播放中」列表',
     AppLanguage.zhHans: '自动将正在播放的视频加入“播放中”列表',
