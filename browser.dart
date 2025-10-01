@@ -2711,6 +2711,15 @@ const bindVideo = (video) => {
           '[Debug][LinkMenu] Long press interactions restored after menu closed.',
         );
       }
+      // On iOS we rely on a JavaScript bridge to suppress the system context
+      // menu. When the Flutter side dismisses our custom sheet we need to make
+      // sure the bridge state is reset so that subsequent taps behave like a
+      // normal click again. In rare cases the automatic reset triggered by the
+      // web view does not fire which leaves the page stuck in a "suppressing"
+      // state – taps only emit touch events without the follow-up click. By
+      // explicitly restoring the bridge here we guarantee the reset happens
+      // even if the web view ignored the earlier request.
+      unawaited(_restoreIosLinkInteractions());
       if (releaseController != null) {
         try {
           await _resetAndReleaseWebViewAfterContextMenu(releaseController);
