@@ -1602,6 +1602,21 @@ final Map<String, Map<AppLanguage, String>> _translations = {
     AppLanguage.zhHans: '下载链接网址',
     AppLanguage.en: 'Download link URL',
   },
+  'browser.context.playVideo': {
+    AppLanguage.zhHant: '播放影片',
+    AppLanguage.zhHans: '播放影片',
+    AppLanguage.en: 'Play video',
+  },
+  'browser.context.downloadVideo': {
+    AppLanguage.zhHant: '下載影片',
+    AppLanguage.zhHans: '下载影片',
+    AppLanguage.en: 'Download video',
+  },
+  'browser.context.downloadImage': {
+    AppLanguage.zhHant: '下載圖片',
+    AppLanguage.zhHans: '下载图片',
+    AppLanguage.en: 'Download image',
+  },
   'browser.playingNow.button': {
     AppLanguage.zhHant: '播放中',
     AppLanguage.zhHans: '播放中',
