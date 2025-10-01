@@ -2813,6 +2813,13 @@ const bindVideo = (video) => {
                                 directUrl,
                                 skipPrompt: true,
                               );
+                            } else {
+                              if (directUrl.isNotEmpty) {
+                                await _confirmDownload(
+                                  directUrl,
+                                  skipPrompt: true,
+                                );
+                              }
                             }
                           }
                           : null,
@@ -2936,6 +2943,7 @@ const bindVideo = (video) => {
     } finally {
       Future.delayed(const Duration(milliseconds: 250), () {
         _suppressLinkLongPress = false;
+        unawaited(_restoreIosLinkInteractions());
       });
     }
   }
@@ -4367,6 +4375,28 @@ const bindVideo = (video) => {
   ) async {
     await _resetIosLinkContextMenuBridge(controller);
     await _releaseWebViewAfterContextMenu(controller);
+  }
+
+  Future<void> _restoreIosLinkInteractions() async {
+    if (!Platform.isIOS) {
+      return;
+    }
+    if (_tabs.isEmpty || _currentTabIndex < 0) {
+      return;
+    }
+    if (_currentTabIndex >= _tabs.length) {
+      return;
+    }
+    final controller = _tabs[_currentTabIndex].controller;
+    if (controller == null) {
+      return;
+    }
+    try {
+      await _resetAndReleaseWebViewAfterContextMenu(controller);
+    } catch (_) {}
+    try {
+      await _setIosLinkContextMenuBridgeEnabled(controller, true);
+    } catch (_) {}
   }
 
   bool _flagTruthy(dynamic value) {
