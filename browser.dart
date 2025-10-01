@@ -5486,7 +5486,7 @@ const bindVideo = (video) => {
                           javaScriptEnabled: true,
 
                           supportMultipleWindows: true,
-                          javaScriptCanOpenWindowsAutomatically: true,
+
                           allowsBackForwardNavigationGestures: true,
                           allowsLinkPreview: false,
                           contentBlockers:
