@@ -604,9 +604,9 @@ class _BrowserPageState extends State<BrowserPage>
   // Global key for the toolbar menu button so we can reopen the menu at the
   // same location after toggling quick actions.
   final GlobalKey _menuButtonKey = GlobalKey();
-  PersistentBottomSheetController<void>? _playingSheetController;
-  PersistentBottomSheetController<void>? _detectedSheetController;
-  PersistentBottomSheetController<void>? _downloadsSheetController;
+  PersistentBottomSheetController? _playingSheetController;
+  PersistentBottomSheetController? _detectedSheetController;
+  PersistentBottomSheetController? _downloadsSheetController;
 
   // List of open tabs. At least one tab is always present.
   final List<_TabData> _tabs = [];
@@ -2687,8 +2687,8 @@ class _BrowserPageState extends State<BrowserPage>
       return;
     }
 
-    PersistentBottomSheetController<void>? controller;
-    controller = scaffoldState.showBottomSheet<void>(
+    PersistentBottomSheetController? controller;
+    controller = scaffoldState.showBottomSheet(
       (sheetContext) {
         void closeSheet() => controller?.close();
         return FractionallySizedBox(
@@ -7042,8 +7042,8 @@ class _BrowserPageState extends State<BrowserPage>
       return;
     }
 
-    PersistentBottomSheetController<void>? controller;
-    controller = scaffoldState.showBottomSheet<void>(
+    PersistentBottomSheetController? controller;
+    controller = scaffoldState.showBottomSheet(
       (sheetContext) {
         void closeSheet() => controller?.close();
         return SafeArea(
@@ -7449,8 +7449,8 @@ class _BrowserPageState extends State<BrowserPage>
       return;
     }
 
-    PersistentBottomSheetController<void>? controller;
-    controller = scaffoldState.showBottomSheet<void>(
+    PersistentBottomSheetController? controller;
+    controller = scaffoldState.showBottomSheet(
       (sheetContext) {
         void closeSheet() => controller?.close();
         return SafeArea(
