@@ -121,6 +121,7 @@ enum _ToolbarMenuAction {
   clearBrowsingData,
   toggleAdBlocker,
   toggleBlockPopup,
+  toggleSniffer,
   blockExternalApp,
   addHome,
   goHome,
@@ -606,6 +607,12 @@ class _BrowserPageState extends State<BrowserPage>
   // Global key for the toolbar menu button so we can reopen the menu at the
   // same location after toggling quick actions.
   final GlobalKey _menuButtonKey = GlobalKey();
+  OverlayEntry? _toolbarMenuEntry;
+  final GlobalKey _toolbarMenuOverlayKey = GlobalKey();
+
+  OverlayEntry? _linkContextMenuEntry;
+  Completer<_LinkContextMenuAction?>? _linkContextMenuCompleter;
+  final GlobalKey _linkContextMenuKey = GlobalKey();
 
   // List of open tabs. At least one tab is always present.
   final List<_TabData> _tabs = [];
@@ -3022,13 +3029,15 @@ const bindVideo = (video) => {
     _LinkContextKind kind,
     bool isYoutube,
   ) {
-    return showGeneralDialog<_LinkContextMenuAction>(
-      context: context,
-      barrierDismissible: true,
-      barrierLabel: 'link-menu',
-      barrierColor: Colors.black45,
-      transitionDuration: const Duration(milliseconds: 150),
-      pageBuilder: (context, animation, secondaryAnimation) {
+    _dismissLinkContextMenu();
+    final overlay = Overlay.of(context);
+    if (overlay == null) return Future.value(null);
+
+    final completer = Completer<_LinkContextMenuAction?>();
+    _linkContextMenuCompleter = completer;
+
+    final entry = OverlayEntry(
+      builder: (context) {
         final theme = Theme.of(context);
         final colorScheme = theme.colorScheme;
         Widget buildItem(
@@ -3036,162 +3045,173 @@ const bindVideo = (video) => {
           String label,
           _LinkContextMenuAction action,
         ) {
-          return ListTile(
-            leading: Icon(icon, color: colorScheme.primary),
-            title: Text(label),
-            dense: true,
-            visualDensity: VisualDensity.compact,
-            onTap: () => Navigator.of(context).pop(action),
+          return InkWell(
+            onTap: () => _dismissLinkContextMenu(action),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(icon, color: colorScheme.primary),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(label, style: theme.textTheme.bodyMedium),
+                  ),
+                ],
+              ),
+            ),
           );
         }
 
+        final items = <Widget>[];
         void addEntry(
-          List<Widget> list,
           IconData icon,
           String label,
           _LinkContextMenuAction action,
         ) {
-          if (list.isNotEmpty) {
-            list.add(const Divider(height: 1));
+          if (items.isNotEmpty) {
+            items.add(const Divider(height: 1));
           }
-          list.add(buildItem(icon, label, action));
+          items.add(buildItem(icon, label, action));
         }
 
-        return SafeArea(
-          child: Align(
-            alignment: Alignment.centerRight,
-            child: Padding(
-              padding: const EdgeInsets.only(right: 12),
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.18),
-                      blurRadius: 18,
-                      offset: const Offset(0, 8),
-                    ),
-                  ],
-                ),
-                child: Material(
-                  color: colorScheme.surface,
-                  borderRadius: BorderRadius.circular(12),
-                  clipBehavior: Clip.antiAlias,
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 280),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 12,
-                          ),
-                          child: Text(
-                            url,
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: colorScheme.onSurface.withOpacity(0.75),
-                            ),
-                            maxLines: 3,
-                            overflow: TextOverflow.ellipsis,
-                          ),
+        addEntry(
+          Icons.copy,
+          context.l10n('browser.context.copyLink'),
+          _LinkContextMenuAction.copyLink,
+        );
+        switch (kind) {
+          case _LinkContextKind.image:
+            addEntry(
+              Icons.download,
+              context.l10n('browser.context.downloadImage'),
+              _LinkContextMenuAction.downloadImage,
+            );
+            break;
+          case _LinkContextKind.video:
+          case _LinkContextKind.audio:
+            if (!isYoutube) {
+              addEntry(
+                Icons.play_arrow,
+                context.l10n('browser.context.playVideo'),
+                _LinkContextMenuAction.playMedia,
+              );
+            }
+            addEntry(
+              Icons.download,
+              context.l10n('browser.context.downloadVideo'),
+              _LinkContextMenuAction.downloadMedia,
+            );
+            break;
+          case _LinkContextKind.generic:
+            addEntry(
+              Icons.download,
+              context.l10n('browser.context.downloadLink'),
+              _LinkContextMenuAction.downloadLink,
+            );
+            break;
+        }
+
+        addEntry(
+          Icons.open_in_new,
+          context.l10n('browser.context.openInNewTab'),
+          _LinkContextMenuAction.openInNewTab,
+        );
+        addEntry(
+          Icons.bookmark_add,
+          context.l10n('browser.context.addFavorite'),
+          _LinkContextMenuAction.addFavorite,
+        );
+        addEntry(
+          Icons.home,
+          context.l10n('browser.context.addHome'),
+          _LinkContextMenuAction.addHome,
+        );
+
+        return Stack(
+          children: [
+            Listener(
+              behavior: HitTestBehavior.translucent,
+              onPointerDown: (event) {
+                final box =
+                    _linkContextMenuKey.currentContext?.findRenderObject()
+                        as RenderBox?;
+                if (box == null) {
+                  _dismissLinkContextMenu();
+                  return;
+                }
+                final origin = box.localToGlobal(Offset.zero);
+                final rect = origin & box.size;
+                if (!rect.contains(event.position)) {
+                  _dismissLinkContextMenu();
+                }
+              },
+              child: const SizedBox.expand(),
+            ),
+            SafeArea(
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: Padding(
+                  padding: const EdgeInsets.only(right: 12),
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.18),
+                          blurRadius: 18,
+                          offset: const Offset(0, 8),
                         ),
-                        const Divider(height: 1),
-                        Builder(
-                          builder: (context) {
-                            final items = <Widget>[];
-                            addEntry(
-                              items,
-                              Icons.copy,
-                              context.l10n('browser.context.copyLink'),
-                              _LinkContextMenuAction.copyLink,
-                            );
-                            switch (kind) {
-                              case _LinkContextKind.image:
-                                addEntry(
-                                  items,
-                                  Icons.download,
-                                  context.l10n('browser.context.downloadImage'),
-                                  _LinkContextMenuAction.downloadImage,
-                                );
-                                break;
-                              case _LinkContextKind.video:
-                              case _LinkContextKind.audio:
-                                if (!isYoutube) {
-                                  addEntry(
-                                    items,
-                                    Icons.play_arrow,
-                                    context.l10n('browser.context.playVideo'),
-                                    _LinkContextMenuAction.playMedia,
-                                  );
-                                }
-                                addEntry(
-                                  items,
-                                  Icons.download,
-                                  context.l10n('browser.context.downloadVideo'),
-                                  _LinkContextMenuAction.downloadMedia,
-                                );
-                                break;
-                              case _LinkContextKind.generic:
-                                addEntry(
-                                  items,
-                                  Icons.download,
-                                  context.l10n('browser.context.downloadLink'),
-                                  _LinkContextMenuAction.downloadLink,
-                                );
-                                break;
-                            }
-                            addEntry(
-                              items,
-                              Icons.open_in_new,
-                              context.l10n('browser.context.openInNewTab'),
-                              _LinkContextMenuAction.openInNewTab,
-                            );
-                            addEntry(
-                              items,
-                              Icons.bookmark_add,
-                              context.l10n('browser.context.addFavorite'),
-                              _LinkContextMenuAction.addFavorite,
-                            );
-                            addEntry(
-                              items,
-                              Icons.home,
-                              context.l10n('browser.context.addHome'),
-                              _LinkContextMenuAction.addHome,
-                            );
-                            return Column(
+                      ],
+                    ),
+                    child: Material(
+                      key: _linkContextMenuKey,
+                      color: colorScheme.surface,
+                      borderRadius: BorderRadius.circular(12),
+                      clipBehavior: Clip.antiAlias,
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 280),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 12,
+                              ),
+                              child: Text(
+                                url,
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: colorScheme.onSurface.withOpacity(
+                                    0.75,
+                                  ),
+                                ),
+                                maxLines: 3,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            const Divider(height: 1),
+                            Column(
                               mainAxisSize: MainAxisSize.min,
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: items,
-                            );
-                          },
+                            ),
+                          ],
                         ),
-                      ],
+                      ),
                     ),
                   ),
                 ),
               ),
             ),
-          ),
-        );
-      },
-      transitionBuilder: (context, animation, secondaryAnimation, child) {
-        final curved = CurvedAnimation(
-          parent: animation,
-          curve: Curves.easeOutCubic,
-        );
-        return FadeTransition(
-          opacity: curved,
-          child: SlideTransition(
-            position: Tween<Offset>(
-              begin: const Offset(0.15, 0),
-              end: Offset.zero,
-            ).animate(curved),
-            child: child,
-          ),
+          ],
         );
       },
     );
+    _linkContextMenuEntry = entry;
+    overlay.insert(entry);
+
+    return completer.future;
   }
 
   Future<void> _openLinkInNewTab(
@@ -3996,6 +4016,7 @@ const bindVideo = (video) => {
         ),
       ),
     );
+    _toolbarMenuEntry?.markNeedsBuild();
     setState(() {});
   }
 
@@ -5346,6 +5367,8 @@ const bindVideo = (video) => {
     repo.longPressDetectionEnabled.removeListener(_onLongPressDetectionChanged);
     _urlFocus.dispose();
     _removeYtFetchBarrier();
+    _dismissToolbarMenu();
+    _dismissLinkContextMenu();
     super.dispose();
   }
 
@@ -6370,7 +6393,7 @@ const bindVideo = (video) => {
           tooltip: context.l10n('browser.toolbar.menu'),
           padding: EdgeInsets.zero,
           constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
-          onPressed: _showToolbarMenu,
+          onPressed: _toggleToolbarMenu,
           icon: Icon(
             Icons.more_horiz,
             color: Theme.of(context).colorScheme.onSurface,
@@ -6380,7 +6403,36 @@ const bindVideo = (video) => {
     );
   }
 
-  Future<void> _showToolbarMenu() async {
+  void _toggleToolbarMenu() {
+    if (_toolbarMenuEntry != null) {
+      _dismissToolbarMenu();
+    } else {
+      _showToolbarMenu();
+    }
+  }
+
+  void _dismissToolbarMenu() {
+    _toolbarMenuEntry?.remove();
+    _toolbarMenuEntry = null;
+  }
+
+  void _dismissLinkContextMenu([_LinkContextMenuAction? result]) {
+    final entry = _linkContextMenuEntry;
+    if (entry != null) {
+      entry.remove();
+      _linkContextMenuEntry = null;
+    }
+    final completer = _linkContextMenuCompleter;
+    if (completer != null && !completer.isCompleted) {
+      completer.complete(result);
+    }
+    _linkContextMenuCompleter = null;
+  }
+
+  void _showToolbarMenu() {
+    if (_toolbarMenuEntry != null) {
+      return;
+    }
     final keyContext = _menuButtonKey.currentContext;
     if (keyContext == null) return;
     final renderObject = keyContext.findRenderObject();
@@ -6390,33 +6442,6 @@ const bindVideo = (video) => {
     final overlayBox = overlay.context.findRenderObject();
     if (overlayBox is! RenderBox) return;
 
-    final repo = AppRepo.I;
-
-    final favoriteCount = repo.favorites.value.length;
-    final historyCount = repo.history.value.length;
-    final blockPopupOn = repo.blockPopup.value;
-    final adBlockOn = repo.adBlockEnabled.value;
-    final selectedProfiles = repo.adBlockFilterSets.value;
-
-    PopupMenuItem<_ToolbarMenuAction> buildItem(
-      _ToolbarMenuAction action,
-      IconData icon,
-      String label, {
-      Color? iconColor,
-    }) {
-      return PopupMenuItem<_ToolbarMenuAction>(
-        value: action,
-        child: Row(
-          children: [
-            Icon(icon, color: iconColor),
-            const SizedBox(width: 12),
-            Expanded(child: Text(label)),
-          ],
-        ),
-      );
-    }
-
-    final colorScheme = Theme.of(context).colorScheme;
     final topLeft = renderObject.localToGlobal(
       Offset.zero,
       ancestor: overlayBox,
@@ -6425,93 +6450,245 @@ const bindVideo = (video) => {
       renderObject.size.bottomRight(Offset.zero),
       ancestor: overlayBox,
     );
-    final position = RelativeRect.fromRect(
-      Rect.fromPoints(topLeft, bottomRight),
-      Offset.zero & overlayBox.size,
-    ).shift(const Offset(0, 8));
-
-    final entries = <PopupMenuEntry<_ToolbarMenuAction>>[
-      buildItem(
-        _ToolbarMenuAction.openFavorites,
-        Icons.favorite,
-        favoriteCount > 0
-            ? context.l10n(
-              'browser.menu.favoritesWithCount',
-              params: {'count': favoriteCount.toString()},
-            )
-            : context.l10n('browser.menu.favorites'),
-        iconColor: favoriteCount > 0 ? Colors.redAccent : null,
-      ),
-      buildItem(
-        _ToolbarMenuAction.openHistory,
-        Icons.history,
-        historyCount > 0
-            ? context.l10n(
-              'browser.menu.historyWithCount',
-              params: {'count': historyCount.toString()},
-            )
-            : context.l10n('browser.menu.history'),
-        iconColor: historyCount > 0 ? colorScheme.primary : null,
-      ),
-      buildItem(
-        _ToolbarMenuAction.clearBrowsingData,
-        Icons.cleaning_services,
-        context.l10n('browser.menu.clearBrowsingData'),
-        iconColor: colorScheme.error,
-      ),
-      const PopupMenuDivider(),
-      buildItem(
-        _ToolbarMenuAction.toggleAdBlocker,
-        adBlockOn ? Icons.toggle_on : Icons.toggle_off,
-
-        _adBlockerMenuLabel(adBlockOn, selectedProfiles),
-        iconColor: adBlockOn ? colorScheme.primary : null,
-      ),
-      buildItem(
-        _ToolbarMenuAction.toggleBlockPopup,
-        blockPopupOn ? Icons.toggle_on : Icons.toggle_off,
-        context.l10n('browser.menu.blockPopups'),
-        iconColor: blockPopupOn ? Colors.redAccent : null,
-      ),
-      buildItem(
-        _ToolbarMenuAction.blockExternalApp,
-        _blockExternalApp ? Icons.toggle_on : Icons.toggle_off,
-        context.l10n('browser.menu.blockExternalApps'),
-        iconColor:
-            _blockExternalApp ? Theme.of(context).colorScheme.primary : null,
-      ),
-      const PopupMenuDivider(),
-      buildItem(
-        _ToolbarMenuAction.addHome,
-        Icons.add,
-        context.l10n('browser.context.addHome'),
-      ),
-      buildItem(
-        _ToolbarMenuAction.goHome,
-        Icons.home,
-        context.l10n('browser.menu.home'),
-      ),
-      buildItem(
-        _ToolbarMenuAction.help,
-        Icons.help_outline,
-        context.l10n('browser.menu.help'),
-      ),
-    ];
-
-    final selected = await showMenu<_ToolbarMenuAction>(
-      context: context,
-      position: position,
-      items: entries,
+    final double top = bottomRight.dy + 8;
+    final double right = overlayBox.size.width - bottomRight.dx;
+    final double availableHeight = math.max(
+      200,
+      overlayBox.size.height - top - 16,
     );
-    if (!mounted || selected == null) {
-      return;
+
+    _toolbarMenuEntry = OverlayEntry(
+      builder: (context) {
+        final colorScheme = Theme.of(context).colorScheme;
+        return Stack(
+          children: [
+            Listener(
+              behavior: HitTestBehavior.translucent,
+              onPointerDown: (event) {
+                final box =
+                    _toolbarMenuOverlayKey.currentContext?.findRenderObject()
+                        as RenderBox?;
+                if (box == null) {
+                  _dismissToolbarMenu();
+                  return;
+                }
+                final origin = box.localToGlobal(Offset.zero);
+                final rect = origin & box.size;
+                if (!rect.contains(event.position)) {
+                  _dismissToolbarMenu();
+                }
+              },
+              child: const SizedBox.expand(),
+            ),
+            Positioned(
+              top: top,
+              right: right,
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  minWidth: 220,
+                  maxWidth: 320,
+                  maxHeight: availableHeight,
+                ),
+                child: Material(
+                  key: _toolbarMenuOverlayKey,
+                  color: colorScheme.surface,
+                  elevation: 12,
+                  borderRadius: BorderRadius.circular(12),
+                  clipBehavior: Clip.antiAlias,
+                  child: _buildToolbarMenuList(context),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+
+    overlay.insert(_toolbarMenuEntry!);
+  }
+
+  Widget _buildToolbarMenuList(BuildContext context) {
+    final repo = AppRepo.I;
+    final colorScheme = Theme.of(context).colorScheme;
+    Widget divider() => const Divider(height: 1);
+
+    return IntrinsicWidth(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            ValueListenableBuilder<List<String>>(
+              valueListenable: repo.favorites,
+              builder: (context, favorites, _) {
+                final count = favorites.length;
+                final label =
+                    count > 0
+                        ? context.l10n(
+                          'browser.menu.favoritesWithCount',
+                          params: {'count': count.toString()},
+                        )
+                        : context.l10n('browser.menu.favorites');
+                return _toolbarMenuEntryTile(
+                  context,
+                  icon: Icons.favorite,
+                  iconColor: count > 0 ? Colors.redAccent : null,
+                  label: label,
+                  action: _ToolbarMenuAction.openFavorites,
+                );
+              },
+            ),
+            ValueListenableBuilder<List<String>>(
+              valueListenable: repo.history,
+              builder: (context, history, _) {
+                final count = history.length;
+                final label =
+                    count > 0
+                        ? context.l10n(
+                          'browser.menu.historyWithCount',
+                          params: {'count': count.toString()},
+                        )
+                        : context.l10n('browser.menu.history');
+                return _toolbarMenuEntryTile(
+                  context,
+                  icon: Icons.history,
+                  iconColor: count > 0 ? colorScheme.primary : null,
+                  label: label,
+                  action: _ToolbarMenuAction.openHistory,
+                );
+              },
+            ),
+            _toolbarMenuEntryTile(
+              context,
+              icon: Icons.cleaning_services,
+              iconColor: colorScheme.error,
+              label: context.l10n('browser.menu.clearBrowsingData'),
+              action: _ToolbarMenuAction.clearBrowsingData,
+            ),
+            divider(),
+            ValueListenableBuilder<bool>(
+              valueListenable: repo.adBlockEnabled,
+              builder: (context, adBlockOn, _) {
+                return ValueListenableBuilder<Set<String>>(
+                  valueListenable: repo.adBlockFilterSets,
+                  builder: (context, profiles, __) {
+                    return _toolbarMenuEntryTile(
+                      context,
+                      icon: adBlockOn ? Icons.toggle_on : Icons.toggle_off,
+                      iconColor: adBlockOn ? colorScheme.primary : null,
+                      label: _adBlockerMenuLabel(adBlockOn, profiles),
+                      action: _ToolbarMenuAction.toggleAdBlocker,
+                    );
+                  },
+                );
+              },
+            ),
+            ValueListenableBuilder<bool>(
+              valueListenable: repo.blockPopup,
+              builder: (context, blockPopupOn, _) {
+                return _toolbarMenuEntryTile(
+                  context,
+                  icon: blockPopupOn ? Icons.toggle_on : Icons.toggle_off,
+                  iconColor: blockPopupOn ? Colors.redAccent : null,
+                  label: context.l10n('browser.menu.blockPopups'),
+                  action: _ToolbarMenuAction.toggleBlockPopup,
+                );
+              },
+            ),
+            ValueListenableBuilder<bool>(
+              valueListenable: AppRepo.I.premiumUnlocked,
+              builder: (context, premium, _) {
+                return ValueListenableBuilder<bool>(
+                  valueListenable: repo.snifferEnabled,
+                  builder: (context, enabled, __) {
+                    final active = premium && enabled;
+                    final label =
+                        premium
+                            ? context.l10n('browser.menu.mediaDetection')
+                            : context.l10n(
+                              'browser.sniffer.tooltip.premiumLocked',
+                            );
+                    return _toolbarMenuEntryTile(
+                      context,
+                      icon: active ? Icons.toggle_on : Icons.toggle_off,
+                      iconColor: active ? colorScheme.primary : null,
+                      label: label,
+                      action: _ToolbarMenuAction.toggleSniffer,
+                    );
+                  },
+                );
+              },
+            ),
+            _toolbarMenuEntryTile(
+              context,
+              icon: _blockExternalApp ? Icons.toggle_on : Icons.toggle_off,
+              iconColor: _blockExternalApp ? colorScheme.primary : null,
+              label: context.l10n('browser.menu.blockExternalApps'),
+              action: _ToolbarMenuAction.blockExternalApp,
+            ),
+            divider(),
+            _toolbarMenuEntryTile(
+              context,
+              icon: Icons.add,
+              label: context.l10n('browser.context.addHome'),
+              action: _ToolbarMenuAction.addHome,
+            ),
+            _toolbarMenuEntryTile(
+              context,
+              icon: Icons.home,
+              label: context.l10n('browser.menu.home'),
+              action: _ToolbarMenuAction.goHome,
+            ),
+            _toolbarMenuEntryTile(
+              context,
+              icon: Icons.help_outline,
+              label: context.l10n('browser.menu.help'),
+              action: _ToolbarMenuAction.help,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _toolbarMenuEntryTile(
+    BuildContext context, {
+    required IconData icon,
+    Color? iconColor,
+    required String label,
+    required _ToolbarMenuAction action,
+  }) {
+    return InkWell(
+      onTap: () {
+        unawaited(_handleToolbarMenuSelection(action));
+      },
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Icon(icon, color: iconColor ?? Theme.of(context).iconTheme.color),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(label, style: Theme.of(context).textTheme.bodyMedium),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _handleToolbarMenuSelection(_ToolbarMenuAction action) async {
+    final keepOpen =
+        action == _ToolbarMenuAction.toggleBlockPopup ||
+        action == _ToolbarMenuAction.blockExternalApp;
+    if (!keepOpen) {
+      _dismissToolbarMenu();
     }
 
-    final keepOpen =
-        selected == _ToolbarMenuAction.toggleBlockPopup ||
-        selected == _ToolbarMenuAction.blockExternalApp;
-
-    switch (selected) {
+    switch (action) {
       case _ToolbarMenuAction.openFavorites:
         await _openFavoritesPage();
         break;
@@ -6526,6 +6703,9 @@ const bindVideo = (video) => {
         break;
       case _ToolbarMenuAction.toggleBlockPopup:
         _toggleBlockPopupSetting();
+        break;
+      case _ToolbarMenuAction.toggleSniffer:
+        await _toggleSniffer();
         break;
       case _ToolbarMenuAction.blockExternalApp:
         _toggleBlockExternalAppSetting();
@@ -6543,11 +6723,8 @@ const bindVideo = (video) => {
         break;
     }
 
-    if (keepOpen && mounted) {
-      await Future.delayed(const Duration(milliseconds: 120));
-      if (mounted) {
-        _showToolbarMenu();
-      }
+    if (keepOpen) {
+      _toolbarMenuEntry?.markNeedsBuild();
     }
   }
 
