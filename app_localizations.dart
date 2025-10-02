@@ -1647,6 +1647,12 @@ final Map<String, Map<AppLanguage, String>> _translations = {
     AppLanguage.zhHans: '播放',
     AppLanguage.en: 'Play',
   },
+  'browser.menu.mediaDetection': {
+    AppLanguage.zhHant: '偵測媒體',
+    AppLanguage.zhHans: '侦测媒体',
+    AppLanguage.en: 'Media detection',
+  },
+
   'browser.context.addFavorite': {
     AppLanguage.zhHant: '收藏網址',
     AppLanguage.zhHans: '收藏网址',
