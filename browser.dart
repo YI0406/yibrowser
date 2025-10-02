@@ -604,6 +604,9 @@ class _BrowserPageState extends State<BrowserPage>
   // Global key for the toolbar menu button so we can reopen the menu at the
   // same location after toggling quick actions.
   final GlobalKey _menuButtonKey = GlobalKey();
+  PersistentBottomSheetController<void>? _playingSheetController;
+  PersistentBottomSheetController<void>? _detectedSheetController;
+  PersistentBottomSheetController<void>? _downloadsSheetController;
 
   // List of open tabs. At least one tab is always present.
   final List<_TabData> _tabs = [];
@@ -2456,6 +2459,7 @@ class _BrowserPageState extends State<BrowserPage>
     BuildContext sheetContext,
     PlayingVideoCandidate candidate, {
     required bool isPrimary,
+    required VoidCallback onClose,
   }) {
     final theme = Theme.of(sheetContext);
     final preview = _buildPlayingVideoPreview(candidate);
@@ -2504,7 +2508,7 @@ class _BrowserPageState extends State<BrowserPage>
             ? sheetContext.l10n('browser.playingNow.action.stream')
             : sheetContext.l10n('common.download');
     final canPlayInApp = hasDirectUrl;
-    final navigator = Navigator.of(sheetContext);
+
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: Padding(
@@ -2559,7 +2563,7 @@ class _BrowserPageState extends State<BrowserPage>
                   onPressed:
                       canPlayInApp
                           ? () {
-                            navigator.pop();
+                            onClose();
                             Duration? startAt;
                             final position = candidate.positionSeconds;
                             if (position != null &&
@@ -2586,7 +2590,7 @@ class _BrowserPageState extends State<BrowserPage>
                   onPressed:
                       canDownload
                           ? () async {
-                            navigator.pop();
+                            onClose();
                             if (isYoutube) {
                               final target =
                                   youtubeSource.isNotEmpty
@@ -2610,7 +2614,7 @@ class _BrowserPageState extends State<BrowserPage>
                   onPressed:
                       copyUrl.isNotEmpty
                           ? () async {
-                            navigator.pop();
+                            onClose();
                             await Clipboard.setData(
                               ClipboardData(text: copyUrl),
                             );
@@ -2628,7 +2632,7 @@ class _BrowserPageState extends State<BrowserPage>
                   onPressed:
                       openInNewTabUrl.isNotEmpty
                           ? () async {
-                            navigator.pop();
+                            onClose();
                             await _openLinkInNewTab(openInNewTabUrl);
                           }
                           : null,
@@ -2639,7 +2643,7 @@ class _BrowserPageState extends State<BrowserPage>
                   onPressed:
                       canAddHome
                           ? () async {
-                            navigator.pop();
+                            onClose();
                             await _showAddToHomeDialog(
                               initialUrl: homeCandidateUrl,
                               initialName:
@@ -2662,6 +2666,10 @@ class _BrowserPageState extends State<BrowserPage>
     if (repo.playingVideos.value.isEmpty) {
       return;
     }
+    if (_playingSheetController != null) {
+      _playingSheetController!.close();
+      return;
+    }
     debugPrint(
       '[Debug][NowPlaying] Opening playing videos sheet with '
       '${repo.playingVideos.value.length} candidate(s)',
@@ -2673,61 +2681,82 @@ class _BrowserPageState extends State<BrowserPage>
         '[Debug][NowPlaying] Long press interactions suppressed while sheet is visible.',
       );
     }
-    try {
-      await showModalBottomSheet(
-        context: context,
-        isScrollControlled: true,
-        builder: (sheetContext) {
-          return FractionallySizedBox(
-            heightFactor: 0.75,
-            child: SafeArea(
-              child: Column(
-                children: [
-                  ListTile(
-                    title: Text(
-                      sheetContext.l10n('browser.playingNow.sheetTitle'),
-                    ),
-                    trailing: IconButton(
-                      icon: const Icon(Icons.close),
-                      onPressed: () => Navigator.of(sheetContext).pop(),
-                    ),
+    final scaffoldState = _scaffoldKey.currentState;
+    if (scaffoldState == null) {
+      _suppressLinkLongPress = false;
+      return;
+    }
+
+    PersistentBottomSheetController<void>? controller;
+    controller = scaffoldState.showBottomSheet<void>(
+      (sheetContext) {
+        void closeSheet() => controller?.close();
+        return FractionallySizedBox(
+          heightFactor: 0.75,
+          child: SafeArea(
+            child: Column(
+              children: [
+                ListTile(
+                  title: Text(
+                    sheetContext.l10n('browser.playingNow.sheetTitle'),
                   ),
-                  const Divider(height: 1),
-                  Expanded(
-                    child: ValueListenableBuilder<List<PlayingVideoCandidate>>(
-                      valueListenable: repo.playingVideos,
-                      builder: (context, candidates, _) {
-                        if (candidates.isEmpty) {
-                          return Center(
-                            child: Text(
-                              sheetContext.l10n(
-                                'browser.mediaDetection.emptyState',
-                              ),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: closeSheet,
+                  ),
+                ),
+                const Divider(height: 1),
+                Expanded(
+                  child: ValueListenableBuilder<List<PlayingVideoCandidate>>(
+                    valueListenable: repo.playingVideos,
+                    builder: (context, candidates, _) {
+                      if (candidates.isEmpty) {
+                        return Center(
+                          child: Text(
+                            sheetContext.l10n(
+                              'browser.mediaDetection.emptyState',
                             ),
-                          );
-                        }
-                        return ListView.builder(
-                          itemCount: candidates.length,
-                          itemBuilder: (context, index) {
-                            final candidate = candidates[index];
-                            return _buildPlayingVideoCard(
-                              sheetContext,
-                              candidate,
-                              isPrimary: index == 0,
-                            );
-                          },
+                          ),
                         );
-                      },
-                    ),
+                      }
+                      return ListView.builder(
+                        itemCount: candidates.length,
+                        itemBuilder: (context, index) {
+                          final candidate = candidates[index];
+                          return _buildPlayingVideoCard(
+                            sheetContext,
+                            candidate,
+                            isPrimary: index == 0,
+                            onClose: closeSheet,
+                          );
+                        },
+                      );
+                    },
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
-          );
-        },
-      );
+          ),
+        );
+      },
+      backgroundColor:
+          Theme.of(context).bottomSheetTheme.backgroundColor ??
+          Theme.of(context).colorScheme.surface,
+    );
+    if (controller == null) {
+      _suppressLinkLongPress = false;
+      return;
+    }
+    _playingSheetController = controller;
+    try {
+      await controller.closed;
     } finally {
+      if (_playingSheetController == controller) {
+        _playingSheetController = null;
+      }
+      if (!mounted) return;
       Future.delayed(const Duration(milliseconds: 250), () {
+        if (!mounted) return;
         _suppressLinkLongPress = false;
         if (kDebugMode) {
           debugPrint(
@@ -7003,323 +7032,342 @@ class _BrowserPageState extends State<BrowserPage>
       return;
     }
 
-    try {
-      await showModalBottomSheet(
-        context: context,
-        builder: (_) {
-          return SafeArea(
-            child: ValueListenableBuilder(
-              valueListenable: repo.hits,
-              builder: (_, list, __) {
-                if (list.isEmpty) {
-                  return Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Text(
-                      context.l10n('browser.mediaDetection.emptyState'),
-                    ),
-                  );
-                }
-                return Column(
-                  children: [
-                    ListTile(
-                      title: Text(
-                        context.l10n(
-                          'browser.mediaDetection.titleWithCount',
-                          params: {'count': list.length.toString()},
-                        ),
+    if (_detectedSheetController != null) {
+      _detectedSheetController!.close();
+      return;
+    }
+
+    final scaffoldState = _scaffoldKey.currentState;
+    if (scaffoldState == null) {
+      return;
+    }
+
+    PersistentBottomSheetController<void>? controller;
+    controller = scaffoldState.showBottomSheet<void>(
+      (sheetContext) {
+        void closeSheet() => controller?.close();
+        return SafeArea(
+          child: ValueListenableBuilder(
+            valueListenable: repo.hits,
+            builder: (_, list, __) {
+              if (list.isEmpty) {
+                return Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Text(
+                    context.l10n('browser.mediaDetection.emptyState'),
+                  ),
+                );
+              }
+              return Column(
+                children: [
+                  ListTile(
+                    title: Text(
+                      context.l10n(
+                        'browser.mediaDetection.titleWithCount',
+                        params: {'count': list.length.toString()},
                       ),
-                      trailing: TextButton.icon(
-                        icon: const Icon(Icons.delete_sweep),
-                        label: Text(context.l10n('common.clearAll')),
-                        onPressed: () {
-                          repo.hits.value = [];
-                          Navigator.pop(context);
-                          if (mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                duration: const Duration(seconds: 1),
-                                content: Text(
-                                  context.l10n('browser.snack.mediaCleared'),
-                                ),
+                    ),
+                    trailing: TextButton.icon(
+                      icon: const Icon(Icons.delete_sweep),
+                      label: Text(context.l10n('common.clearAll')),
+                      onPressed: () {
+                        repo.hits.value = [];
+                        closeSheet();
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              duration: const Duration(seconds: 1),
+                              content: Text(
+                                context.l10n('browser.snack.mediaCleared'),
                               ),
-                            );
-                          }
-                        },
-                      ),
+                            ),
+                          );
+                        }
+                      },
                     ),
-                    const Divider(height: 1),
-                    Expanded(
-                      child: ListView.separated(
-                        itemCount: list.length,
-                        separatorBuilder: (_, __) => const Divider(height: 1),
-                        itemBuilder: (_, i) {
-                          final h = list[i];
-                          return ListTile(
-                            leading: SizedBox(
-                              width: 56,
-                              height: 56,
-                              child: () {
-                                if (h.type == 'image') {
-                                  return ClipRRect(
-                                    borderRadius: BorderRadius.circular(6),
-                                    child: Image.network(
-                                      h.url,
-                                      fit: BoxFit.cover,
-                                      errorBuilder:
-                                          (_, __, ___) =>
-                                              const Icon(Icons.image),
-                                    ),
-                                  );
-                                } else if (h.type == 'video') {
-                                  return FutureBuilder<String?>(
-                                    future: _ensureVideoThumb(h.url),
-                                    builder: (_, snap) {
-                                      Widget base;
-                                      if (snap.connectionState ==
-                                          ConnectionState.waiting) {
-                                        base = Container(
-                                          decoration: BoxDecoration(
-                                            color: Colors.black12,
-                                            borderRadius: BorderRadius.circular(
-                                              6,
-                                            ),
-                                          ),
-                                          alignment: Alignment.center,
-                                          child: const SizedBox(
-                                            width: 18,
-                                            height: 18,
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                            ),
-                                          ),
-                                        );
-                                      } else if (snap.hasData &&
-                                          snap.data != null) {
-                                        base = ClipRRect(
+                  ),
+                  const Divider(height: 1),
+                  Expanded(
+                    child: ListView.separated(
+                      itemCount: list.length,
+                      separatorBuilder: (_, __) => const Divider(height: 1),
+                      itemBuilder: (_, i) {
+                        final h = list[i];
+                        return ListTile(
+                          leading: SizedBox(
+                            width: 56,
+                            height: 56,
+                            child: () {
+                              if (h.type == 'image') {
+                                return ClipRRect(
+                                  borderRadius: BorderRadius.circular(6),
+                                  child: Image.network(
+                                    h.url,
+                                    fit: BoxFit.cover,
+                                    errorBuilder:
+                                        (_, __, ___) => const Icon(Icons.image),
+                                  ),
+                                );
+                              } else if (h.type == 'video') {
+                                return FutureBuilder<String?>(
+                                  future: _ensureVideoThumb(h.url),
+                                  builder: (_, snap) {
+                                    Widget base;
+                                    if (snap.connectionState ==
+                                        ConnectionState.waiting) {
+                                      base = Container(
+                                        decoration: BoxDecoration(
+                                          color: Colors.black12,
                                           borderRadius: BorderRadius.circular(
                                             6,
                                           ),
-                                          child: Image.file(
-                                            File(snap.data!),
-                                            fit: BoxFit.cover,
+                                        ),
+                                        alignment: Alignment.center,
+                                        child: const SizedBox(
+                                          width: 18,
+                                          height: 18,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
                                           ),
-                                        );
-                                      } else {
-                                        base = Container(
-                                          decoration: BoxDecoration(
-                                            color: Colors.black12,
-                                            borderRadius: BorderRadius.circular(
-                                              6,
-                                            ),
-                                          ),
-                                          alignment: Alignment.center,
-                                          child: const Icon(
-                                            Icons.ondemand_video,
-                                          ),
-                                        );
-                                      }
-                                      // overlay duration if available
-                                      return Stack(
-                                        children: [
-                                          Positioned.fill(child: base),
-                                          if (h.durationSeconds != null)
-                                            Positioned(
-                                              right: 4,
-                                              bottom: 4,
-                                              child: Container(
-                                                padding:
-                                                    const EdgeInsets.symmetric(
-                                                      horizontal: 4,
-                                                      vertical: 2,
-                                                    ),
-                                                decoration: BoxDecoration(
-                                                  color: Colors.black
-                                                      .withOpacity(0.6),
-                                                  borderRadius:
-                                                      BorderRadius.circular(4),
-                                                ),
-                                                child: Text(
-                                                  _fmtDur(h.durationSeconds!),
-                                                  style: const TextStyle(
-                                                    fontSize: 10,
-                                                    color: Colors.white,
-                                                  ),
-                                                ),
-                                              ),
-                                            ),
-                                          if (h.durationSeconds == null &&
-                                              snap.connectionState ==
-                                                  ConnectionState.waiting)
-                                            Positioned(
-                                              right: 4,
-                                              bottom: 4,
-                                              child: Container(
-                                                padding:
-                                                    const EdgeInsets.symmetric(
-                                                      horizontal: 4,
-                                                      vertical: 2,
-                                                    ),
-                                                decoration: BoxDecoration(
-                                                  color: Colors.black
-                                                      .withOpacity(0.4),
-                                                  borderRadius:
-                                                      BorderRadius.circular(4),
-                                                ),
-                                                child: Text(
-                                                  context.l10n(
-                                                    'browser.media.statusResolving',
-                                                  ),
-                                                  style: const TextStyle(
-                                                    fontSize: 10,
-                                                    color: Colors.white,
-                                                  ),
-                                                ),
-                                              ),
-                                            ),
-                                        ],
+                                        ),
                                       );
-                                    },
-                                  );
-                                } else {
-                                  return Container(
-                                    decoration: BoxDecoration(
-                                      borderRadius: BorderRadius.circular(6),
-                                      color: Colors.black12,
-                                    ),
-                                    alignment: Alignment.center,
-                                    child: const Icon(Icons.audiotrack),
-                                  );
-                                }
-                              }(),
-                            ),
-                            title: Text(
-                              _prettyFileName(h.url),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            subtitle: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 6,
-                                        vertical: 2,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: (h.type == 'image'
-                                                ? Colors.blueGrey
-                                                : (h.type == 'audio'
-                                                    ? Colors.teal
-                                                    : Colors.deepPurple))
-                                            .withOpacity(0.15),
+                                    } else if (snap.hasData &&
+                                        snap.data != null) {
+                                      base = ClipRRect(
                                         borderRadius: BorderRadius.circular(6),
-                                      ),
+                                        child: Image.file(
+                                          File(snap.data!),
+                                          fit: BoxFit.cover,
+                                        ),
+                                      );
+                                    } else {
+                                      base = Container(
+                                        decoration: BoxDecoration(
+                                          color: Colors.black12,
+                                          borderRadius: BorderRadius.circular(
+                                            6,
+                                          ),
+                                        ),
+                                        alignment: Alignment.center,
+                                        child: const Icon(Icons.ondemand_video),
+                                      );
+                                    }
+                                    // overlay duration if available
+                                    return Stack(
+                                      children: [
+                                        Positioned.fill(child: base),
+                                        if (h.durationSeconds != null)
+                                          Positioned(
+                                            right: 4,
+                                            bottom: 4,
+                                            child: Container(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                    horizontal: 4,
+                                                    vertical: 2,
+                                                  ),
+                                              decoration: BoxDecoration(
+                                                color: Colors.black.withOpacity(
+                                                  0.6,
+                                                ),
+                                                borderRadius:
+                                                    BorderRadius.circular(4),
+                                              ),
+                                              child: Text(
+                                                _fmtDur(h.durationSeconds!),
+                                                style: const TextStyle(
+                                                  fontSize: 10,
+                                                  color: Colors.white,
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        if (h.durationSeconds == null &&
+                                            snap.connectionState ==
+                                                ConnectionState.waiting)
+                                          Positioned(
+                                            right: 4,
+                                            bottom: 4,
+                                            child: Container(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                    horizontal: 4,
+                                                    vertical: 2,
+                                                  ),
+                                              decoration: BoxDecoration(
+                                                color: Colors.black.withOpacity(
+                                                  0.4,
+                                                ),
+                                                borderRadius:
+                                                    BorderRadius.circular(4),
+                                              ),
+                                              child: Text(
+                                                context.l10n(
+                                                  'browser.media.statusResolving',
+                                                ),
+                                                style: const TextStyle(
+                                                  fontSize: 10,
+                                                  color: Colors.white,
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                      ],
+                                    );
+                                  },
+                                );
+                              } else {
+                                return Container(
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(6),
+                                    color: Colors.black12,
+                                  ),
+                                  alignment: Alignment.center,
+                                  child: const Icon(Icons.audiotrack),
+                                );
+                              }
+                            }(),
+                          ),
+                          title: Text(
+                            _prettyFileName(h.url),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 6,
+                                      vertical: 2,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: (h.type == 'image'
+                                              ? Colors.blueGrey
+                                              : (h.type == 'audio'
+                                                  ? Colors.teal
+                                                  : Colors.deepPurple))
+                                          .withOpacity(0.15),
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    child: Text(
+                                      h.type.isNotEmpty
+                                          ? h.type
+                                          : (h.contentType.isNotEmpty
+                                              ? h.contentType.split('/').first
+                                              : ''),
+                                      style: const TextStyle(fontSize: 12),
+                                    ),
+                                  ),
+                                  if (h.contentType.isNotEmpty) ...[
+                                    const SizedBox(width: 8),
+                                    Expanded(
                                       child: Text(
-                                        h.type.isNotEmpty
-                                            ? h.type
-                                            : (h.contentType.isNotEmpty
-                                                ? h.contentType.split('/').first
-                                                : ''),
+                                        h.contentType,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
                                         style: const TextStyle(fontSize: 12),
                                       ),
                                     ),
-                                    if (h.contentType.isNotEmpty) ...[
-                                      const SizedBox(width: 8),
-                                      Expanded(
-                                        child: Text(
-                                          h.contentType,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: const TextStyle(fontSize: 12),
-                                        ),
-                                      ),
-                                    ],
                                   ],
+                                ],
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                h.url,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey,
                                 ),
-                                const SizedBox(height: 2),
+                              ),
+                              if (h.type != 'image')
                                 Text(
-                                  h.url,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    color: Colors.grey,
-                                  ),
+                                  h.durationSeconds != null
+                                      ? context.l10n(
+                                        'browser.media.durationLabel',
+                                        params: {
+                                          'duration': _fmtDur(
+                                            h.durationSeconds!,
+                                          ),
+                                        },
+                                      )
+                                      : context.l10n(
+                                        'browser.media.durationResolving',
+                                      ),
+                                  style: const TextStyle(fontSize: 12),
                                 ),
-                                if (h.type != 'image')
-                                  Text(
-                                    h.durationSeconds != null
-                                        ? context.l10n(
-                                          'browser.media.durationLabel',
-                                          params: {
-                                            'duration': _fmtDur(
-                                              h.durationSeconds!,
-                                            ),
-                                          },
-                                        )
-                                        : context.l10n(
-                                          'browser.media.durationResolving',
-                                        ),
-                                    style: const TextStyle(fontSize: 12),
-                                  ),
-                              ],
-                            ),
-                            onLongPress: () async {
-                              await _previewHit(h);
-                            },
-                            trailing: Wrap(
-                              spacing: 4,
-                              children: [
-                                IconButton(
-                                  icon: const Icon(Icons.link),
-                                  tooltip: context.l10n(
-                                    'browser.context.copyLink',
-                                  ),
-                                  onPressed: () async {
-                                    await Clipboard.setData(
-                                      ClipboardData(text: h.url),
-                                    );
-                                    if (mounted) {
-                                      ScaffoldMessenger.of(
-                                        context,
-                                      ).showSnackBar(
-                                        SnackBar(
-                                          duration: const Duration(seconds: 1),
-                                          content: Text(
-                                            context.l10n(
-                                              'browser.snack.copiedLink',
-                                            ),
+                            ],
+                          ),
+                          onLongPress: () async {
+                            await _previewHit(h);
+                          },
+                          trailing: Wrap(
+                            spacing: 4,
+                            children: [
+                              IconButton(
+                                icon: const Icon(Icons.link),
+                                tooltip: context.l10n(
+                                  'browser.context.copyLink',
+                                ),
+                                onPressed: () async {
+                                  await Clipboard.setData(
+                                    ClipboardData(text: h.url),
+                                  );
+                                  if (mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        duration: const Duration(seconds: 1),
+                                        content: Text(
+                                          context.l10n(
+                                            'browser.snack.copiedLink',
                                           ),
                                         ),
-                                      );
-                                    }
-                                  },
-                                ),
-                                IconButton(
-                                  icon: const Icon(Icons.download),
-                                  tooltip: context.l10n('common.download'),
-                                  onPressed: () {
-                                    Navigator.pop(context);
-                                    _confirmDownload(h.url);
-                                  },
-                                ),
-                              ],
-                            ),
-                          );
-                        },
-                      ),
+                                      ),
+                                    );
+                                  }
+                                },
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.download),
+                                tooltip: context.l10n('common.download'),
+                                onPressed: () {
+                                  closeSheet();
+                                  _confirmDownload(h.url);
+                                },
+                              ),
+                            ],
+                          ),
+                        );
+                      },
                     ),
-                  ],
-                );
-              },
-            ),
-          );
-        },
-      );
+                  ),
+                ],
+              );
+            },
+          ),
+        );
+      },
+      backgroundColor:
+          Theme.of(context).bottomSheetTheme.backgroundColor ??
+          Theme.of(context).colorScheme.surface,
+    );
+    if (controller == null) {
+      return;
+    }
+    _detectedSheetController = controller;
+    try {
+      await controller.closed;
     } finally {
+      if (_detectedSheetController == controller) {
+        _detectedSheetController = null;
+      }
+      if (!mounted) return;
       Future.delayed(const Duration(milliseconds: 150), () {
+        if (!mounted) return;
         unawaited(_restoreIosLinkInteractions());
       });
     }
@@ -7388,12 +7436,23 @@ class _BrowserPageState extends State<BrowserPage>
   /// provides quick visibility into ongoing and completed downloads without
   /// navigating away from the browser tab.
   void _openDownloadsSheet() {
+    if (_downloadsSheetController != null) {
+      _downloadsSheetController!.close();
+      return;
+    }
     _suppressLinkLongPress = true;
 
     _resetAllSpeedTracking(clearCachedSpeeds: false);
-    showModalBottomSheet(
-      context: context,
-      builder: (_) {
+    final scaffoldState = _scaffoldKey.currentState;
+    if (scaffoldState == null) {
+      _suppressLinkLongPress = false;
+      return;
+    }
+
+    PersistentBottomSheetController<void>? controller;
+    controller = scaffoldState.showBottomSheet<void>(
+      (sheetContext) {
+        void closeSheet() => controller?.close();
         return SafeArea(
           child: AnimatedBuilder(
             animation: AppRepo.I,
@@ -7440,7 +7499,7 @@ class _BrowserPageState extends State<BrowserPage>
                             final cleared =
                                 await AppRepo.I.retainOnlyCompletedDownloads();
                             if (!mounted) return;
-                            Navigator.pop(context);
+                            closeSheet();
                             if (!cleared) {
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
@@ -7484,9 +7543,23 @@ class _BrowserPageState extends State<BrowserPage>
           ),
         );
       },
-    ).whenComplete(() {
+      backgroundColor:
+          Theme.of(context).bottomSheetTheme.backgroundColor ??
+          Theme.of(context).colorScheme.surface,
+    );
+    if (controller == null) {
+      _suppressLinkLongPress = false;
+      return;
+    }
+    _downloadsSheetController = controller;
+    controller.closed.whenComplete(() {
+      if (_downloadsSheetController == controller) {
+        _downloadsSheetController = null;
+      }
+      if (!mounted) return;
       _suppressLinkLongPress = false;
       Future.delayed(const Duration(milliseconds: 120), () {
+        if (!mounted) return;
         unawaited(_restoreIosLinkInteractions());
       });
     });
