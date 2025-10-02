@@ -6539,7 +6539,7 @@ const bindVideo = (video) => {
                 );
               },
             ),
-            ValueListenableBuilder<List<String>>(
+            ValueListenableBuilder<List<HistoryEntry>>(
               valueListenable: repo.history,
               builder: (context, history, _) {
                 final count = history.length;
