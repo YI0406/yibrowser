@@ -764,10 +764,14 @@ class _BrowserPageState extends State<BrowserPage>
   const LONG_PRESS_DELAY = 650;
   const MOVE_TOLERANCE = 14;
    const SUPPRESS_TIMEOUT = 400;
+  const CLICK_FALLBACK_DELAY = 140;
   let suppressNextClick = false;
   let suppressedAnchor = null;
   let activeAnchor = null;
   let longPressTimer = null;
+  let pendingClickAnchor = null;
+  let pendingClickTimer = null;
+  let lastInteractionWasLongPress = false;
   let startX = 0;
   let startY = 0;
   let suppressResetTimer = null;
@@ -791,6 +795,7 @@ class _BrowserPageState extends State<BrowserPage>
       clearTimeout(suppressResetTimer);
       suppressResetTimer = null;
     }
+     cancelPendingClick();
   };
 
   const scheduleSuppressReset = () => {
@@ -802,6 +807,39 @@ class _BrowserPageState extends State<BrowserPage>
       suppressNextClick = false;
       suppressedAnchor = null;
     }, SUPPRESS_TIMEOUT);
+  };
+ const cancelPendingClick = () => {
+    if (pendingClickTimer !== null) {
+      clearTimeout(pendingClickTimer);
+      pendingClickTimer = null;
+    }
+    pendingClickAnchor = null;
+  };
+
+  const scheduleClickFallback = (anchor) => {
+    cancelPendingClick();
+    if (!anchor) {
+      return;
+    }
+    pendingClickAnchor = anchor;
+    pendingClickTimer = setTimeout(() => {
+      const target = pendingClickAnchor;
+      pendingClickAnchor = null;
+      pendingClickTimer = null;
+      if (!target) {
+        return;
+      }
+      try {
+        target.click();
+        return;
+      } catch (_) {}
+      try {
+        const url = resolveHref(target);
+        if (url) {
+          window.location.href = url;
+        }
+      } catch (_) {}
+    }, CLICK_FALLBACK_DELAY);
   };
 
   const ensureStyle = () => {
@@ -841,7 +879,7 @@ class _BrowserPageState extends State<BrowserPage>
     }
   };
 
-  const clearPending = () => {
+  const clearPending = (preserveLongPress = false) => {
     if (longPressTimer !== null) {
       clearTimeout(longPressTimer);
       longPressTimer = null;
@@ -849,15 +887,21 @@ class _BrowserPageState extends State<BrowserPage>
     activeAnchor = null;
     startX = 0;
     startY = 0;
+    if (!preserveLongPress) {
+      lastInteractionWasLongPress = false;
+    }
   };
   const resetState = () => {
     clearPending();
     resetClickSuppression();
+    lastInteractionWasLongPress = false;
   };
 
   document.addEventListener(
     'touchstart',
     (event) => {
+      cancelPendingClick();
+      lastInteractionWasLongPress = false;
       if (!isEnabled()) {
         clearPending();
         return;
@@ -896,7 +940,8 @@ class _BrowserPageState extends State<BrowserPage>
             selection.removeAllRanges();
           }
         } catch (_) {}
-        clearPending();
+        lastInteractionWasLongPress = true;
+        clearPending(true);
         if (
           resolved &&
           window.flutter_inappwebview &&
@@ -935,6 +980,7 @@ class _BrowserPageState extends State<BrowserPage>
       }
       if (!isEnabled()) {
         clearPending();
+        cancelPendingClick();
         return;
       }
       const touch =
@@ -943,32 +989,80 @@ class _BrowserPageState extends State<BrowserPage>
           : null;
       if (!touch) {
         clearPending();
+        cancelPendingClick();
         return;
       }
       const dx = touch.clientX - startX;
       const dy = touch.clientY - startY;
       if (Math.hypot(dx, dy) > MOVE_TOLERANCE) {
         clearPending();
+        cancelPendingClick();
         return;
       }
       if (!event || !event.target || !event.target.closest) {
         clearPending();
+        cancelPendingClick();
         return;
       }
       const anchor = event.target.closest('a[href]');
       if (!anchor || anchor !== activeAnchor) {
         clearPending();
+        cancelPendingClick()
       }
     },
     { passive: true }
   );
 
-  document.addEventListener('touchend', clearPending, { passive: true });
-  document.addEventListener('touchcancel', clearPending, { passive: true });
+ document.addEventListener(
+    'touchend',
+    (event) => {
+      cancelPendingClick();
+      const wasLongPress = lastInteractionWasLongPress;
+      if (!isEnabled()) {
+        clearPending();
+        return;
+      }
+      const anchor =
+        event && event.target && event.target.closest
+          ? event.target.closest('a[href]')
+          : null;
+      clearPending();
+      if (wasLongPress) {
+        return;
+      }
+      if (!anchor || suppressNextClick) {
+        return;
+      }
+      const resolved = resolveHref(anchor);
+      if (!resolved) {
+        return;
+      }
+      scheduleClickFallback(anchor);
+    },
+    { passive: true }
+  );
+  document.addEventListener(
+    'touchcancel',
+    () => {
+      cancelPendingClick();
+      clearPending();
+    },
+    { passive: true }
+  );
 
    
 
   window.__flutterResetLinkMenu = resetState;
+   window.__flutterForceClearLinkMenu = () => {
+    try {
+      suppressNextClick = false;
+      suppressedAnchor = null;
+      if (suppressResetTimer !== null) {
+        clearTimeout(suppressResetTimer);
+        suppressResetTimer = null;
+      }
+    } catch (_) {}
+  };
   window.__flutterSetLinkMenuEnabled = (value) => {
     const enabled = !!value;
     window.flutterIosLinkMenuEnabled = enabled;
@@ -983,6 +1077,8 @@ class _BrowserPageState extends State<BrowserPage>
   document.addEventListener(
     'click',
     (event) => {
+      cancelPendingClick();
+
       if (!isEnabled()) {
         return;
       }
@@ -990,6 +1086,7 @@ class _BrowserPageState extends State<BrowserPage>
         return;
       }
       const anchor = suppressedAnchor;
+      resetClickSuppression();
       if (anchor && event && event.target) {
         const target = event.target;
         const shouldSuppress =
@@ -1000,17 +1097,19 @@ class _BrowserPageState extends State<BrowserPage>
           event.stopPropagation();
         }
       }
-      resetClickSuppression();
+      
        },
     { capture: true }
   );
   document.addEventListener(
     'pointerdown',
     () => {
-      if (!isEnabled()) {
-        return;
-      }
-      resetClickSuppression();
+       cancelPendingClick();
+       lastInteractionWasLongPress = false;
+       if (!isEnabled()) {
+         return;
+       }
+       resetClickSuppression();
     
     },
     { capture: true }
@@ -1037,6 +1136,7 @@ class _BrowserPageState extends State<BrowserPage>
       if (document.visibilityState !== 'visible') {
         resetClickSuppression();
       }
+      cancelPendingClick();
     },
     { capture: true }
   );
@@ -2642,6 +2742,25 @@ const bindVideo = (video) => {
           window.__flutterVideoDetectorSetEnabled(${enabled ? 'true' : 'false'});
         } else {
           window.__flutterVideoDetectorEnabled = ${enabled ? 'true' : 'false'};
+        }
+      } catch (_) {}
+    ''';
+    try {
+      await controller.evaluateJavascript(source: script);
+    } catch (_) {}
+  }
+
+  Future<void> _forceClearLinkMenu(InAppWebViewController controller) async {
+    if (!Platform.isIOS) {
+      return;
+    }
+    const script = r'''
+      try {
+        if (typeof window !== 'undefined' && window.__flutterForceClearLinkMenu) {
+          window.__flutterForceClearLinkMenu();
+        }
+        if (typeof window !== 'undefined' && window.__flutterResetLinkMenu) {
+          window.__flutterResetLinkMenu();
         }
       } catch (_) {}
     ''';
@@ -4610,6 +4729,9 @@ const bindVideo = (video) => {
     } catch (_) {}
     try {
       await _setIosLinkContextMenuBridgeEnabled(target, true);
+    } catch (_) {}
+    try {
+      await _forceClearLinkMenu(target);
     } catch (_) {}
     if (attemptIndex + 1 >= maxAttempts) {
       return;
