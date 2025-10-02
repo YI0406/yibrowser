@@ -24,7 +24,7 @@ import 'media.dart';
 import 'video_player_page.dart';
 import 'image_preview_page.dart';
 import 'package:share_plus/share_plus.dart';
-
+import 'dart:io' show Platform;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'app_localizations.dart';
 import 'yt.dart';
@@ -86,12 +86,7 @@ class _BlockedExternalNavigation {
   });
 }
 
-enum _BlockedNavigationFallbackResult {
-  openedNewTab,
-  openedInCurrentTab,
-  suppressed,
-  unavailable,
-}
+enum _BlockedNavigationFallbackResult { openedNewTab, suppressed, unavailable }
 
 class _ExternalNavigationIntent {
   final bool shouldBlock;
@@ -115,32 +110,6 @@ class _ExternalNavigationIntent {
   }
 }
 
-enum _ToolbarMenuAction {
-  openFavorites,
-  openHistory,
-  clearBrowsingData,
-  toggleAdBlocker,
-  toggleBlockPopup,
-  toggleSniffer,
-  blockExternalApp,
-  addHome,
-  goHome,
-  help,
-}
-
-enum _LinkContextMenuAction {
-  copyLink,
-  openInNewTab,
-  addFavorite,
-  addHome,
-  downloadLink,
-  downloadImage,
-  downloadMedia,
-  playMedia,
-}
-
-enum _LinkContextKind { generic, image, video, audio }
-
 /// BrowserPage encapsulates a WebView with URL entry, navigation, and a bar
 /// showing detected media resources. It hooks into resource loading
 /// callbacks and JavaScript injection to sniff media URLs (audio/video).
@@ -163,6 +132,26 @@ class _AdBlockerDialogResult {
   });
 }
 
+enum _ToolbarMenuAction {
+  openFavorites,
+  openHistory,
+  clearBrowsingData,
+  toggleAdBlocker,
+  toggleBlockPopup,
+  blockExternalApp,
+  addHome,
+  goHome,
+  help,
+}
+
+enum _LinkContextMenuAction {
+  copyLink,
+  downloadLink,
+  openInNewTab,
+  addFavorite,
+  addHome,
+}
+
 class _BrowserPageState extends State<BrowserPage>
     with LanguageAwareState<BrowserPage> {
   static final RegExp _kHttpUrlPattern = RegExp(
@@ -173,35 +162,6 @@ class _BrowserPageState extends State<BrowserPage>
     r'\.(?:m3u8|mpd|mp4|mov|m4v|webm|mkv|avi|flv|ts|mp3|m4a|aac|ogg|wav|flac)(?:$|[\/?#&])',
     caseSensitive: false,
   );
-  static const Set<String> _kImageExtensions = {
-    '.png',
-    '.jpg',
-    '.jpeg',
-    '.gif',
-    '.webp',
-    '.bmp',
-    '.svg',
-    '.avif',
-  };
-  static const Set<String> _kAudioExtensions = {
-    '.mp3',
-    '.wav',
-    '.ogg',
-    '.m4a',
-    '.aac',
-    '.flac',
-    '.opus',
-  };
-  static const Set<String> _kVideoExtensions = {
-    '.mp4',
-    '.mkv',
-    '.mov',
-    '.webm',
-    '.m4v',
-    '.ts',
-    '.avi',
-    '.flv',
-  };
   static const List<String> _kLegacyAdBlockHostPatterns = [
     'doubleclick.net',
     'googlesyndication.com',
@@ -269,143 +229,6 @@ class _BrowserPageState extends State<BrowserPage>
         selector: selectors,
       ),
     );
-  }
-
-  Future<void> _showYoutubePreviewDialog(
-    String url, {
-    InAppWebViewController? releaseController,
-  }) async {
-    if (!mounted) return;
-    if (_ytMenuOpen) return;
-    if (_ytFetchInFlight) return;
-
-    _suppressLinkLongPress = true;
-
-    try {
-      _ytFetchInFlight = true;
-      _insertYtFetchBarrier();
-
-      YtVideoInfo? info;
-      try {
-        info = await AppRepo.I.prepareYoutubeOptions(url);
-      } finally {
-        _removeYtFetchBarrier();
-        _ytFetchInFlight = false;
-      }
-      if (!mounted) {
-        _suppressLinkLongPress = false;
-        return;
-      }
-      if (info == null || info.options.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            duration: const Duration(seconds: 2),
-            content: Text(context.l10n('browser.youtube.error.noStreams')),
-          ),
-        );
-        _suppressLinkLongPress = false;
-        return;
-      }
-
-      final resolvedInfo = info!;
-      _cachedYoutubeInfo = resolvedInfo;
-
-      final durationLabel =
-          resolvedInfo.duration != null
-              ? context.l10n(
-                'browser.media.durationLabel',
-                params: {
-                  'duration': _fmtDur(
-                    resolvedInfo.duration!.inSeconds.toDouble(),
-                  ),
-                },
-              )
-              : context.l10n('browser.media.durationResolving');
-      final thumbUrl =
-          'https://img.youtube.com/vi/${resolvedInfo.videoId}/hqdefault.jpg';
-
-      await showDialog<void>(
-        context: context,
-        builder: (dialogContext) {
-          final theme = Theme.of(dialogContext);
-          return AlertDialog(
-            title: Text(
-              resolvedInfo.title,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: AspectRatio(
-                    aspectRatio: 16 / 9,
-                    child: Image.network(
-                      thumbUrl,
-                      fit: BoxFit.cover,
-                      errorBuilder:
-                          (_, __, ___) => Container(
-                            color: theme.colorScheme.surfaceVariant,
-                            alignment: Alignment.center,
-                            child: const Icon(Icons.image_not_supported),
-                          ),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Text(durationLabel, style: theme.textTheme.bodyMedium),
-                const SizedBox(height: 8),
-                SelectableText(
-                  url,
-                  maxLines: 2,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.onSurface.withOpacity(0.7),
-                  ),
-                ),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(dialogContext).pop(),
-                child: Text(context.l10n('common.cancel')),
-              ),
-              TextButton.icon(
-                icon: const Icon(Icons.copy),
-                label: Text(context.l10n('browser.context.copyLink')),
-                onPressed: () async {
-                  await Clipboard.setData(ClipboardData(text: url));
-                  if (mounted) {
-                    _showSnackBar(context.l10n('browser.snack.copiedLink'));
-                  }
-                  Navigator.of(dialogContext).pop();
-                },
-              ),
-              FilledButton.icon(
-                icon: const Icon(Icons.download),
-                label: Text(context.l10n('common.download')),
-                onPressed: () async {
-                  Navigator.of(dialogContext).pop();
-                  await _showYoutubeDownloadOptions(
-                    url,
-                    preloaded: resolvedInfo,
-                  );
-                },
-              ),
-            ],
-          );
-        },
-      );
-
-      if (!_ytMenuOpen) {
-        _suppressLinkLongPress = false;
-      }
-    } finally {
-      if (releaseController != null) {
-        await _resetAndReleaseWebViewAfterContextMenu(releaseController);
-      }
-    }
   }
 
   static List<ContentBlocker> _buildLegacyAdBlockerRules() {
@@ -607,12 +430,6 @@ class _BrowserPageState extends State<BrowserPage>
   // Global key for the toolbar menu button so we can reopen the menu at the
   // same location after toggling quick actions.
   final GlobalKey _menuButtonKey = GlobalKey();
-  OverlayEntry? _toolbarMenuEntry;
-  final GlobalKey _toolbarMenuOverlayKey = GlobalKey();
-
-  OverlayEntry? _linkContextMenuEntry;
-  Completer<_LinkContextMenuAction?>? _linkContextMenuCompleter;
-  final GlobalKey _linkContextMenuKey = GlobalKey();
 
   // List of open tabs. At least one tab is always present.
   final List<_TabData> _tabs = [];
@@ -745,8 +562,6 @@ class _BrowserPageState extends State<BrowserPage>
   bool _iosLinkMenuBridgeReady = false;
   String? _lastIosLinkMenuUrl;
   DateTime? _lastIosLinkMenuTime;
-  bool _suppressLinkLongPress = false;
-  YtVideoInfo? _cachedYoutubeInfo;
 
   static const String _kIosLinkContextMenuJS = r'''
 (() => {
@@ -754,70 +569,19 @@ class _BrowserPageState extends State<BrowserPage>
     return;
   }
   window.__flutterIosLinkMenuInstalled = true;
-  if (typeof window.flutterIosLinkMenuEnabled === 'undefined') {
-    window.flutterIosLinkMenuEnabled = true;
-  }
 
-  const LONG_PRESS_DELAY = 650;
-  const MOVE_TOLERANCE = 14;
-   const SUPPRESS_TIMEOUT = 400;
-  let suppressNextClick = false;
-  let suppressedAnchor = null;
+  const LONG_PRESS_DELAY = 450;
   let activeAnchor = null;
   let longPressTimer = null;
-  let startX = 0;
-  let startY = 0;
-  let suppressResetTimer = null;
-  const styleId = 'flutter-ios-link-menu-style';
-  let styleNode = null;
-
-  const isEnabled = () => !!window.flutterIosLinkMenuEnabled;
-
-  const removeStyle = () => {
-    const node = styleNode || document.getElementById(styleId);
-    if (node && node.parentNode) {
-      node.parentNode.removeChild(node);
-    }
-    styleNode = null;
-  };
-
-  const resetClickSuppression = () => {
-    suppressNextClick = false;
-    suppressedAnchor = null;
-    if (suppressResetTimer !== null) {
-      clearTimeout(suppressResetTimer);
-      suppressResetTimer = null;
-    }
-  };
-
-  const scheduleSuppressReset = () => {
-    if (suppressResetTimer !== null) {
-      clearTimeout(suppressResetTimer);
-    }
-    suppressResetTimer = setTimeout(() => {
-      suppressResetTimer = null;
-      suppressNextClick = false;
-      suppressedAnchor = null;
-    }, SUPPRESS_TIMEOUT);
-  };
 
   const ensureStyle = () => {
-    if (!isEnabled()) {
-      removeStyle();
+    if (document.getElementById('flutter-ios-link-menu-style')) {
       return;
     }
-    if (styleNode && styleNode.parentNode) {
-      return;
-    }
-    styleNode = styleNode || document.getElementById(styleId);
-    if (!styleNode) {
-      styleNode = document.createElement('style');
-      styleNode.id = styleId;
-      styleNode.textContent = 'a, a * { -webkit-touch-callout: none !important; }';
-    }
-    if (styleNode && !styleNode.parentNode) {
-      document.documentElement.appendChild(styleNode);
-    }
+    const style = document.createElement('style');
+    style.id = 'flutter-ios-link-menu-style';
+    style.textContent = 'a, a * { -webkit-touch-callout: none !important; }';
+    document.documentElement.appendChild(style);
   };
 
   const resolveHref = (anchor) => {
@@ -844,26 +608,15 @@ class _BrowserPageState extends State<BrowserPage>
       longPressTimer = null;
     }
     activeAnchor = null;
-    startX = 0;
-    startY = 0;
-  };
-  const resetState = () => {
-    clearPending();
-    resetClickSuppression();
   };
 
   document.addEventListener(
     'touchstart',
     (event) => {
-      if (!isEnabled()) {
+      if (!event || (event.touches && event.touches.length > 1)) {
         clearPending();
         return;
       }
-      if (!event || !event.touches || event.touches.length !== 1) {
-        clearPending();
-        return;
-      }
-      const touch = event.touches[0];
       ensureStyle();
       const anchor =
         event.target && event.target.closest
@@ -877,46 +630,15 @@ class _BrowserPageState extends State<BrowserPage>
         clearTimeout(longPressTimer);
       }
       activeAnchor = anchor;
-      startX = touch.clientX;
-      startY = touch.clientY;
       longPressTimer = setTimeout(() => {
-       if (!isEnabled()) {
-          resetState();
-          return;
-        }
-        const anchor = activeAnchor;
-        const resolved = resolveHref(anchor);
-        try {
-          const selection = window.getSelection && window.getSelection();
-          if (selection && selection.removeAllRanges) {
-            selection.removeAllRanges();
-          }
-        } catch (_) {}
+        const resolved = resolveHref(activeAnchor);
         clearPending();
         if (
           resolved &&
           window.flutter_inappwebview &&
           window.flutter_inappwebview.callHandler
         ) {
-          suppressNextClick = true;
-          suppressedAnchor = anchor;
-          scheduleSuppressReset();
-          try {
-            const maybePromise =
-              window.flutter_inappwebview.callHandler('linkLongPress', resolved);
-            if (
-              maybePromise &&
-              typeof maybePromise.catch === 'function'
-            ) {
-              maybePromise.catch(() => {});
-            }
-          } catch (err) {
-            if (typeof console !== 'undefined' && console.warn) {
-              console.warn('Failed to notify Flutter about link long press', err);
-            }
-          } finally {
-            resetState();
-          }
+          window.flutter_inappwebview.callHandler('linkLongPress', resolved);
         }
       }, LONG_PRESS_DELAY);
     },
@@ -927,24 +649,6 @@ class _BrowserPageState extends State<BrowserPage>
     'touchmove',
     (event) => {
       if (!activeAnchor) {
-        return;
-      }
-      if (!isEnabled()) {
-        clearPending();
-        return;
-      }
-      const touch =
-        event && event.touches && event.touches.length > 0
-          ? event.touches[0]
-          : null;
-      if (!touch) {
-        clearPending();
-        return;
-      }
-      const dx = touch.clientX - startX;
-      const dy = touch.clientY - startY;
-      if (Math.hypot(dx, dy) > MOVE_TOLERANCE) {
-        clearPending();
         return;
       }
       if (!event || !event.target || !event.target.closest) {
@@ -962,61 +666,9 @@ class _BrowserPageState extends State<BrowserPage>
   document.addEventListener('touchend', clearPending, { passive: true });
   document.addEventListener('touchcancel', clearPending, { passive: true });
 
-   
-
-  window.__flutterResetLinkMenu = resetState;
-  window.__flutterSetLinkMenuEnabled = (value) => {
-    const enabled = !!value;
-    window.flutterIosLinkMenuEnabled = enabled;
-    if (enabled) {
-      ensureStyle();
-      resetClickSuppression();
-    } else {
-      removeStyle();
-      resetState();
-    }
-  };
-  document.addEventListener(
-    'click',
-    (event) => {
-      if (!isEnabled()) {
-        return;
-      }
-      if (!suppressNextClick) {
-        return;
-      }
-      const anchor = suppressedAnchor;
-      if (anchor && event && event.target) {
-        const target = event.target;
-        const shouldSuppress =
-          target === anchor ||
-          (typeof anchor.contains === 'function' && anchor.contains(target));
-        if (shouldSuppress) {
-          event.preventDefault();
-          event.stopPropagation();
-        }
-      }
-      resetClickSuppression();
-       },
-    { capture: true }
-  );
-  document.addEventListener(
-    'pointerdown',
-    () => {
-      if (!isEnabled()) {
-        return;
-      }
-      resetClickSuppression();
-    
-    },
-    { capture: true }
-  );
   document.addEventListener(
     'contextmenu',
     (event) => {
-      if (!isEnabled()) {
-        return;
-      }
       const anchor =
         event && event.target && event.target.closest
           ? event.target.closest('a[href]')
@@ -1027,208 +679,8 @@ class _BrowserPageState extends State<BrowserPage>
     },
     { capture: true }
   );
-  document.addEventListener(
-    'visibilitychange',
-    () => {
-      if (document.visibilityState !== 'visible') {
-        resetClickSuppression();
-      }
-    },
-    { capture: true }
-  );
-  window.addEventListener('pagehide', resetClickSuppression, { capture: true });
-  window.addEventListener('blur', resetClickSuppression, { capture: true });
 })();
 ''';
-
-  static const String _kVideoDetectorBridge = r'''
-(function () {
-  if (window.__flutterVideoDetectorInstalled) {
-   if (window.__flutterVideoDetectorRefresh) {
-      try {
-        window.__flutterVideoDetectorRefresh();
-      } catch (_) {}
-    }
-    return;
-  }
-  window.__flutterVideoDetectorInstalled = true;
-  window.__flutterVideoDetectorEnabled = true;
-
-
-
-  const resolveSrc = (video) => {
-    if (!video) return '';
-    
-    const candidates = [video.currentSrc, video.src];
-    if (video.querySelectorAll) {
-      video.querySelectorAll('source').forEach((source) => {
-        if (source.src) {
-          candidates.push(source.src);
-        }
-      });
-    }
-      if (video.dataset) {
-      ['src', 'source', 'video', 'stream'].forEach((key) => {
-        if (video.dataset[key]) {
-          candidates.push(video.dataset[key]);
-        }
-      });
-    }
-    for (let i = 0; i < candidates.length; i += 1) {
-      const value = candidates[i];
-      if (value && ('' + value).trim().length > 0) {
-        return value;
-      }
-    }
-  
-    return video.currentSrc || video.src || '';
-  };
-
-  const inferTitle = (video) => {
-    const tryRead = (node) => {
-      if (!node) return '';
-      const attrs = ['data-title', 'aria-label', 'title', 'alt'];
-      for (let i = 0; i < attrs.length; i += 1) {
-        const attr = attrs[i];
-        const value = node.getAttribute && node.getAttribute(attr);
-        if (value && value.trim().length > 0) {
-          return value.trim();
-        }
-      }
-      return '';
-    };
-    let title = tryRead(video);
-    if (title) return title;
-    if (video.parentElement) {
-      title = tryRead(video.parentElement);
-      if (title) return title;
-    }
-    if (video.closest) {
-      const labelled = video.closest('[data-title], [aria-label], [title]');
-      if (labelled) {
-        title = tryRead(labelled);
-        if (title) return title;
-      }
-    }
-    return document.title || '';
-  };
-
-  const captureFrame = (video) => {
-    try {
-      const width = video.videoWidth || video.clientWidth;
-      const height = video.videoHeight || video.clientHeight;
-      if (!width || !height) return '';
-      const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return '';
-      ctx.drawImage(video, 0, 0, width, height);
-      return canvas.toDataURL('image/jpeg', 0.75);
-    } catch (err) {
-      return '';
-    }
-  };
-
-  const isPlaying = (video) => {
-    if (!video) return false;
-    if (video.readyState < 2) return false;
-    return !video.paused && !video.ended;
-  };
-
-  const sendPayload = (video) => {
-    if (!window.__flutterVideoDetectorEnabled) {
-      return;
-    }
-    const now = Date.now();
-    const last = video.__flutterVideoDetectorLastSent || 0;
-    if (now - last < 500) {
-      return;
-    }
-    video.__flutterVideoDetectorLastSent = now;
-    const payload = {
-      src: resolveSrc(video) || '',
-      title: inferTitle(video) || '',
-      pageTitle: document.title || '',
-      pageUrl: window.location ? window.location.href : '',
-      duration: Number.isFinite(video.duration) ? video.duration : null,
-      currentTime: Number.isFinite(video.currentTime) ? video.currentTime : null,
-      width: video.videoWidth || null,
-      height: video.videoHeight || null,
-      poster: video.poster || '',
-      capture: captureFrame(video) || '',
-      timestamp: now,
-    };
-    try {
-      if (window.flutter_inappwebview && window.flutter_inappwebview.callHandler) {
-        window.flutter_inappwebview.callHandler('videoDetected', payload);
-      }
-    } catch (_) {}
-  };
-
-const bindVideo = (video) => {
-    if (!video || video.__flutterVideoDetectorBound) {
-      return;
-    }
-    video.__flutterVideoDetectorBound = true;
-
- const maybeSend = () => {
-      if (!window.__flutterVideoDetectorEnabled) {
-        return;
-      }
-      if (!isPlaying(video)) {
-        return;
-      }
-      sendPayload(video);
-  
-    };
-
-    const resetStamp = () => {
-      video.__flutterVideoDetectorLastSent = 0;
-    };
-
-    video.addEventListener('playing', () => {
-      resetStamp();
-      maybeSend();
-    }, { passive: true });
-    video.addEventListener('loadeddata', maybeSend, { passive: true });
-    video.addEventListener('loadedmetadata', maybeSend, { passive: true });
-    video.addEventListener('timeupdate', maybeSend, { passive: true });
-    video.addEventListener('seeking', resetStamp, { passive: true });
-    video.addEventListener('pause', resetStamp, { passive: true });
-    video.addEventListener('ended', resetStamp, { passive: true });
-
-    if (isPlaying(video)) {
-      maybeSend();
-    }
-  };
-
-  const scan = () => {
-    document.querySelectorAll('video').forEach((video) => bindVideo(video));
-  };
-
-  window.__flutterVideoDetectorSetEnabled = (value) => {
-    window.__flutterVideoDetectorEnabled = !!value;
-    if (!value) {
-   document.querySelectorAll('video').forEach((video) => {
-        video.__flutterVideoDetectorLastSent = 0;
-      });
-    } else {
-      scan();
-    }
-  };
-
-  window.__flutterVideoDetectorRefresh = scan;
-
-  scan();
-  const observer = new MutationObserver(scan);
-  observer.observe(document.documentElement || document.body, {
-    childList: true,
-    subtree: true,
-  });
-})();
-''';
-
   String _uaForMode(String mode) {
     switch (mode) {
       case 'ipad':
@@ -1577,45 +1029,6 @@ const bindVideo = (video) => {
     _ytFetchBarrier = null;
   }
 
-  void _insertYtFetchBarrier() {
-    if (_ytFetchBarrier != null) return;
-    final overlay = Overlay.of(context);
-    if (overlay == null) return;
-    _ytFetchBarrier = OverlayEntry(
-      builder: (_) {
-        final theme = Theme.of(context);
-        return Stack(
-          children: [
-            ModalBarrier(
-              dismissible: false,
-              color: theme.colorScheme.scrim.withOpacity(0.4),
-            ),
-            Center(
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.surface,
-                  borderRadius: BorderRadius.circular(16),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.18),
-                      blurRadius: 20,
-                      offset: const Offset(0, 12),
-                    ),
-                  ],
-                ),
-                child: const Padding(
-                  padding: EdgeInsets.all(20),
-                  child: CircularProgressIndicator.adaptive(),
-                ),
-              ),
-            ),
-          ],
-        );
-      },
-    );
-    overlay.insert(_ytFetchBarrier!);
-  }
-
   void _onYtOptionsChanged() {
     final opts = repo.ytOptions.value;
     if (opts == null || _ytMenuOpen) return;
@@ -1686,12 +1099,10 @@ const bindVideo = (video) => {
       if (option.type == YtOptionType.videoAudio) {
         final audioRate = formatBitrate(option.audioBitrate);
         if (audioRate != null) parts.add(audioRate);
-        parts.add(context.l10n('browser.youtube.option.mergeHint'));
       }
       return parts.join(' · ');
     }
 
-    _suppressLinkLongPress = true;
     showModalBottomSheet(
       context: context,
       useSafeArea: true,
@@ -1817,7 +1228,6 @@ const bindVideo = (video) => {
       // 重置，不要重複彈出
       repo.ytOptions.value = null;
       repo.ytTitle.value = null;
-      _suppressLinkLongPress = false;
     });
   }
 
@@ -1840,126 +1250,6 @@ const bindVideo = (video) => {
     final sec = d % 60;
     String two(int v) => v.toString().padLeft(2, '0');
     return '${two(h)}:${two(m)}:${two(sec)}';
-  }
-
-  Uint8List? _decodeVideoSnapshot(String? dataUrl) {
-    if (dataUrl == null) return null;
-    final trimmed = dataUrl.trim();
-    if (trimmed.isEmpty) return null;
-    final comma = trimmed.indexOf(',');
-    final payload = comma >= 0 ? trimmed.substring(comma + 1) : trimmed;
-    try {
-      return base64Decode(payload);
-    } catch (_) {
-      return null;
-    }
-  }
-
-  double? _asDouble(dynamic value) {
-    if (value is num) {
-      final v = value.toDouble();
-      return v.isFinite ? v : null;
-    }
-    if (value is String) {
-      final parsed = double.tryParse(value);
-      if (parsed == null || !parsed.isFinite) {
-        return null;
-      }
-      return parsed;
-    }
-    return null;
-  }
-
-  int? _asInt(dynamic value) {
-    if (value is num) {
-      final v = value.toInt();
-      return v > 0 ? v : null;
-    }
-    if (value is String) {
-      final parsed = int.tryParse(value);
-      if (parsed == null || parsed <= 0) {
-        return null;
-      }
-      return parsed;
-    }
-    return null;
-  }
-
-  String _buildPlayingCandidateId(String url, String pageUrl) {
-    final trimmedUrl = url.trim();
-    final trimmedPage = pageUrl.trim();
-    final base = trimmedUrl.isNotEmpty ? trimmedUrl : trimmedPage;
-    if (base.isEmpty) {
-      return 'candidate_${DateTime.now().microsecondsSinceEpoch}';
-    }
-    if (trimmedPage.isNotEmpty) {
-      return '$trimmedPage|$base';
-    }
-    return base;
-  }
-
-  String _effectiveDisplayUrl(PlayingVideoCandidate candidate) {
-    final page = candidate.pageUrl.trim();
-    if (page.isNotEmpty) return page;
-    return candidate.url.trim();
-  }
-
-  String _hostnameFromUrl(String url) {
-    if (url.isEmpty) {
-      return '';
-    }
-    try {
-      final uri = Uri.parse(url);
-      return uri.host;
-    } catch (_) {
-      return '';
-    }
-  }
-
-  String _timelineLabel(BuildContext context, PlayingVideoCandidate candidate) {
-    final duration = candidate.durationSeconds;
-    final position = candidate.positionSeconds ?? 0;
-    if (duration != null && duration.isFinite && duration > 0) {
-      final clamped = math.max(0.0, math.min(duration, position));
-      return '${_fmtDur(clamped)} / ${_fmtDur(duration)}';
-    }
-    return context.l10n('browser.playingNow.liveOrUnknown');
-  }
-
-  String _resolutionLabel(
-    BuildContext context,
-    PlayingVideoCandidate candidate,
-  ) {
-    final width = candidate.videoWidth;
-    final height = candidate.videoHeight;
-    if (width != null && width > 0 && height != null && height > 0) {
-      return '${width}×${height}';
-    }
-    return context.l10n('common.unknown');
-  }
-
-  Widget _buildPlayingVideoPreview(PlayingVideoCandidate candidate) {
-    final snapshot = candidate.snapshot;
-    if (snapshot != null && snapshot.isNotEmpty) {
-      return Image.memory(snapshot, fit: BoxFit.cover);
-    }
-    final poster = candidate.posterUrl;
-    if (poster != null && poster.isNotEmpty) {
-      return Image.network(
-        poster,
-        fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => _defaultVideoPreviewWidget(),
-      );
-    }
-    return _defaultVideoPreviewWidget();
-  }
-
-  Widget _defaultVideoPreviewWidget() {
-    return Container(
-      color: Colors.black12,
-      alignment: Alignment.center,
-      child: const Icon(Icons.ondemand_video),
-    );
   }
 
   /// Format bytes into a human friendly string.
@@ -2126,25 +1416,6 @@ const bindVideo = (video) => {
       return name;
     } catch (_) {
       return url;
-    }
-  }
-
-  void _onLongPressDetectionChanged() {
-    final enabled = repo.longPressDetectionEnabled.value;
-    if (!enabled) {
-      repo.clearPlayingVideos();
-    }
-    for (final tab in _tabs) {
-      final controller = tab.controller;
-      if (controller == null) continue;
-
-      unawaited(_setVideoDetectorEnabled(controller, enabled));
-      if (Platform.isIOS) {
-        if (!enabled) {
-          unawaited(_resetAndReleaseWebViewAfterContextMenu(controller));
-        }
-        unawaited(_setIosLinkContextMenuBridgeEnabled(controller, true));
-      }
     }
   }
 
@@ -2327,6 +1598,34 @@ const bindVideo = (video) => {
     } catch (_) {}
   }
 
+  bool _looksLikeLikelyUrl(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return false;
+    if (trimmed.startsWith('/') ||
+        trimmed.startsWith('./') ||
+        trimmed.startsWith('../')) {
+      return true;
+    }
+    if (trimmed.startsWith('//')) {
+      return true;
+    }
+    final lower = trimmed.toLowerCase();
+    if (lower.startsWith('http://') ||
+        lower.startsWith('https://') ||
+        lower.startsWith('file://') ||
+        lower.startsWith('about:') ||
+        lower.startsWith('data:') ||
+        lower.startsWith('blob:') ||
+        lower.startsWith('ftp://')) {
+      return true;
+    }
+    final uri = Uri.tryParse(trimmed);
+    if (uri == null) return false;
+    if (uri.hasScheme && uri.scheme.length > 1) return true;
+    if (uri.host.isNotEmpty) return true;
+    return false;
+  }
+
   Future<String?> _resolveHitTestUrl(
     InAppWebViewController controller,
     String link,
@@ -2379,225 +1678,25 @@ const bindVideo = (video) => {
     if (!Platform.isIOS) {
       return;
     }
-
     try {
       await controller.evaluateJavascript(source: _kIosLinkContextMenuJS);
       _iosLinkMenuBridgeReady = true;
     } catch (_) {
       _iosLinkMenuBridgeReady = false;
     }
-    await _setIosLinkContextMenuBridgeEnabled(controller, true);
   }
 
-  Future<void> _resetIosLinkContextMenuBridge(
-    InAppWebViewController controller,
-  ) async {
-    if (!Platform.isIOS) {
+  Future<void> _handleLinkContextMenu(String url) async {
+    if (AppRepo.I.isYoutubeUrl(url)) {
+      await _showYoutubeDownloadOptions(url);
       return;
     }
-    const script = r'''
- (function() {
-        try {
-          if (typeof window !== 'undefined' && window.__flutterResetLinkMenu) {
-            window.__flutterResetLinkMenu();
-            return true;
-          }
-        } catch (_) {}
-        return false;
-      })();
-    ''';
-    var resetSucceeded = false;
-    try {
-      final result = await controller.evaluateJavascript(source: script);
-      resetSucceeded = result == true;
-    } catch (err, _) {
-      if (kDebugMode) {
-        debugPrint('Failed to evaluate iOS link menu reset script: $err');
-      }
-    }
-    if (resetSucceeded) {
-      return;
-    }
-    const fallbackScript = r'''
-      try {
-         if (typeof window === 'undefined') {
-          return;
-        }
-        if (window.__flutterSetLinkMenuEnabled) {
-          const previousEnabled = !!window.flutterIosLinkMenuEnabled;
-          window.__flutterSetLinkMenuEnabled(false);
-          if (previousEnabled) {
-            window.__flutterSetLinkMenuEnabled(true);
-          }
-        } else if (window.__flutterResetLinkMenu) {
-          window.__flutterResetLinkMenu();
-        }
-      } catch (_) {}
-    ''';
-    try {
-      await controller.evaluateJavascript(source: fallbackScript);
-    } catch (err, _) {
-      if (kDebugMode) {
-        debugPrint('Fallback reset for iOS link menu bridge failed: $err');
-      }
-    }
-  }
-
-  Future<void> _injectVideoDetector(InAppWebViewController controller) async {
-    try {
-      await controller.evaluateJavascript(source: _kVideoDetectorBridge);
-    } catch (_) {}
-    await _setVideoDetectorEnabled(
-      controller,
-      repo.longPressDetectionEnabled.value,
-    );
-  }
-
-  bool _hasKnownExtension(String lowerUrl, Set<String> extensions) {
-    for (final ext in extensions) {
-      if (lowerUrl.endsWith(ext)) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  _LinkContextKind _inferLinkContextKind(
-    String url, {
-    bool isImageHit = false,
-    bool isVideoHit = false,
-    bool isAudioHit = false,
-    bool isYoutube = false,
-  }) {
-    final lower = url.toLowerCase();
-    if (isYoutube) {
-      return _LinkContextKind.video;
-    }
-    if (isImageHit || _hasKnownExtension(lower, _kImageExtensions)) {
-      return _LinkContextKind.image;
-    }
-    if (isVideoHit || _hasKnownExtension(lower, _kVideoExtensions)) {
-      return _LinkContextKind.video;
-    }
-    if (isAudioHit || _hasKnownExtension(lower, _kAudioExtensions)) {
-      return _LinkContextKind.audio;
-    }
-    return _LinkContextKind.generic;
-  }
-
-  Future<void> _setVideoDetectorEnabled(
-    InAppWebViewController controller,
-    bool enabled,
-  ) async {
-    final script = '''
-      try {
-        if (window.__flutterVideoDetectorSetEnabled) {
-          window.__flutterVideoDetectorSetEnabled(${enabled ? 'true' : 'false'});
-        } else {
-          window.__flutterVideoDetectorEnabled = ${enabled ? 'true' : 'false'};
-        }
-      } catch (_) {}
-    ''';
-    try {
-      await controller.evaluateJavascript(source: script);
-    } catch (_) {}
-  }
-
-  Future<void> _setIosLinkContextMenuBridgeEnabled(
-    InAppWebViewController controller,
-    bool enabled,
-  ) async {
-    if (!Platform.isIOS) {
-      return;
-    }
-    final script = '''
-      try {
-        if (typeof window !== 'undefined' && window.__flutterSetLinkMenuEnabled) {
-          window.__flutterSetLinkMenuEnabled(${enabled ? 'true' : 'false'});
-        } else if (typeof window !== 'undefined') {
-          window.flutterIosLinkMenuEnabled = ${enabled ? 'true' : 'false'};
-        }
-      } catch (_) {}
-    ''';
-    try {
-      await controller.evaluateJavascript(source: script);
-    } catch (_) {}
-  }
-
-  Future<void> _handleLinkContextMenuWithFeedback(
-    String url, {
-    InAppWebViewController? releaseController,
-    _LinkContextKind kind = _LinkContextKind.generic,
-    bool isYoutube = false,
-  }) async {
-    if (_suppressLinkLongPress) {
-      if (releaseController != null) {
-        try {
-          await _resetAndReleaseWebViewAfterContextMenu(releaseController);
-        } catch (_) {}
-      }
-      return;
-    }
-    _suppressLinkLongPress = true;
-    try {
-      await HapticFeedback.selectionClick();
-    } catch (_) {}
-    try {
-      await _handleLinkContextMenu(url, kind: kind, isYoutube: isYoutube);
-    } finally {
-      _suppressLinkLongPress = false;
-      if (releaseController != null) {
-        try {
-          await _resetAndReleaseWebViewAfterContextMenu(releaseController);
-        } catch (_) {}
-      }
-    }
-  }
-
-  bool _isOnYoutubeWatchPage() {
-    final current = repo.currentPageUrl.value ?? '';
-    if (current.isEmpty) return false;
-    final uri = Uri.tryParse(current);
-    if (uri == null) return false;
-    final host = uri.host.toLowerCase();
-    final path = uri.path.toLowerCase();
-    final isYoutubeHost =
-        host.contains('youtube.com') || host.contains('youtu.be');
-    if (!isYoutubeHost) return false;
-    if (host.contains('youtu.be')) {
-      return uri.pathSegments.isNotEmpty;
-    }
-    if (path == '/watch' || path.startsWith('/watch/')) return true;
-    if (path.startsWith('/shorts/')) return true;
-    return false;
-  }
-
-  Future<void> _handleLinkContextMenu(
-    String url, {
-    _LinkContextKind kind = _LinkContextKind.generic,
-    bool isYoutube = false,
-  }) async {
-    final action = await _showLinkContextMenu(url, kind, isYoutube);
+    final action = await _showLinkContextMenu(url);
     if (action == null) return;
     switch (action) {
       case _LinkContextMenuAction.copyLink:
         await Clipboard.setData(ClipboardData(text: url));
         _showSnackBar(context.l10n('browser.snack.copiedLink'));
-        break;
-      case _LinkContextMenuAction.downloadImage:
-        await _confirmDownload(url);
-        break;
-      case _LinkContextMenuAction.downloadMedia:
-        if (isYoutube) {
-          final currentUrl = repo.currentPageUrl.value;
-          final target =
-              (currentUrl != null && currentUrl.isNotEmpty) ? currentUrl : url;
-          if (target.isNotEmpty) {
-            await _showYoutubePreviewDialog(target);
-          }
-        } else {
-          await _confirmDownload(url);
-        }
         break;
       case _LinkContextMenuAction.downloadLink:
         await _confirmDownload(url);
@@ -2612,398 +1711,80 @@ const bindVideo = (video) => {
       case _LinkContextMenuAction.addHome:
         await _showAddToHomeDialog(initialUrl: url);
         break;
-      case _LinkContextMenuAction.playMedia:
-        if (!isYoutube) {
-          _playMedia(url);
-        }
-        break;
     }
   }
 
-  Future<void> _handleDetectedVideo(Map<String, dynamic> payload) async {
-    if (!repo.longPressDetectionEnabled.value) {
+  Future<void> _showYoutubeDownloadOptions(String url) async {
+    if (!mounted) return;
+    if (_ytFetchInFlight || _ytMenuOpen) {
       return;
     }
-    final rawUrl = (payload['src'] as String? ?? '').trim();
-    final pageUrl = (payload['pageUrl'] as String? ?? '').trim();
-    if (rawUrl.isEmpty && pageUrl.isEmpty) {
+    final now = DateTime.now();
+    if (_lastYtOptionsRequest != null &&
+        now.difference(_lastYtOptionsRequest!) <
+            const Duration(milliseconds: 800)) {
       return;
     }
-    final effectiveUrl = rawUrl.isNotEmpty ? rawUrl : pageUrl;
-    final normalizedUrl = (rawUrl.isNotEmpty ? rawUrl : effectiveUrl).trim();
-    final lowerUrl = normalizedUrl.toLowerCase();
-    final bool looksHttp =
-        lowerUrl.startsWith('http://') || lowerUrl.startsWith('https://');
-    final bool isBlobUrl = lowerUrl.startsWith('blob:');
+    _lastYtOptionsRequest = now;
+    _ytFetchInFlight = true;
 
-    final bool isYoutubeCandidate =
-        AppRepo.I.isYoutubeUrl(normalizedUrl) ||
-        AppRepo.I.isYoutubeUrl(effectiveUrl) ||
-        AppRepo.I.isYoutubeUrl(pageUrl) ||
-        AppRepo.I.isYoutubeUrl(repo.currentPageUrl.value ?? '');
-    if (normalizedUrl.isEmpty) {
-      return;
-    }
-    if (!looksHttp && !isYoutubeCandidate) {
-      return;
-    }
-    if (isBlobUrl && !isYoutubeCandidate) {
-      return;
-    }
+    try {
+      FocusScope.of(context).unfocus();
+    } catch (_) {}
 
-    final capture = payload['capture'] as String?;
-    final poster = (payload['poster'] as String? ?? '').trim();
-    final duration = _asDouble(payload['duration']);
-    final position = _asDouble(payload['currentTime']);
-    final width = _asInt(payload['width']);
-    final height = _asInt(payload['height']);
-    final titleCandidates = <String?>[
-      (payload['title'] as String?)?.trim(),
-      (payload['label'] as String?)?.trim(),
-      (payload['ariaLabel'] as String?)?.trim(),
-      (payload['pageTitle'] as String?)?.trim(),
-      (_tabs.isNotEmpty ? _tabs[_currentTabIndex].pageTitle?.trim() : null),
-    ];
-
-    final fallbackTitle =
-        effectiveUrl.isNotEmpty
-            ? _prettyFileName(effectiveUrl)
-            : (repo.currentPageTitle.value ?? '');
-    final resolvedTitle =
-        titleCandidates
-            .firstWhere(
-              (element) => element != null && element.isNotEmpty,
-              orElse: () => fallbackTitle,
-            )
-            ?.trim();
-
-    String resolvedPageUrl = pageUrl;
-    if (isYoutubeCandidate) {
-      final candidates = <String?>[
-        pageUrl,
-        repo.currentPageUrl.value,
-        effectiveUrl,
-      ];
-      for (final candidateUrl in candidates) {
-        if (candidateUrl != null &&
-            candidateUrl.isNotEmpty &&
-            AppRepo.I.isYoutubeUrl(candidateUrl)) {
-          resolvedPageUrl = candidateUrl;
-          break;
-        }
+    void insertBarrier() {
+      if (_ytFetchBarrier != null) return;
+      final overlay = Overlay.of(context, rootOverlay: true);
+      if (overlay == null) {
+        return;
       }
-    }
-
-    resolvedPageUrl = resolvedPageUrl.trim();
-
-    final resolvedStreamUrl = rawUrl.isNotEmpty ? rawUrl : effectiveUrl;
-    final idSourceUrl =
-        isYoutubeCandidate && resolvedPageUrl.isNotEmpty
-            ? resolvedPageUrl
-            : resolvedStreamUrl;
-
-    final candidate = PlayingVideoCandidate(
-      id: _buildPlayingCandidateId(idSourceUrl, resolvedPageUrl),
-      url: resolvedStreamUrl,
-      pageUrl: resolvedPageUrl,
-      title:
-          (resolvedTitle == null || resolvedTitle.isEmpty)
-              ? _prettyFileName(effectiveUrl)
-              : resolvedTitle,
-      durationSeconds: duration,
-      positionSeconds: position,
-      videoWidth: width,
-      videoHeight: height,
-      snapshot: _decodeVideoSnapshot(capture),
-      posterUrl: poster.isNotEmpty ? poster : null,
-      detectedAt: DateTime.now(),
-    );
-    repo.upsertPlayingVideo(candidate);
-  }
-
-  Widget _buildPlayingVideoCard(
-    BuildContext sheetContext,
-    PlayingVideoCandidate candidate, {
-    required bool isPrimary,
-  }) {
-    final theme = Theme.of(sheetContext);
-    final preview = _buildPlayingVideoPreview(candidate);
-    final displayUrl = _effectiveDisplayUrl(candidate);
-    final host = _hostnameFromUrl(
-      displayUrl.isNotEmpty ? displayUrl : candidate.url,
-    );
-    final timeline = _timelineLabel(sheetContext, candidate);
-    final resolution = _resolutionLabel(sheetContext, candidate);
-
-    final isYoutube =
-        AppRepo.I.isYoutubeUrl(candidate.url) ||
-        AppRepo.I.isYoutubeUrl(candidate.pageUrl);
-    final directUrl = candidate.url.trim();
-    final isBlob = directUrl.toLowerCase().startsWith('blob:');
-    final hasDirectUrl = directUrl.isNotEmpty && !isBlob && !isYoutube;
-    final youtubeSource =
-        displayUrl.isNotEmpty ? displayUrl : (repo.currentPageUrl.value ?? '');
-    final copyUrl =
-        isYoutube
-            ? (displayUrl.isNotEmpty ? displayUrl : youtubeSource)
-            : (hasDirectUrl ? directUrl : displayUrl);
-    final canDownload = isYoutube ? youtubeSource.isNotEmpty : hasDirectUrl;
-    final openInNewTabUrl =
-        isYoutube ? youtubeSource : (hasDirectUrl ? directUrl : '');
-    final downloadLabel =
-        isYoutube
-            ? sheetContext.l10n('browser.playingNow.action.stream')
-            : sheetContext.l10n('common.download');
-    final navigator = Navigator.of(sheetContext);
-    return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: SizedBox(width: 120, height: 68, child: preview),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        candidate.title,
-                        style: theme.textTheme.titleMedium,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
+      _ytFetchBarrier = OverlayEntry(
+        builder: (ctx) {
+          final theme = Theme.of(ctx);
+          final bg = theme.colorScheme.surface;
+          return Stack(
+            children: [
+              ModalBarrier(
+                color: Colors.black.withOpacity(0.28),
+                dismissible: false,
+              ),
+              Center(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: bg,
+                    borderRadius: BorderRadius.circular(14),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.16),
+                        blurRadius: 20,
+                        offset: const Offset(0, 12),
                       ),
-                      const SizedBox(height: 4),
-                      if (host.isNotEmpty)
-                        Text(host, style: theme.textTheme.bodySmall),
-                      Text(resolution, style: theme.textTheme.bodySmall),
-                      Text(timeline, style: theme.textTheme.bodySmall),
                     ],
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            SelectableText(
-              displayUrl.isNotEmpty ? displayUrl : directUrl,
-              maxLines: 2,
-              style: theme.textTheme.bodySmall,
-            ),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                FilledButton.icon(
-                  icon: Icon(isYoutube ? Icons.stream : Icons.download),
-                  label: Text(downloadLabel),
-                  onPressed:
-                      canDownload
-                          ? () async {
-                            navigator.pop();
-                            if (isYoutube) {
-                              final target =
-                                  youtubeSource.isNotEmpty
-                                      ? youtubeSource
-                                      : displayUrl;
-                              if (target.isNotEmpty) {
-                                await _showYoutubePreviewDialog(target);
-                              }
-                              await _confirmDownload(
-                                directUrl,
-                                skipPrompt: true,
-                              );
-                            } else {
-                              if (directUrl.isNotEmpty) {
-                                await _confirmDownload(
-                                  directUrl,
-                                  skipPrompt: true,
-                                );
-                              }
-                            }
-                          }
-                          : null,
-                ),
-                OutlinedButton.icon(
-                  icon: const Icon(Icons.copy),
-                  label: Text(sheetContext.l10n('browser.context.copyLink')),
-                  onPressed:
-                      copyUrl.isNotEmpty
-                          ? () async {
-                            navigator.pop();
-                            await Clipboard.setData(
-                              ClipboardData(text: copyUrl),
-                            );
-                            _showSnackBar(
-                              sheetContext.l10n('browser.snack.copiedLink'),
-                            );
-                          }
-                          : null,
-                ),
-                OutlinedButton.icon(
-                  icon: const Icon(Icons.open_in_new),
-                  label: Text(
-                    sheetContext.l10n('browser.context.openInNewTab'),
+                  child: const Padding(
+                    padding: EdgeInsets.all(20),
+                    child: CircularProgressIndicator.adaptive(),
                   ),
-                  onPressed:
-                      openInNewTabUrl.isNotEmpty
-                          ? () async {
-                            navigator.pop();
-                            await _openLinkInNewTab(openInNewTabUrl);
-                          }
-                          : null,
                 ),
-                OutlinedButton.icon(
-                  icon: const Icon(Icons.play_arrow),
-                  label: Text(sheetContext.l10n('common.play')),
-                  onPressed:
-                      hasDirectUrl
-                          ? () {
-                            navigator.pop();
-                            final startAt = candidate.positionSeconds;
-                            _playMedia(
-                              directUrl,
-                              title: candidate.title,
-                              startAt:
-                                  startAt != null
-                                      ? Duration(
-                                        milliseconds: (startAt * 1000).round(),
-                                      )
-                                      : null,
-                            );
-                          }
-                          : null,
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<void> _showPlayingVideosSheet() async {
-    if (repo.playingVideos.value.isEmpty) {
-      return;
-    }
-    _suppressLinkLongPress = true;
-    try {
-      await showModalBottomSheet(
-        context: context,
-        isScrollControlled: true,
-        builder: (sheetContext) {
-          return FractionallySizedBox(
-            heightFactor: 0.75,
-            child: SafeArea(
-              child: Column(
-                children: [
-                  ListTile(
-                    title: Text(
-                      sheetContext.l10n('browser.playingNow.sheetTitle'),
-                    ),
-                    trailing: IconButton(
-                      icon: const Icon(Icons.close),
-                      onPressed: () => Navigator.of(sheetContext).pop(),
-                    ),
-                  ),
-                  const Divider(height: 1),
-                  Expanded(
-                    child: ValueListenableBuilder<List<PlayingVideoCandidate>>(
-                      valueListenable: repo.playingVideos,
-                      builder: (context, candidates, _) {
-                        if (candidates.isEmpty) {
-                          return Center(
-                            child: Text(
-                              sheetContext.l10n(
-                                'browser.mediaDetection.emptyState',
-                              ),
-                            ),
-                          );
-                        }
-                        return ListView.builder(
-                          itemCount: candidates.length,
-                          itemBuilder: (context, index) {
-                            final candidate = candidates[index];
-                            return _buildPlayingVideoCard(
-                              sheetContext,
-                              candidate,
-                              isPrimary: index == 0,
-                            );
-                          },
-                        );
-                      },
-                    ),
-                  ),
-                ],
               ),
-            ),
+            ],
           );
         },
       );
+      overlay.insert(_ytFetchBarrier!);
+    }
+
+    insertBarrier();
+
+    YtVideoInfo? info;
+    try {
+      info = await AppRepo.I.prepareYoutubeOptions(url);
     } finally {
-      Future.delayed(const Duration(milliseconds: 250), () {
-        _suppressLinkLongPress = false;
-        unawaited(_restoreIosLinkInteractions());
-      });
+      _removeYtFetchBarrier();
+      _ytFetchInFlight = false;
     }
-  }
 
-  Future<void> _showYoutubeDownloadOptions(
-    String url, {
-    YtVideoInfo? preloaded,
-  }) async {
     if (!mounted) return;
-    if (_ytMenuOpen) {
-      return;
-    }
-
-    YtVideoInfo? info = preloaded;
-    if (info == null && _cachedYoutubeInfo != null) {
-      final cached = _cachedYoutubeInfo!;
-      final cachedWatch = cached.watchUrl;
-      final requestedId = extractYoutubeVideoId(url);
-      if (requestedId != null && requestedId == cached.videoId) {
-        info = cached;
-      } else if (cachedWatch != null && cachedWatch == url) {
-        info = cached;
-      }
-    }
-    if (info == null) {
-      if (_ytFetchInFlight) {
-        return;
-      }
-      final now = DateTime.now();
-      if (_lastYtOptionsRequest != null &&
-          now.difference(_lastYtOptionsRequest!) <
-              const Duration(milliseconds: 800)) {
-        return;
-      }
-      _lastYtOptionsRequest = now;
-      _ytFetchInFlight = true;
-
-      try {
-        FocusScope.of(context).unfocus();
-      } catch (_) {}
-
-      _insertYtFetchBarrier();
-      try {
-        info = await AppRepo.I.prepareYoutubeOptions(url);
-      } finally {
-        _removeYtFetchBarrier();
-        _ytFetchInFlight = false;
-      }
-    }
-
-    if (!mounted) {
-      return;
-    }
     if (info == null || info.options.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -3011,33 +1792,23 @@ const bindVideo = (video) => {
           content: Text(context.l10n('browser.youtube.error.noStreams')),
         ),
       );
-      if (!_ytMenuOpen) {
-        _suppressLinkLongPress = false;
-      }
       return;
     }
 
-    _cachedYoutubeInfo = info;
     AppRepo.I.ytTitle.value = info.title;
     // Reset before assigning so listeners fire even if same list reference is reused.
     AppRepo.I.ytOptions.value = null;
     AppRepo.I.ytOptions.value = info.options;
   }
 
-  Future<_LinkContextMenuAction?> _showLinkContextMenu(
-    String url,
-    _LinkContextKind kind,
-    bool isYoutube,
-  ) {
-    _dismissLinkContextMenu();
-    final overlay = Overlay.of(context);
-    if (overlay == null) return Future.value(null);
-
-    final completer = Completer<_LinkContextMenuAction?>();
-    _linkContextMenuCompleter = completer;
-
-    final entry = OverlayEntry(
-      builder: (context) {
+  Future<_LinkContextMenuAction?> _showLinkContextMenu(String url) {
+    return showGeneralDialog<_LinkContextMenuAction>(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: 'link-menu',
+      barrierColor: Colors.black45,
+      transitionDuration: const Duration(milliseconds: 150),
+      pageBuilder: (context, animation, secondaryAnimation) {
         final theme = Theme.of(context);
         final colorScheme = theme.colorScheme;
         Widget buildItem(
@@ -3045,173 +1816,110 @@ const bindVideo = (video) => {
           String label,
           _LinkContextMenuAction action,
         ) {
-          return InkWell(
-            onTap: () => _dismissLinkContextMenu(action),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(icon, color: colorScheme.primary),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(label, style: theme.textTheme.bodyMedium),
-                  ),
-                ],
-              ),
-            ),
+          return ListTile(
+            leading: Icon(icon, color: colorScheme.primary),
+            title: Text(label),
+            dense: true,
+            visualDensity: VisualDensity.compact,
+            onTap: () => Navigator.of(context).pop(action),
           );
         }
 
-        final items = <Widget>[];
-        void addEntry(
-          IconData icon,
-          String label,
-          _LinkContextMenuAction action,
-        ) {
-          if (items.isNotEmpty) {
-            items.add(const Divider(height: 1));
-          }
-          items.add(buildItem(icon, label, action));
-        }
-
-        addEntry(
-          Icons.copy,
-          context.l10n('browser.context.copyLink'),
-          _LinkContextMenuAction.copyLink,
-        );
-        switch (kind) {
-          case _LinkContextKind.image:
-            addEntry(
-              Icons.download,
-              context.l10n('browser.context.downloadImage'),
-              _LinkContextMenuAction.downloadImage,
-            );
-            break;
-          case _LinkContextKind.video:
-          case _LinkContextKind.audio:
-            if (!isYoutube) {
-              addEntry(
-                Icons.play_arrow,
-                context.l10n('browser.context.playVideo'),
-                _LinkContextMenuAction.playMedia,
-              );
-            }
-            addEntry(
-              Icons.download,
-              context.l10n('browser.context.downloadVideo'),
-              _LinkContextMenuAction.downloadMedia,
-            );
-            break;
-          case _LinkContextKind.generic:
-            addEntry(
-              Icons.download,
-              context.l10n('browser.context.downloadLink'),
-              _LinkContextMenuAction.downloadLink,
-            );
-            break;
-        }
-
-        addEntry(
-          Icons.open_in_new,
-          context.l10n('browser.context.openInNewTab'),
-          _LinkContextMenuAction.openInNewTab,
-        );
-        addEntry(
-          Icons.bookmark_add,
-          context.l10n('browser.context.addFavorite'),
-          _LinkContextMenuAction.addFavorite,
-        );
-        addEntry(
-          Icons.home,
-          context.l10n('browser.context.addHome'),
-          _LinkContextMenuAction.addHome,
-        );
-
-        return Stack(
-          children: [
-            Listener(
-              behavior: HitTestBehavior.translucent,
-              onPointerDown: (event) {
-                final box =
-                    _linkContextMenuKey.currentContext?.findRenderObject()
-                        as RenderBox?;
-                if (box == null) {
-                  _dismissLinkContextMenu();
-                  return;
-                }
-                final origin = box.localToGlobal(Offset.zero);
-                final rect = origin & box.size;
-                if (!rect.contains(event.position)) {
-                  _dismissLinkContextMenu();
-                }
-              },
-              child: const SizedBox.expand(),
-            ),
-            SafeArea(
-              child: Align(
-                alignment: Alignment.centerRight,
-                child: Padding(
-                  padding: const EdgeInsets.only(right: 12),
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.18),
-                          blurRadius: 18,
-                          offset: const Offset(0, 8),
+        return SafeArea(
+          child: Align(
+            alignment: Alignment.centerRight,
+            child: Padding(
+              padding: const EdgeInsets.only(right: 12),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.18),
+                      blurRadius: 18,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
+                ),
+                child: Material(
+                  color: colorScheme.surface,
+                  borderRadius: BorderRadius.circular(12),
+                  clipBehavior: Clip.antiAlias,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 280),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 12,
+                          ),
+                          child: Text(
+                            url,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: colorScheme.onSurface.withOpacity(0.75),
+                            ),
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        const Divider(height: 1),
+                        buildItem(
+                          Icons.copy,
+                          context.l10n('browser.context.copyLink'),
+                          _LinkContextMenuAction.copyLink,
+                        ),
+                        const Divider(height: 1),
+                        buildItem(
+                          Icons.download,
+                          context.l10n('browser.context.downloadLink'),
+                          _LinkContextMenuAction.downloadLink,
+                        ),
+                        const Divider(height: 1),
+                        buildItem(
+                          Icons.open_in_new,
+                          context.l10n('browser.context.openInNewTab'),
+                          _LinkContextMenuAction.openInNewTab,
+                        ),
+                        const Divider(height: 1),
+                        buildItem(
+                          Icons.bookmark_add,
+                          context.l10n('browser.context.addFavorite'),
+                          _LinkContextMenuAction.addFavorite,
+                        ),
+                        const Divider(height: 1),
+                        buildItem(
+                          Icons.home,
+                          context.l10n('browser.context.addHome'),
+                          _LinkContextMenuAction.addHome,
                         ),
                       ],
-                    ),
-                    child: Material(
-                      key: _linkContextMenuKey,
-                      color: colorScheme.surface,
-                      borderRadius: BorderRadius.circular(12),
-                      clipBehavior: Clip.antiAlias,
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 280),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 12,
-                              ),
-                              child: Text(
-                                url,
-                                style: theme.textTheme.bodySmall?.copyWith(
-                                  color: colorScheme.onSurface.withOpacity(
-                                    0.75,
-                                  ),
-                                ),
-                                maxLines: 3,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                            const Divider(height: 1),
-                            Column(
-                              mainAxisSize: MainAxisSize.min,
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: items,
-                            ),
-                          ],
-                        ),
-                      ),
                     ),
                   ),
                 ),
               ),
             ),
-          ],
+          ),
+        );
+      },
+      transitionBuilder: (context, animation, secondaryAnimation, child) {
+        final curved = CurvedAnimation(
+          parent: animation,
+          curve: Curves.easeOutCubic,
+        );
+        return FadeTransition(
+          opacity: curved,
+          child: SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(0.15, 0),
+              end: Offset.zero,
+            ).animate(curved),
+            child: child,
+          ),
         );
       },
     );
-    _linkContextMenuEntry = entry;
-    overlay.insert(entry);
-
-    return completer.future;
   }
 
   Future<void> _openLinkInNewTab(
@@ -3358,20 +2066,12 @@ const bindVideo = (video) => {
   /// Launch the app’s built‑in media player for the given URL. The page
   /// title is derived from the URL to provide a reasonable default name.
   /// 直接啟動內建全螢幕播放器；如需背景瀏覽請使用 iOS 子母畫面（PiP）。
-  void _playMedia(String url, {String? title, Duration? startAt}) {
-    final resolvedTitle =
-        (title != null && title.trim().isNotEmpty)
-            ? title.trim()
-            : _prettyFileName(url);
+  void _playMedia(String url) {
+    final title = _prettyFileName(url);
     // 直接啟動內建全螢幕播放器；如需背景瀏覽請使用 iOS 子母畫面（PiP）。
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder:
-            (_) => VideoPlayerPage(
-              path: url,
-              title: resolvedTitle,
-              startAt: startAt,
-            ),
+        builder: (_) => VideoPlayerPage(path: url, title: title),
       ),
     );
   }
@@ -3832,7 +2532,6 @@ const bindVideo = (video) => {
     repo.ytOptions.addListener(_onYtOptionsChanged);
     repo.pendingNewTab.addListener(_onPendingNewTab);
     repo.adBlockFilterSets.addListener(_onAdBlockFilterSetsChanged);
-    repo.longPressDetectionEnabled.addListener(_onLongPressDetectionChanged);
     // Listen to focus changes to handle paste button
     _urlFocus.addListener(() {
       if (_urlFocus.hasFocus) {
@@ -3955,17 +2654,6 @@ const bindVideo = (video) => {
         repo.setSnifferEnabled(saved);
       }
     }();
-    // Load saved long-press detection preference, default to true if not set.
-    () async {
-      final sp = await SharedPreferences.getInstance();
-      if (!sp.containsKey('detect_media_long_press')) {
-        repo.setLongPressDetectionEnabled(true);
-        await sp.setBool('detect_media_long_press', true);
-      } else {
-        final saved = sp.getBool('detect_media_long_press') ?? true;
-        repo.setLongPressDetectionEnabled(saved);
-      }
-    }();
     // Load saved blockExternalApp preference, default to false if not set.
     () async {
       final sp = await SharedPreferences.getInstance();
@@ -4016,7 +2704,6 @@ const bindVideo = (video) => {
         ),
       ),
     );
-    _toolbarMenuEntry?.markNeedsBuild();
     setState(() {});
   }
 
@@ -4162,38 +2849,25 @@ const bindVideo = (video) => {
     _BlockedExternalNavigation blocked, {
     InAppWebViewController? controller,
   }) {
-    _TabData? requestingTab;
-    String? previousUrl;
     if (controller != null) {
       try {
         unawaited(controller.stopLoading());
       } catch (_) {}
-      requestingTab = _tabForController(controller);
-      if (requestingTab != null) {
-        final current = requestingTab.currentUrl?.trim();
-        final text = requestingTab.urlCtrl.text.trim();
+      final tab = _tabForController(controller);
+      if (tab != null) {
+        tab.isLoading.value = false;
+        tab.progress.value = 0.0;
+        final current = tab.currentUrl;
         if (current != null && current.isNotEmpty) {
-          previousUrl = current;
-        } else if (text.isNotEmpty) {
-          previousUrl = text;
-        }
-        requestingTab.isLoading.value = false;
-        requestingTab.progress.value = 0.0;
-        if (current != null && current.isNotEmpty) {
-          requestingTab.urlCtrl.text = current;
-        } else if (requestingTab.urlCtrl.text.isNotEmpty) {
-          requestingTab.urlCtrl.clear();
+          tab.urlCtrl.text = current;
+        } else if (tab.urlCtrl.text.isNotEmpty) {
+          tab.urlCtrl.clear();
         }
       }
     }
-    final fallbackResult = _openBlockedNavigationInNewTab(
-      blocked,
-      requestingTab: requestingTab,
-    );
+    final fallbackResult = _openBlockedNavigationInNewTab(blocked);
     final openedInNewTab =
         fallbackResult == _BlockedNavigationFallbackResult.openedNewTab;
-    final openedInCurrentTab =
-        fallbackResult == _BlockedNavigationFallbackResult.openedInCurrentTab;
     final shouldAttemptBypass =
         controller != null &&
         fallbackResult == _BlockedNavigationFallbackResult.unavailable &&
@@ -4201,70 +2875,33 @@ const bindVideo = (video) => {
     _showExternalAppBlockedSnackBar(
       blocked,
       openedInNewTab: openedInNewTab,
-      bypassedInWebView: shouldAttemptBypass || openedInCurrentTab,
+      bypassedInWebView: shouldAttemptBypass,
     );
-    final needsRestore =
-        fallbackResult == _BlockedNavigationFallbackResult.suppressed ||
-        fallbackResult == _BlockedNavigationFallbackResult.unavailable;
     if (shouldAttemptBypass) {
       _attemptAppLinkBypass(controller!, blocked);
-    } else if (needsRestore && requestingTab != null) {
-      final normalizedPrevious = _normalizeHttpUrl(previousUrl) ?? previousUrl;
-      if (normalizedPrevious != null && normalizedPrevious.isNotEmpty) {
-        requestingTab.urlCtrl.text = normalizedPrevious;
-        requestingTab.currentUrl = normalizedPrevious;
-        requestingTab.isLoading.value = true;
-        try {
-          unawaited(
-            requestingTab.controller?.loadUrl(
-              urlRequest: URLRequest(url: WebUri(normalizedPrevious)),
-            ),
-          );
-        } catch (_) {}
-      } else {
-        requestingTab.currentUrl = null;
-        requestingTab.urlCtrl.clear();
-      }
-      _updateOpenTabs();
-      if (mounted) setState(() {});
     }
   }
 
   _BlockedNavigationFallbackResult _openBlockedNavigationInNewTab(
-    _BlockedExternalNavigation blocked, {
-    _TabData? requestingTab,
-  }) {
+    _BlockedExternalNavigation blocked,
+  ) {
     final normalizedFallback = _normalizeHttpUrl(blocked.fallbackUrl);
     if (normalizedFallback == null) {
       return _BlockedNavigationFallbackResult.unavailable;
     }
     final fallbackVariants = _normalizedBypassCandidates(normalizedFallback)
       ..add(normalizedFallback);
-    String? normalizedRequestingCurrent;
-    if (requestingTab != null) {
-      normalizedRequestingCurrent = _normalizeHttpUrl(
-        requestingTab.currentUrl ?? requestingTab.urlCtrl.text,
-      );
-    }
-    final bool sameAsRequestingTab =
-        normalizedRequestingCurrent != null &&
-        normalizedRequestingCurrent == normalizedFallback;
     final now = DateTime.now();
     _recentBlockedFallbacks.removeWhere(
       (_, ts) => now.difference(ts) > _kBlockedFallbackCooldown,
     );
     for (final variant in fallbackVariants) {
       final ts = _recentBlockedFallbacks[variant];
-      if (!sameAsRequestingTab &&
-          ts != null &&
-          now.difference(ts) <= _kBlockedFallbackCooldown) {
+      if (ts != null && now.difference(ts) <= _kBlockedFallbackCooldown) {
         return _BlockedNavigationFallbackResult.suppressed;
       }
     }
     for (final tab in _tabs) {
-      if (identical(tab, requestingTab)) {
-        continue;
-      }
       final normalizedTabUrl = _normalizeHttpUrl(tab.currentUrl);
       if (normalizedTabUrl == null) {
         continue;
@@ -4298,126 +2935,10 @@ const bindVideo = (video) => {
     addHostCandidate(_extractHostFromString(blocked.rawUrl));
     addHostCandidate(_extractHostFromWebUri(blocked.resolvedUri));
 
-    bool handledByRequestingTab() {
-      if (requestingTab == null) {
-        return false;
-      }
-      if (!sameAsRequestingTab) {
-        return false;
-      }
-      if (allowedHosts.isNotEmpty) {
-        requestingTab.allowedAppLinkHosts.addAll(allowedHosts);
-      }
-      requestingTab.urlCtrl.text = normalizedFallback;
-      requestingTab.currentUrl = normalizedFallback;
-      unawaited(
-        requestingTab.controller?.loadUrl(
-          urlRequest: URLRequest(url: WebUri(normalizedFallback)),
-        ),
-      );
-      _updateOpenTabs();
-      if (mounted) setState(() {});
-      return true;
-    }
-
-    if (handledByRequestingTab()) {
-      return _BlockedNavigationFallbackResult.openedInCurrentTab;
-    }
-
-    _TabData? reusableTab;
-    if (requestingTab != null) {
-      final current = requestingTab.currentUrl?.trim() ?? '';
-      if (current.isEmpty) {
-        reusableTab = requestingTab;
-      }
-    }
-    if (reusableTab == null &&
-        _currentTabIndex >= 0 &&
-        _currentTabIndex < _tabs.length) {
-      final candidate = _tabs[_currentTabIndex];
-      final current = candidate.currentUrl?.trim() ?? '';
-      if (current.isEmpty) {
-        reusableTab = candidate;
-      }
-    }
-
-    if (reusableTab != null) {
-      if (allowedHosts.isNotEmpty) {
-        reusableTab.allowedAppLinkHosts.addAll(allowedHosts);
-      }
-      reusableTab.urlCtrl.text = normalizedFallback;
-      reusableTab.currentUrl = normalizedFallback;
-      unawaited(
-        reusableTab.controller?.loadUrl(
-          urlRequest: URLRequest(url: WebUri(normalizedFallback)),
-        ),
-      );
-      _updateOpenTabs();
-      if (mounted) setState(() {});
-      return _BlockedNavigationFallbackResult.openedInCurrentTab;
-    }
-
     unawaited(
       _openLinkInNewTab(normalizedFallback, allowedAppLinkHosts: allowedHosts),
     );
     return _BlockedNavigationFallbackResult.openedNewTab;
-  }
-
-  Future<void> _releaseWebViewAfterContextMenu(
-    InAppWebViewController controller,
-  ) async {
-    const script = r'''
-      (function() {
-        try {
-          const active = document.activeElement;
-          if (active && typeof active.blur === 'function') {
-            active.blur();
-          }
-        } catch (_) {}
-        try {
-       const selection =
-              typeof window.getSelection === 'function'
-                  ? window.getSelection()
-                  : null;
-          if (selection && typeof selection.removeAllRanges === 'function') {
-            selection.removeAllRanges();
-          }
-        } catch (_) {}
-  
-      })();
-    ''';
-    try {
-      await controller.evaluateJavascript(source: script);
-    } catch (_) {}
-  }
-
-  Future<void> _resetAndReleaseWebViewAfterContextMenu(
-    InAppWebViewController controller,
-  ) async {
-    await _resetIosLinkContextMenuBridge(controller);
-    await _releaseWebViewAfterContextMenu(controller);
-  }
-
-  Future<void> _restoreIosLinkInteractions() async {
-    if (!Platform.isIOS) {
-      return;
-    }
-    if (_tabs.isEmpty || _currentTabIndex < 0) {
-      return;
-    }
-    if (_currentTabIndex >= _tabs.length) {
-      return;
-    }
-    final controller = _tabs[_currentTabIndex].controller;
-    if (controller == null) {
-      return;
-    }
-    try {
-      await _resetAndReleaseWebViewAfterContextMenu(controller);
-    } catch (_) {}
-    try {
-      await _setIosLinkContextMenuBridgeEnabled(controller, true);
-    } catch (_) {}
   }
 
   bool _flagTruthy(dynamic value) {
@@ -5364,11 +3885,8 @@ const bindVideo = (video) => {
     repo.ytOptions.removeListener(_onYtOptionsChanged);
     repo.pendingNewTab.removeListener(_onPendingNewTab);
     repo.adBlockFilterSets.removeListener(_onAdBlockFilterSetsChanged);
-    repo.longPressDetectionEnabled.removeListener(_onLongPressDetectionChanged);
     _urlFocus.dispose();
     _removeYtFetchBarrier();
-    _dismissToolbarMenu();
-    _dismissLinkContextMenu();
     super.dispose();
   }
 
@@ -5546,24 +4064,6 @@ const bindVideo = (video) => {
           ],
         ),
       ),
-      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
-      floatingActionButton: ValueListenableBuilder<List<PlayingVideoCandidate>>(
-        valueListenable: repo.playingVideos,
-        builder: (context, candidates, _) {
-          if (candidates.isEmpty) {
-            return const SizedBox.shrink();
-          }
-          final label = context.l10n(
-            'browser.playingNow.button',
-            params: {'count': '${candidates.length}'},
-          );
-          return FloatingActionButton.extended(
-            onPressed: _showPlayingVideosSheet,
-            icon: const Icon(Icons.playlist_play),
-            label: Text(label),
-          );
-        },
-      ),
       body: Column(
         children: [
           _toolbar(),
@@ -5579,23 +4079,20 @@ const bindVideo = (video) => {
                         contextMenu: ContextMenu(
                           // ignore: deprecated_member_use
                           options: ContextMenuOptions(
-                            hideDefaultSystemContextMenuItems: Platform.isIOS,
+                            hideDefaultSystemContextMenuItems: false,
                           ),
                         ),
                         initialSettings: InAppWebViewSettings(
                           userAgent: _userAgent,
                           allowsInlineMediaPlayback: true,
-                          allowsPictureInPictureMediaPlayback: true,
-                          allowsAirPlayForMediaPlayback: true,
                           mediaPlaybackRequiresUserGesture: false,
                           useOnLoadResource: true,
                           useShouldOverrideUrlLoading: true,
                           javaScriptEnabled: true,
 
                           supportMultipleWindows: true,
-
+                          javaScriptCanOpenWindowsAutomatically: true,
                           allowsBackForwardNavigationGestures: true,
-                          allowsLinkPreview: false,
                           contentBlockers:
                               repo.adBlockEnabled.value
                                   ? _adBlockerRules
@@ -5642,36 +4139,11 @@ const bindVideo = (video) => {
                               return {'ok': true};
                             },
                           );
-                          c.addJavaScriptHandler(
-                            handlerName: 'videoDetected',
-                            callback: (args) async {
-                              if (args.isEmpty) {
-                                return {'handled': false};
-                              }
-                              final raw = args.first;
-                              if (raw is! Map) {
-                                return {'handled': false};
-                              }
-                              try {
-                                final map = Map<String, dynamic>.from(
-                                  raw as Map,
-                                );
-                                await _handleDetectedVideo(map);
-                                return {'handled': true};
-                              } catch (_) {
-                                return {'handled': false};
-                              }
-                            },
-                          );
                           if (Platform.isIOS) {
                             c.addJavaScriptHandler(
                               handlerName: 'linkLongPress',
                               callback: (args) async {
                                 if (args.isEmpty) {
-                                  return {'handled': false};
-                                }
-
-                                if (_suppressLinkLongPress) {
                                   return {'handled': false};
                                 }
                                 final dynamic raw = args.first;
@@ -5688,29 +4160,13 @@ const bindVideo = (video) => {
                                 }
                                 _lastIosLinkMenuUrl = normalized;
                                 _lastIosLinkMenuTime = DateTime.now();
-                                final bool isYoutube =
-                                    AppRepo.I.isYoutubeUrl(normalized) ||
-                                    AppRepo.I.isYoutubeUrl(
-                                      repo.currentPageUrl.value ?? '',
-                                    );
-                                final kind = _inferLinkContextKind(
-                                  normalized,
-                                  isYoutube: isYoutube,
-                                );
-                                await _handleLinkContextMenuWithFeedback(
-                                  normalized,
-                                  releaseController: c,
-                                  kind: kind,
-                                  isYoutube: isYoutube,
-                                );
+                                await _handleLinkContextMenu(normalized);
                                 return {'handled': true};
                               },
                             );
                           }
-                          unawaited(_injectVideoDetector(c));
                         },
                         onLoadStart: (c, u) async {
-                          _cachedYoutubeInfo = null;
                           // 雙保險：硬攔非 Web scheme（極少數情況仍可能觸發）
                           final blocked = _shouldPreventExternalNavigation(
                             u,
@@ -5725,8 +4181,6 @@ const bindVideo = (video) => {
                           }
                           _iosLinkMenuBridgeReady = false;
                           await _injectIosLinkContextMenuBridge(c);
-                          await _injectVideoDetector(c);
-                          repo.clearPlayingVideos();
                           final tab = _tabs[tabIndex];
                           tab.isLoading.value = true;
                           tab.progress.value = 0.0;
@@ -5770,7 +4224,6 @@ const bindVideo = (video) => {
                         },
                         onLoadStop: (c, u) async {
                           await _injectIosLinkContextMenuBridge(c);
-                          await _injectVideoDetector(c);
                           // 注入嗅探腳本並同步開關
                           await c.evaluateJavascript(source: Sniffer.jsHook);
                           await c.evaluateJavascript(
@@ -5947,11 +4400,6 @@ const bindVideo = (video) => {
                           return NavigationActionPolicy.ALLOW;
                         },
                         onLongPressHitTestResult: (c, res) async {
-                          if (_suppressLinkLongPress) {
-                            await _resetAndReleaseWebViewAfterContextMenu(c);
-                            return;
-                          }
-
                           final extra = res.extra?.toString();
                           InAppWebViewHitTestResultType? hitType;
                           String typeString = '';
@@ -5974,68 +4422,232 @@ const bindVideo = (video) => {
                                   InAppWebViewHitTestResultType
                                       .SRC_IMAGE_ANCHOR_TYPE ||
                               typeString.contains('ANCHOR');
-                          final bool isVideoHit = typeString.contains('VIDEO');
-                          final bool isAudioHit = typeString.contains('AUDIO');
 
                           final candidate = extra?.trim();
-                          if (candidate == null || candidate.isEmpty) {
-                            await _resetAndReleaseWebViewAfterContextMenu(c);
-                            return;
-                          }
-                          if (_iosLinkMenuBridgeReady &&
-                              Platform.isIOS &&
-                              isAnchorHit) {
-                            return;
-                          }
-                          if (Platform.isIOS &&
-                              _lastIosLinkMenuUrl != null &&
-                              _lastIosLinkMenuTime != null) {
-                            final difference = DateTime.now().difference(
-                              _lastIosLinkMenuTime!,
-                            );
-                            if (difference < const Duration(seconds: 1) &&
-                                _lastIosLinkMenuUrl == candidate) {
+                          final hasCandidateLink =
+                              candidate != null && candidate.isNotEmpty;
+                          if (hasCandidateLink &&
+                              (isAnchorHit ||
+                                  (!isImageHit &&
+                                      _looksLikeLikelyUrl(candidate)))) {
+                            if (_iosLinkMenuBridgeReady &&
+                                Platform.isIOS &&
+                                isAnchorHit) {
                               return;
                             }
+                            if (Platform.isIOS &&
+                                _lastIosLinkMenuUrl != null &&
+                                _lastIosLinkMenuTime != null) {
+                              final difference = DateTime.now().difference(
+                                _lastIosLinkMenuTime!,
+                              );
+                              if (difference < const Duration(seconds: 1) &&
+                                  _lastIosLinkMenuUrl == candidate) {
+                                return;
+                              }
+                            }
+                            final resolved = await _resolveHitTestUrl(
+                              c,
+                              candidate!,
+                            );
+                            if (resolved != null) {
+                              final normalizedResolved = resolved.trim();
+                              if (normalizedResolved.isNotEmpty) {
+                                if (Platform.isIOS) {
+                                  _lastIosLinkMenuUrl = normalizedResolved;
+                                  _lastIosLinkMenuTime = DateTime.now();
+                                }
+                                if ((_ytFetchInFlight || _ytMenuOpen) &&
+                                    AppRepo.I.isYoutubeUrl(
+                                      normalizedResolved,
+                                    )) {
+                                  return;
+                                }
+                                await _handleLinkContextMenu(
+                                  normalizedResolved,
+                                );
+                                return;
+                              }
+                            }
                           }
-                          final resolved = await _resolveHitTestUrl(
-                            c,
-                            candidate,
-                          );
-                          if (resolved == null) {
-                            await _resetAndReleaseWebViewAfterContextMenu(c);
-                            return;
+
+                          String? link = extra;
+                          String type = isImageHit ? 'image' : 'video';
+                          if (link == null || link.isEmpty) {
+                            try {
+                              final raw = await c.evaluateJavascript(
+                                source: Sniffer.jsQueryActiveMedia,
+                              );
+                              if (raw is String && raw.startsWith('[')) {
+                                final List<dynamic> decoded = jsonDecode(raw);
+                                if (decoded.isNotEmpty) {
+                                  final Map<String, dynamic> first =
+                                      Map<String, dynamic>.from(
+                                        decoded.first as Map,
+                                      );
+                                  link = (first['url'] ?? '') as String;
+
+                                  final rawType =
+                                      (first['type'] ?? '') as String;
+                                  final lowerUrl = link!.toLowerCase();
+                                  if (rawType.startsWith('image/') ||
+                                      lowerUrl.endsWith('.png') ||
+                                      lowerUrl.endsWith('.jpg') ||
+                                      lowerUrl.endsWith('.jpeg') ||
+                                      lowerUrl.endsWith('.gif') ||
+                                      lowerUrl.endsWith('.webp')) {
+                                    type = 'image';
+                                  } else if (rawType.startsWith('audio/') ||
+                                      lowerUrl.endsWith('.mp3') ||
+                                      lowerUrl.endsWith('.wav') ||
+                                      lowerUrl.endsWith('.ogg') ||
+                                      lowerUrl.endsWith('.m4a')) {
+                                    type = 'audio';
+                                  } else if (rawType.startsWith('video/') ||
+                                      lowerUrl.endsWith('.mp4') ||
+                                      lowerUrl.endsWith('.mkv') ||
+                                      lowerUrl.endsWith('.mov') ||
+                                      lowerUrl.endsWith('.webm')) {
+                                    type = 'video';
+                                  } else {
+                                    type =
+                                        rawType.isNotEmpty
+                                            ? rawType
+                                            : 'unknown';
+                                  }
+                                }
+                              }
+                            } catch (_) {}
                           }
-                          final normalizedResolved = resolved.trim();
-                          if (normalizedResolved.isEmpty) {
-                            await _resetAndReleaseWebViewAfterContextMenu(c);
-                            return;
-                          }
-                          if (Platform.isIOS) {
-                            _lastIosLinkMenuUrl = normalizedResolved;
-                            _lastIosLinkMenuTime = DateTime.now();
-                          }
+                          if (link == null || link.isEmpty) return;
+
+                          final resolvedLink = link!;
+                          final lowerUrl = resolvedLink.toLowerCase();
                           final bool isYoutubeContext =
                               AppRepo.I.isYoutubeUrl(
                                 repo.currentPageUrl.value ?? '',
                               ) ||
-                              AppRepo.I.isYoutubeUrl(normalizedResolved);
-                          if ((_ytFetchInFlight || _ytMenuOpen) &&
-                              AppRepo.I.isYoutubeUrl(normalizedResolved)) {
+                              AppRepo.I.isYoutubeUrl(resolvedLink);
+                          if (lowerUrl.endsWith('.png') ||
+                              lowerUrl.endsWith('.jpg') ||
+                              lowerUrl.endsWith('.jpeg') ||
+                              lowerUrl.endsWith('.gif') ||
+                              lowerUrl.endsWith('.webp') ||
+                              lowerUrl.endsWith('.bmp') ||
+                              lowerUrl.endsWith('.svg')) {
+                            type = 'image';
+                          } else if (lowerUrl.endsWith('.mp3') ||
+                              lowerUrl.endsWith('.wav') ||
+                              lowerUrl.endsWith('.ogg') ||
+                              lowerUrl.endsWith('.m4a') ||
+                              lowerUrl.endsWith('.aac') ||
+                              lowerUrl.endsWith('.flac')) {
+                            type = 'audio';
+                          } else if (lowerUrl.endsWith('.mp4') ||
+                              lowerUrl.endsWith('.mkv') ||
+                              lowerUrl.endsWith('.mov') ||
+                              lowerUrl.endsWith('.webm') ||
+                              lowerUrl.endsWith('.m4v') ||
+                              lowerUrl.endsWith('.ts')) {
+                            type = 'video';
+                          }
+
+                          if (!mounted) return;
+                          if (isYoutubeContext) {
                             return;
                           }
-                          final kind = _inferLinkContextKind(
-                            normalizedResolved,
-                            isImageHit: isImageHit,
-                            isVideoHit: isVideoHit,
-                            isAudioHit: isAudioHit,
-                            isYoutube: isYoutubeContext,
-                          );
-                          await _handleLinkContextMenuWithFeedback(
-                            normalizedResolved,
-                            releaseController: c,
-                            kind: kind,
-                            isYoutube: isYoutubeContext,
+                          showDialog(
+                            context: context,
+                            builder: (_) {
+                              return AlertDialog(
+                                title: Text(
+                                  context.l10n(
+                                    'browser.detectMedia.dialog.title',
+                                  ),
+                                ),
+                                content: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    SelectableText(
+                                      resolvedLink,
+                                      maxLines: 4,
+                                      onTap: () {},
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Chip(
+                                          label: Text(
+                                            _localizedMediaType(context, type),
+                                          ),
+                                          visualDensity: VisualDensity.compact,
+                                          materialTapTargetSize:
+                                              MaterialTapTargetSize.shrinkWrap,
+                                        ),
+                                        const SizedBox(width: 8),
+                                        IconButton(
+                                          tooltip: context.l10n(
+                                            'browser.context.copyLink',
+                                          ),
+                                          icon: const Icon(Icons.copy),
+                                          onPressed: () async {
+                                            await Clipboard.setData(
+                                              ClipboardData(text: resolvedLink),
+                                            );
+                                            if (context.mounted) {
+                                              ScaffoldMessenger.of(
+                                                context,
+                                              ).showSnackBar(
+                                                SnackBar(
+                                                  duration: const Duration(
+                                                    seconds: 1,
+                                                  ),
+                                                  content: Text(
+                                                    context.l10n(
+                                                      'browser.snack.copiedLink',
+                                                    ),
+                                                  ),
+                                                ),
+                                              );
+                                            }
+                                          },
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () => Navigator.pop(context),
+                                    child: Text(context.l10n('common.cancel')),
+                                  ),
+                                  if (type != 'image')
+                                    TextButton.icon(
+                                      icon: const Icon(Icons.play_arrow),
+                                      label: Text(context.l10n('common.play')),
+                                      onPressed: () {
+                                        Navigator.pop(context);
+                                        _playMedia(resolvedLink);
+                                      },
+                                    ),
+                                  FilledButton.icon(
+                                    icon: const Icon(Icons.download),
+                                    label: Text(
+                                      context.l10n('common.download'),
+                                    ),
+                                    onPressed: () {
+                                      Navigator.pop(context);
+                                      _confirmDownload(
+                                        resolvedLink,
+                                        skipPrompt: true,
+                                      );
+                                    },
+                                  ),
+                                ],
+                              );
+                            },
                           );
                         },
                       ),
@@ -6393,7 +5005,7 @@ const bindVideo = (video) => {
           tooltip: context.l10n('browser.toolbar.menu'),
           padding: EdgeInsets.zero,
           constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
-          onPressed: _toggleToolbarMenu,
+          onPressed: _showToolbarMenu,
           icon: Icon(
             Icons.more_horiz,
             color: Theme.of(context).colorScheme.onSurface,
@@ -6403,36 +5015,7 @@ const bindVideo = (video) => {
     );
   }
 
-  void _toggleToolbarMenu() {
-    if (_toolbarMenuEntry != null) {
-      _dismissToolbarMenu();
-    } else {
-      _showToolbarMenu();
-    }
-  }
-
-  void _dismissToolbarMenu() {
-    _toolbarMenuEntry?.remove();
-    _toolbarMenuEntry = null;
-  }
-
-  void _dismissLinkContextMenu([_LinkContextMenuAction? result]) {
-    final entry = _linkContextMenuEntry;
-    if (entry != null) {
-      entry.remove();
-      _linkContextMenuEntry = null;
-    }
-    final completer = _linkContextMenuCompleter;
-    if (completer != null && !completer.isCompleted) {
-      completer.complete(result);
-    }
-    _linkContextMenuCompleter = null;
-  }
-
-  void _showToolbarMenu() {
-    if (_toolbarMenuEntry != null) {
-      return;
-    }
+  Future<void> _showToolbarMenu() async {
     final keyContext = _menuButtonKey.currentContext;
     if (keyContext == null) return;
     final renderObject = keyContext.findRenderObject();
@@ -6442,6 +5025,33 @@ const bindVideo = (video) => {
     final overlayBox = overlay.context.findRenderObject();
     if (overlayBox is! RenderBox) return;
 
+    final repo = AppRepo.I;
+
+    final favoriteCount = repo.favorites.value.length;
+    final historyCount = repo.history.value.length;
+    final blockPopupOn = repo.blockPopup.value;
+    final adBlockOn = repo.adBlockEnabled.value;
+    final selectedProfiles = repo.adBlockFilterSets.value;
+
+    PopupMenuItem<_ToolbarMenuAction> buildItem(
+      _ToolbarMenuAction action,
+      IconData icon,
+      String label, {
+      Color? iconColor,
+    }) {
+      return PopupMenuItem<_ToolbarMenuAction>(
+        value: action,
+        child: Row(
+          children: [
+            Icon(icon, color: iconColor),
+            const SizedBox(width: 12),
+            Expanded(child: Text(label)),
+          ],
+        ),
+      );
+    }
+
+    final colorScheme = Theme.of(context).colorScheme;
     final topLeft = renderObject.localToGlobal(
       Offset.zero,
       ancestor: overlayBox,
@@ -6450,245 +5060,93 @@ const bindVideo = (video) => {
       renderObject.size.bottomRight(Offset.zero),
       ancestor: overlayBox,
     );
-    final double top = bottomRight.dy + 8;
-    final double right = overlayBox.size.width - bottomRight.dx;
-    final double availableHeight = math.max(
-      200,
-      overlayBox.size.height - top - 16,
-    );
+    final position = RelativeRect.fromRect(
+      Rect.fromPoints(topLeft, bottomRight),
+      Offset.zero & overlayBox.size,
+    ).shift(const Offset(0, 8));
 
-    _toolbarMenuEntry = OverlayEntry(
-      builder: (context) {
-        final colorScheme = Theme.of(context).colorScheme;
-        return Stack(
-          children: [
-            Listener(
-              behavior: HitTestBehavior.translucent,
-              onPointerDown: (event) {
-                final box =
-                    _toolbarMenuOverlayKey.currentContext?.findRenderObject()
-                        as RenderBox?;
-                if (box == null) {
-                  _dismissToolbarMenu();
-                  return;
-                }
-                final origin = box.localToGlobal(Offset.zero);
-                final rect = origin & box.size;
-                if (!rect.contains(event.position)) {
-                  _dismissToolbarMenu();
-                }
-              },
-              child: const SizedBox.expand(),
-            ),
-            Positioned(
-              top: top,
-              right: right,
-              child: ConstrainedBox(
-                constraints: BoxConstraints(
-                  minWidth: 220,
-                  maxWidth: 320,
-                  maxHeight: availableHeight,
-                ),
-                child: Material(
-                  key: _toolbarMenuOverlayKey,
-                  color: colorScheme.surface,
-                  elevation: 12,
-                  borderRadius: BorderRadius.circular(12),
-                  clipBehavior: Clip.antiAlias,
-                  child: _buildToolbarMenuList(context),
-                ),
-              ),
-            ),
-          ],
-        );
-      },
-    );
-
-    overlay.insert(_toolbarMenuEntry!);
-  }
-
-  Widget _buildToolbarMenuList(BuildContext context) {
-    final repo = AppRepo.I;
-    final colorScheme = Theme.of(context).colorScheme;
-    Widget divider() => const Divider(height: 1);
-
-    return IntrinsicWidth(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            ValueListenableBuilder<List<String>>(
-              valueListenable: repo.favorites,
-              builder: (context, favorites, _) {
-                final count = favorites.length;
-                final label =
-                    count > 0
-                        ? context.l10n(
-                          'browser.menu.favoritesWithCount',
-                          params: {'count': count.toString()},
-                        )
-                        : context.l10n('browser.menu.favorites');
-                return _toolbarMenuEntryTile(
-                  context,
-                  icon: Icons.favorite,
-                  iconColor: count > 0 ? Colors.redAccent : null,
-                  label: label,
-                  action: _ToolbarMenuAction.openFavorites,
-                );
-              },
-            ),
-            ValueListenableBuilder<List<HistoryEntry>>(
-              valueListenable: repo.history,
-              builder: (context, history, _) {
-                final count = history.length;
-                final label =
-                    count > 0
-                        ? context.l10n(
-                          'browser.menu.historyWithCount',
-                          params: {'count': count.toString()},
-                        )
-                        : context.l10n('browser.menu.history');
-                return _toolbarMenuEntryTile(
-                  context,
-                  icon: Icons.history,
-                  iconColor: count > 0 ? colorScheme.primary : null,
-                  label: label,
-                  action: _ToolbarMenuAction.openHistory,
-                );
-              },
-            ),
-            _toolbarMenuEntryTile(
-              context,
-              icon: Icons.cleaning_services,
-              iconColor: colorScheme.error,
-              label: context.l10n('browser.menu.clearBrowsingData'),
-              action: _ToolbarMenuAction.clearBrowsingData,
-            ),
-            divider(),
-            ValueListenableBuilder<bool>(
-              valueListenable: repo.adBlockEnabled,
-              builder: (context, adBlockOn, _) {
-                return ValueListenableBuilder<Set<String>>(
-                  valueListenable: repo.adBlockFilterSets,
-                  builder: (context, profiles, __) {
-                    return _toolbarMenuEntryTile(
-                      context,
-                      icon: adBlockOn ? Icons.toggle_on : Icons.toggle_off,
-                      iconColor: adBlockOn ? colorScheme.primary : null,
-                      label: _adBlockerMenuLabel(adBlockOn, profiles),
-                      action: _ToolbarMenuAction.toggleAdBlocker,
-                    );
-                  },
-                );
-              },
-            ),
-            ValueListenableBuilder<bool>(
-              valueListenable: repo.blockPopup,
-              builder: (context, blockPopupOn, _) {
-                return _toolbarMenuEntryTile(
-                  context,
-                  icon: blockPopupOn ? Icons.toggle_on : Icons.toggle_off,
-                  iconColor: blockPopupOn ? Colors.redAccent : null,
-                  label: context.l10n('browser.menu.blockPopups'),
-                  action: _ToolbarMenuAction.toggleBlockPopup,
-                );
-              },
-            ),
-            ValueListenableBuilder<bool>(
-              valueListenable: AppRepo.I.premiumUnlocked,
-              builder: (context, premium, _) {
-                return ValueListenableBuilder<bool>(
-                  valueListenable: repo.snifferEnabled,
-                  builder: (context, enabled, __) {
-                    final active = premium && enabled;
-                    final label =
-                        premium
-                            ? context.l10n('browser.menu.mediaDetection')
-                            : context.l10n(
-                              'browser.sniffer.tooltip.premiumLocked',
-                            );
-                    return _toolbarMenuEntryTile(
-                      context,
-                      icon: active ? Icons.toggle_on : Icons.toggle_off,
-                      iconColor: active ? colorScheme.primary : null,
-                      label: label,
-                      action: _ToolbarMenuAction.toggleSniffer,
-                    );
-                  },
-                );
-              },
-            ),
-            _toolbarMenuEntryTile(
-              context,
-              icon: _blockExternalApp ? Icons.toggle_on : Icons.toggle_off,
-              iconColor: _blockExternalApp ? colorScheme.primary : null,
-              label: context.l10n('browser.menu.blockExternalApps'),
-              action: _ToolbarMenuAction.blockExternalApp,
-            ),
-            divider(),
-            _toolbarMenuEntryTile(
-              context,
-              icon: Icons.add,
-              label: context.l10n('browser.context.addHome'),
-              action: _ToolbarMenuAction.addHome,
-            ),
-            _toolbarMenuEntryTile(
-              context,
-              icon: Icons.home,
-              label: context.l10n('browser.menu.home'),
-              action: _ToolbarMenuAction.goHome,
-            ),
-            _toolbarMenuEntryTile(
-              context,
-              icon: Icons.help_outline,
-              label: context.l10n('browser.menu.help'),
-              action: _ToolbarMenuAction.help,
-            ),
-          ],
-        ),
+    final entries = <PopupMenuEntry<_ToolbarMenuAction>>[
+      buildItem(
+        _ToolbarMenuAction.openFavorites,
+        Icons.favorite,
+        favoriteCount > 0
+            ? context.l10n(
+              'browser.menu.favoritesWithCount',
+              params: {'count': favoriteCount.toString()},
+            )
+            : context.l10n('browser.menu.favorites'),
+        iconColor: favoriteCount > 0 ? Colors.redAccent : null,
       ),
-    );
-  }
-
-  Widget _toolbarMenuEntryTile(
-    BuildContext context, {
-    required IconData icon,
-    Color? iconColor,
-    required String label,
-    required _ToolbarMenuAction action,
-  }) {
-    return InkWell(
-      onTap: () {
-        unawaited(_handleToolbarMenuSelection(action));
-      },
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            Icon(icon, color: iconColor ?? Theme.of(context).iconTheme.color),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(label, style: Theme.of(context).textTheme.bodyMedium),
-            ),
-          ],
-        ),
+      buildItem(
+        _ToolbarMenuAction.openHistory,
+        Icons.history,
+        historyCount > 0
+            ? context.l10n(
+              'browser.menu.historyWithCount',
+              params: {'count': historyCount.toString()},
+            )
+            : context.l10n('browser.menu.history'),
+        iconColor: historyCount > 0 ? colorScheme.primary : null,
       ),
-    );
-  }
+      buildItem(
+        _ToolbarMenuAction.clearBrowsingData,
+        Icons.cleaning_services,
+        context.l10n('browser.menu.clearBrowsingData'),
+        iconColor: colorScheme.error,
+      ),
+      const PopupMenuDivider(),
+      buildItem(
+        _ToolbarMenuAction.toggleAdBlocker,
+        adBlockOn ? Icons.toggle_on : Icons.toggle_off,
 
-  Future<void> _handleToolbarMenuSelection(_ToolbarMenuAction action) async {
-    final keepOpen =
-        action == _ToolbarMenuAction.toggleBlockPopup ||
-        action == _ToolbarMenuAction.blockExternalApp;
-    if (!keepOpen) {
-      _dismissToolbarMenu();
+        _adBlockerMenuLabel(adBlockOn, selectedProfiles),
+        iconColor: adBlockOn ? colorScheme.primary : null,
+      ),
+      buildItem(
+        _ToolbarMenuAction.toggleBlockPopup,
+        blockPopupOn ? Icons.toggle_on : Icons.toggle_off,
+        context.l10n('browser.menu.blockPopups'),
+        iconColor: blockPopupOn ? Colors.redAccent : null,
+      ),
+      buildItem(
+        _ToolbarMenuAction.blockExternalApp,
+        _blockExternalApp ? Icons.toggle_on : Icons.toggle_off,
+        context.l10n('browser.menu.blockExternalApps'),
+        iconColor:
+            _blockExternalApp ? Theme.of(context).colorScheme.primary : null,
+      ),
+      const PopupMenuDivider(),
+      buildItem(
+        _ToolbarMenuAction.addHome,
+        Icons.add,
+        context.l10n('browser.context.addHome'),
+      ),
+      buildItem(
+        _ToolbarMenuAction.goHome,
+        Icons.home,
+        context.l10n('browser.menu.home'),
+      ),
+      buildItem(
+        _ToolbarMenuAction.help,
+        Icons.help_outline,
+        context.l10n('browser.menu.help'),
+      ),
+    ];
+
+    final selected = await showMenu<_ToolbarMenuAction>(
+      context: context,
+      position: position,
+      items: entries,
+    );
+    if (!mounted || selected == null) {
+      return;
     }
 
-    switch (action) {
+    final keepOpen =
+        selected == _ToolbarMenuAction.toggleBlockPopup ||
+        selected == _ToolbarMenuAction.blockExternalApp;
+
+    switch (selected) {
       case _ToolbarMenuAction.openFavorites:
         await _openFavoritesPage();
         break;
@@ -6703,9 +5161,6 @@ const bindVideo = (video) => {
         break;
       case _ToolbarMenuAction.toggleBlockPopup:
         _toggleBlockPopupSetting();
-        break;
-      case _ToolbarMenuAction.toggleSniffer:
-        await _toggleSniffer();
         break;
       case _ToolbarMenuAction.blockExternalApp:
         _toggleBlockExternalAppSetting();
@@ -6723,8 +5178,11 @@ const bindVideo = (video) => {
         break;
     }
 
-    if (keepOpen) {
-      _toolbarMenuEntry?.markNeedsBuild();
+    if (keepOpen && mounted) {
+      await Future.delayed(const Duration(milliseconds: 120));
+      if (mounted) {
+        _showToolbarMenu();
+      }
     }
   }
 
@@ -7852,22 +6310,6 @@ const bindVideo = (video) => {
   /// key => snapshot (key can be url or savePath+phase)
   final Map<String, _RateSnapshot> _rateSnaps = {};
 
-  /// Cache the most recent non-null speed so the UI can keep showing a value
-  /// while the next sample is still being gathered.
-  final Map<String, double> _lastSpeeds = {};
-  void _clearSpeedSnapshotsForTask(String savePath) {
-    final prefix = '$savePath|';
-    _rateSnaps.removeWhere((key, _) => key.startsWith(prefix));
-    _lastSpeeds.removeWhere((key, _) => key.startsWith(prefix));
-  }
-
-  void _resetAllSpeedTracking({bool clearCachedSpeeds = true}) {
-    _rateSnaps.clear();
-    if (clearCachedSpeeds) {
-      _lastSpeeds.clear();
-    }
-  }
-
   String _fmtSpeed(num bps) {
     // bytes per second to human friendly string without specifying colors
     const units = ['B/s', 'KB/s', 'MB/s', 'GB/s', 'TB/s'];
@@ -7881,26 +6323,30 @@ const bindVideo = (video) => {
   }
 
   _RateSnapshot _snapNow(int bytes) => _RateSnapshot(bytes, DateTime.now());
+  String _localizedMediaType(BuildContext context, String type) {
+    switch (type.toLowerCase()) {
+      case 'image':
+        return context.l10n('browser.mediaType.image');
+      case 'audio':
+        return context.l10n('browser.mediaType.audio');
+      case 'video':
+        return context.l10n('browser.mediaType.video');
+      default:
+        return context.l10n('browser.mediaType.unknown');
+    }
+  }
 
   /// Computes speed in B/s based on previous snapshot.
   /// Returns null if not enough data yet.
   double? _computeSpeed(String key, int bytesNow) {
     final prev = _rateSnaps[key];
-    final now = DateTime.now();
     _rateSnaps[key] = _snapNow(bytesNow);
     if (prev == null) return null;
-    final elapsedMs = now.difference(prev.ts).inMilliseconds;
-    if (elapsedMs <= 0) {
-      return null;
-    }
+    final dt = DateTime.now().difference(prev.ts).inMilliseconds / 1000.0;
+    if (dt <= 0) return null;
     final db = bytesNow - prev.bytes;
-    if (db <= 0) {
-      if (elapsedMs > 1200) {
-        _lastSpeeds.remove(key);
-      }
-      return null;
-    }
-    return db / (elapsedMs / 1000.0);
+    if (db <= 0) return null;
+    return db / dt;
   }
 
   /// --- end helpers ---
@@ -7910,8 +6356,6 @@ const bindVideo = (video) => {
   /// provides quick visibility into ongoing and completed downloads without
   /// navigating away from the browser tab.
   void _openDownloadsSheet() {
-    _suppressLinkLongPress = true;
-    _resetAllSpeedTracking(clearCachedSpeeds: false);
     showModalBottomSheet(
       context: context,
       builder: (_) {
@@ -8005,9 +6449,7 @@ const bindVideo = (video) => {
           ),
         );
       },
-    ).whenComplete(() {
-      _suppressLinkLongPress = false;
-    });
+    );
   }
 
   /// Build a ListTile for a given download task. This encapsulates all the logic
@@ -8111,8 +6553,7 @@ const bindVideo = (video) => {
     final bool isConverting =
         isHls &&
         t.state == 'downloading' &&
-        ((t.total != null && t.received >= t.total!) ||
-            t.progressUnit == 'hls-converting');
+        (t.total != null && t.received >= t.total!);
     // HLS tasks actively downloading segments have received fewer segments
     // than the total and are still marked as downloading.
     final bool isDownloadingSegments =
@@ -8121,9 +6562,6 @@ const bindVideo = (video) => {
         (t.total != null && t.received < t.total!);
     final repo = AppRepo.I;
     final resolvedType = repo.resolvedTaskType(t);
-    if (t.state != 'downloading' || t.paused) {
-      _clearSpeedSnapshotsForTask(t.savePath);
-    }
     final activeHlsPath = repo.activeHlsOutputFor(t) ?? t.savePath;
     final int? activeHlsBytes =
         isHls
@@ -8388,6 +6826,28 @@ const bindVideo = (video) => {
               ),
             );
           }
+          // 顯示直接下載檔案的即時速度（非 HLS）
+          final keyDirect = '${t.savePath}|bytes';
+          final spDirect = _computeSpeed(keyDirect, t.received);
+          if (spDirect != null) {
+            subtitleWidgets.add(
+              Text(
+                context.l10n(
+                  'browser.download.speedLabel',
+                  params: {'speed': _fmtSpeed(spDirect)},
+                ),
+                style: const TextStyle(fontSize: 12),
+              ),
+            );
+          } else {
+            _rateSnaps[keyDirect] = _snapNow(t.received);
+            subtitleWidgets.add(
+              Text(
+                context.l10n('browser.download.speedMeasuring'),
+                style: const TextStyle(fontSize: 12),
+              ),
+            );
+          }
         } else if (t.state == 'done' || t.state == 'error') {
           try {
             final f = File(t.savePath);
@@ -8445,7 +6905,6 @@ const bindVideo = (video) => {
         final key = '${t.savePath}|$speedKeyPhase';
         final sp = _computeSpeed(key, speedBytesNow!);
         if (sp != null) {
-          _lastSpeeds[key] = sp;
           subtitleWidgets.add(
             Text(
               context.l10n(
@@ -8457,16 +6916,10 @@ const bindVideo = (video) => {
           );
         } else {
           // 首次建立快照時先不顯示數值（避免顯示 0）
-          _rateSnaps.putIfAbsent(key, () => _snapNow(speedBytesNow!));
-          final cached = _lastSpeeds[key];
+          _rateSnaps[key] = _snapNow(speedBytesNow!);
           subtitleWidgets.add(
             Text(
-              cached != null
-                  ? context.l10n(
-                    'browser.download.speedLabel',
-                    params: {'speed': _fmtSpeed(cached)},
-                  )
-                  : context.l10n('browser.download.speedMeasuring'),
+              context.l10n('browser.download.speedMeasuring'),
               style: const TextStyle(fontSize: 12),
             ),
           );
@@ -8527,7 +6980,7 @@ const bindVideo = (video) => {
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (t.state == 'downloading' && !t.paused && !isConverting)
+            if (t.state == 'downloading' && !t.paused)
               IconButton(
                 icon: const Icon(Icons.pause),
                 tooltip: context.l10n('common.pause'),
@@ -8554,24 +7007,14 @@ const bindVideo = (video) => {
               icon: const Icon(Icons.delete_outline),
               tooltip: context.l10n('common.delete'),
               onPressed: () async {
-                final state = t.state.toLowerCase();
-                final isCompleted = state == 'done';
-                final shouldDeleteFile = !isCompleted;
-                if (!isCompleted && state == 'downloading') {
-                  await AppRepo.I.pauseTask(t);
-                }
-                await AppRepo.I.removeTasks([t], deleteFiles: shouldDeleteFile);
+                await AppRepo.I.removeTasks([t], deleteFiles: false);
                 await AppRepo.I.rescanDownloadsFolder();
                 if (!mounted) return;
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     duration: const Duration(seconds: 1),
                     content: Text(
-                      context.l10n(
-                        shouldDeleteFile
-                            ? 'browser.snack.downloadRemovedDeletedFile'
-                            : 'browser.snack.downloadRemovedKeepFile',
-                      ),
+                      context.l10n('browser.snack.downloadRemovedKeepFile'),
                     ),
                   ),
                 );
@@ -8620,7 +7063,7 @@ const bindVideo = (video) => {
           }
           if (filePath != null) {
             try {
-              await AppRepo.I.sharePaths([filePath]);
+              await Share.shareXFiles([XFile(filePath)]);
             } catch (e) {
               if (mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
@@ -8928,52 +7371,6 @@ class _HistoryPageState extends State<HistoryPage>
     final theme = Theme.of(context);
     final localTs = entry.timestamp.toLocal();
     final title = entry.title.isNotEmpty ? entry.title : entry.url;
-    String hostKey = '';
-    try {
-      final uri = Uri.parse(entry.url);
-      hostKey = uri.host.toLowerCase();
-    } catch (_) {
-      hostKey = '';
-    }
-    if (hostKey.isNotEmpty) {
-      unawaited(repo.ensureFaviconForUrl(entry.url));
-    }
-    Widget defaultAvatar() {
-      return CircleAvatar(
-        radius: 18,
-        backgroundColor: theme.colorScheme.primaryContainer,
-        child: Icon(Icons.public, color: theme.colorScheme.onPrimaryContainer),
-      );
-    }
-
-    Widget leadingIcon;
-    if (hostKey.isEmpty) {
-      leadingIcon = defaultAvatar();
-    } else {
-      leadingIcon = ValueListenableBuilder<Map<String, String?>>(
-        valueListenable: repo.faviconCache,
-        builder: (context, cache, _) {
-          final path = cache[hostKey];
-          if (path != null && path.isNotEmpty) {
-            final file = File(path);
-            if (file.existsSync()) {
-              return SizedBox(
-                width: 36,
-                height: 36,
-                child: ClipOval(
-                  child: Image.file(
-                    file,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => defaultAvatar(),
-                  ),
-                ),
-              );
-            }
-          }
-          return defaultAvatar();
-        },
-      );
-    }
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Material(
@@ -8995,7 +7392,14 @@ class _HistoryPageState extends State<HistoryPage>
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    leadingIcon,
+                    CircleAvatar(
+                      radius: 18,
+                      backgroundColor: theme.colorScheme.primaryContainer,
+                      child: Icon(
+                        Icons.public,
+                        color: theme.colorScheme.onPrimaryContainer,
+                      ),
+                    ),
                     const SizedBox(width: 12),
                     Expanded(
                       child: Column(
