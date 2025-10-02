@@ -3375,6 +3375,23 @@ class AppRepo extends ChangeNotifier {
     playingVideos.value = [];
   }
 
+  void removePlayingVideo(String id) {
+    if (id.isEmpty) {
+      return;
+    }
+    final list = playingVideos.value;
+    if (list.isEmpty) {
+      return;
+    }
+    final next = list
+        .where((candidate) => candidate.id != id)
+        .toList(growable: false);
+    if (next.length == list.length) {
+      return;
+    }
+    playingVideos.value = List<PlayingVideoCandidate>.from(next);
+  }
+
   /// Adds a media hit or merges if URL already exists.
 
   String _normalizeHitType(String url, String rawType, String contentType) {

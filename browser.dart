@@ -120,6 +120,7 @@ enum _ToolbarMenuAction {
   openHistory,
   clearBrowsingData,
   toggleAdBlocker,
+  toggleAutoDetectMedia,
   toggleBlockPopup,
   blockExternalApp,
   addHome,
@@ -1023,13 +1024,7 @@ class _BrowserPageState extends State<BrowserPage>
                           ],
                         ),
                         const SizedBox(height: 6),
-                        // 迷你預覽（可拿掉，只留控制列也行）
-                        if (_miniCtrl != null && _miniCtrl!.value.isInitialized)
-                          AspectRatio(
-                            aspectRatio: _miniCtrl!.value.aspectRatio,
-                            child: VideoPlayer(_miniCtrl!),
-                          ),
-                        const SizedBox(height: 6),
+
                         // 控制列：後退15、播放/暫停、快轉15
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -2066,6 +2061,24 @@ class _BrowserPageState extends State<BrowserPage>
     final canDownload = isYoutube ? youtubeSource.isNotEmpty : hasDirectUrl;
     final openInNewTabUrl =
         isYoutube ? youtubeSource : (hasDirectUrl ? directUrl : '');
+    String? _validHomeUrl(String source) {
+      final trimmed = source.trim();
+      if (trimmed.isEmpty) {
+        return null;
+      }
+      final uri = Uri.tryParse(trimmed);
+      if (uri == null) {
+        return null;
+      }
+      if (uri.scheme != 'http' && uri.scheme != 'https') {
+        return null;
+      }
+      return uri.toString();
+    }
+
+    final homeCandidateUrl =
+        _validHomeUrl(displayUrl) ?? _validHomeUrl(candidate.url) ?? '';
+    final canAddHome = homeCandidateUrl.isNotEmpty;
     final downloadLabel =
         isYoutube
             ? sheetContext.l10n('browser.playingNow.action.stream')
@@ -2132,17 +2145,11 @@ class _BrowserPageState extends State<BrowserPage>
                               if (target.isNotEmpty) {
                                 await _showYoutubePreviewDialog(target);
                               }
+                            } else if (directUrl.isNotEmpty) {
                               await _confirmDownload(
                                 directUrl,
                                 skipPrompt: true,
                               );
-                            } else {
-                              if (directUrl.isNotEmpty) {
-                                await _confirmDownload(
-                                  directUrl,
-                                  skipPrompt: true,
-                                );
-                              }
                             }
                           }
                           : null,
@@ -2177,25 +2184,28 @@ class _BrowserPageState extends State<BrowserPage>
                           : null,
                 ),
                 OutlinedButton.icon(
-                  icon: const Icon(Icons.play_arrow),
-                  label: Text(sheetContext.l10n('common.play')),
+                  icon: const Icon(Icons.home_outlined),
+                  label: Text(sheetContext.l10n('browser.context.addHome')),
                   onPressed:
-                      hasDirectUrl
-                          ? () {
+                      canAddHome
+                          ? () async {
                             navigator.pop();
-                            final startAt = candidate.positionSeconds;
-                            _playMedia(
-                              directUrl,
-                              title: candidate.title,
-                              startAt:
-                                  startAt != null
-                                      ? Duration(
-                                        milliseconds: (startAt * 1000).round(),
-                                      )
+                            await _showAddToHomeDialog(
+                              initialUrl: homeCandidateUrl,
+                              initialName:
+                                  candidate.title.isNotEmpty
+                                      ? candidate.title
                                       : null,
                             );
                           }
                           : null,
+                ),
+                TextButton.icon(
+                  icon: const Icon(Icons.close),
+                  label: Text(sheetContext.l10n('common.cancel')),
+                  onPressed: () {
+                    AppRepo.I.removePlayingVideo(candidate.id);
+                  },
                 ),
               ],
             ),
@@ -5465,6 +5475,7 @@ class _BrowserPageState extends State<BrowserPage>
         repo.favorites,
         repo.history,
         repo.blockPopup,
+        repo.longPressDetectionEnabled,
         repo.adBlockEnabled,
         repo.adBlockFilterSets,
       ]),
@@ -5499,6 +5510,7 @@ class _BrowserPageState extends State<BrowserPage>
     final favoriteCount = repo.favorites.value.length;
     final historyCount = repo.history.value.length;
     final blockPopupOn = repo.blockPopup.value;
+    final autoDetectOn = repo.longPressDetectionEnabled.value;
     final adBlockOn = repo.adBlockEnabled.value;
     final selectedProfiles = repo.adBlockFilterSets.value;
 
@@ -5572,6 +5584,12 @@ class _BrowserPageState extends State<BrowserPage>
         iconColor: adBlockOn ? colorScheme.primary : null,
       ),
       buildItem(
+        _ToolbarMenuAction.toggleAutoDetectMedia,
+        autoDetectOn ? Icons.toggle_on : Icons.toggle_off,
+        context.l10n('settings.detectMediaLongPress.title'),
+        iconColor: autoDetectOn ? colorScheme.primary : null,
+      ),
+      buildItem(
         _ToolbarMenuAction.toggleBlockPopup,
         blockPopupOn ? Icons.toggle_on : Icons.toggle_off,
         context.l10n('browser.menu.blockPopups'),
@@ -5612,6 +5630,7 @@ class _BrowserPageState extends State<BrowserPage>
     }
 
     final keepOpen =
+        selected == _ToolbarMenuAction.toggleAutoDetectMedia ||
         selected == _ToolbarMenuAction.toggleBlockPopup ||
         selected == _ToolbarMenuAction.blockExternalApp;
 
@@ -5627,6 +5646,27 @@ class _BrowserPageState extends State<BrowserPage>
         break;
       case _ToolbarMenuAction.toggleAdBlocker:
         await _showAdBlockerSettings();
+        break;
+      case _ToolbarMenuAction.toggleAutoDetectMedia:
+        {
+          final next = !repo.longPressDetectionEnabled.value;
+          repo.setLongPressDetectionEnabled(next);
+          final sp = await SharedPreferences.getInstance();
+          await sp.setBool('detect_media_long_press', next);
+          if (!mounted) {
+            break;
+          }
+          final snackKey =
+              next
+                  ? 'settings.detectMediaLongPress.snack.enabled'
+                  : 'settings.detectMediaLongPress.snack.disabled';
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              duration: const Duration(seconds: 1),
+              content: Text(context.l10n(snackKey)),
+            ),
+          );
+        }
         break;
       case _ToolbarMenuAction.toggleBlockPopup:
         _toggleBlockPopupSetting();
