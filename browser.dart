@@ -738,6 +738,9 @@ class _BrowserPageState extends State<BrowserPage>
   bool _suppressLinkLongPress = false;
   bool _webViewInteractionGuardActive = false;
   Timer? _webViewInteractionGuardTimer;
+  Timer? _nowPlayingRefreshTimer;
+  bool _nowPlayingRefreshInProgress = false;
+  static const Duration _kNowPlayingRefreshInterval = Duration(seconds: 2);
 
   void _setWebViewInteractionGuardActive(bool active) {
     if (_webViewInteractionGuardActive == active) {
@@ -1624,6 +1627,279 @@ class _BrowserPageState extends State<BrowserPage>
     );
   }
 
+  String _normalizePageUrl(String url) {
+    var trimmed = url.trim();
+    if (trimmed.isEmpty) {
+      return '';
+    }
+    try {
+      final uri = Uri.parse(trimmed);
+      trimmed = uri.replace(fragment: '').toString();
+    } catch (_) {
+      final hashIndex = trimmed.indexOf('#');
+      if (hashIndex >= 0) {
+        trimmed = trimmed.substring(0, hashIndex);
+      }
+    }
+    if (trimmed.endsWith('/') && trimmed.length > 1) {
+      return trimmed.substring(0, trimmed.length - 1);
+    }
+    return trimmed;
+  }
+
+  InAppWebViewController? _controllerForCandidate(
+    PlayingVideoCandidate candidate,
+  ) {
+    final targetPage = _normalizePageUrl(candidate.pageUrl);
+    if (targetPage.isEmpty) {
+      return null;
+    }
+    for (final tab in _tabs) {
+      final current = tab.currentUrl;
+      if (current == null || current.isEmpty) {
+        continue;
+      }
+      if (_normalizePageUrl(current) == targetPage) {
+        return tab.controller;
+      }
+    }
+    return null;
+  }
+
+  void _ensureNowPlayingPolling() {
+    if (_nowPlayingRefreshTimer != null) {
+      return;
+    }
+    _nowPlayingRefreshTimer = Timer.periodic(
+      _kNowPlayingRefreshInterval,
+      (_) => unawaited(_refreshNowPlayingMetadata()),
+    );
+    unawaited(_refreshNowPlayingMetadata());
+  }
+
+  void _stopNowPlayingPolling() {
+    _nowPlayingRefreshTimer?.cancel();
+    _nowPlayingRefreshTimer = null;
+  }
+
+  void _onPlayingVideosChanged() {
+    if (repo.playingVideos.value.isEmpty) {
+      _stopNowPlayingPolling();
+    } else {
+      _ensureNowPlayingPolling();
+    }
+  }
+
+  Future<void> _refreshNowPlayingMetadata() async {
+    if (_nowPlayingRefreshInProgress) {
+      return;
+    }
+    final candidates = List<PlayingVideoCandidate>.from(
+      repo.playingVideos.value,
+    );
+    if (candidates.isEmpty) {
+      _stopNowPlayingPolling();
+      return;
+    }
+    _nowPlayingRefreshInProgress = true;
+    try {
+      for (final candidate in candidates) {
+        final controller = _controllerForCandidate(candidate);
+        if (controller == null) {
+          continue;
+        }
+        final script = '''
+          (function(targetUrl) {
+            try {
+              const response = { ok: false };
+              const url = (targetUrl || '').toString();
+              const videos = Array.from(document.querySelectorAll('video'));
+              const match = videos.find(function(video) {
+                try {
+                  const current = (video.currentSrc || video.src || '').toString();
+                  if (!current) {
+                    return false;
+                  }
+                  if (!url) {
+                    return true;
+                  }
+                  if (current === url) {
+                    return true;
+                  }
+                  const normalizedCurrent = current.split('#')[0];
+                  const normalizedTarget = url.split('#')[0];
+                  if (normalizedCurrent === normalizedTarget) {
+                    return true;
+                  }
+                  if (url.startsWith('blob:') && current.startsWith('blob:')) {
+                    return true;
+                  }
+                  return false;
+                } catch (err) {
+                  return false;
+                }
+              });
+              if (!match) {
+                response.reason = 'no-match';
+                return JSON.stringify(response);
+              }
+              response.ok = true;
+              try {
+                const position = match.currentTime;
+                if (typeof position === 'number' && isFinite(position) && position >= 0) {
+                  response.position = position;
+                }
+              } catch (_) {}
+              try {
+                const duration = match.duration;
+                if (typeof duration === 'number' && isFinite(duration) && duration > 0) {
+                  response.duration = duration;
+                }
+              } catch (_) {}
+              try {
+                const width = match.videoWidth || match.clientWidth || 0;
+                const height = match.videoHeight || match.clientHeight || 0;
+                if (width > 0 && height > 0) {
+                  response.width = width;
+                  response.height = height;
+                  const canvas = document.createElement('canvas');
+                  canvas.width = width;
+                  canvas.height = height;
+                  const ctx = canvas.getContext('2d');
+                  if (ctx) {
+                    ctx.drawImage(match, 0, 0, width, height);
+                    const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
+                    if (dataUrl && dataUrl.startsWith('data:image')) {
+                      const parts = dataUrl.split(',', 2);
+                      if (parts.length === 2) {
+                        response.snapshot = parts[1];
+                      }
+                    }
+                  }
+                }
+              } catch (err) {
+                response.snapshotError = String(err);
+              }
+              try {
+                const poster = match.poster;
+                if (poster) {
+                  response.poster = poster;
+                }
+              } catch (_) {}
+              return JSON.stringify(response);
+            } catch (err) {
+              return JSON.stringify({ ok: false, error: String(err) });
+            }
+          })(${jsonEncode(candidate.url)});
+        ''';
+        dynamic raw;
+        try {
+          raw = await controller.evaluateJavascript(source: script);
+        } catch (err, stack) {
+          if (kDebugMode) {
+            debugPrint(
+              '[Debug][NowPlaying] Failed to evaluate snapshot script: $err',
+            );
+            debugPrint('$stack');
+          }
+          continue;
+        }
+        Map<String, dynamic>? data;
+        if (raw is String) {
+          final trimmed = raw.trim();
+          if (trimmed.isEmpty) {
+            continue;
+          }
+          try {
+            final decoded = jsonDecode(trimmed);
+            if (decoded is Map<String, dynamic>) {
+              data = decoded;
+            }
+          } catch (_) {
+            continue;
+          }
+        } else if (raw is Map) {
+          try {
+            data = Map<String, dynamic>.from(raw as Map);
+          } catch (_) {
+            data = null;
+          }
+        }
+        if (data == null || data['ok'] != true) {
+          continue;
+        }
+        bool changed = false;
+        double? position;
+        if (data.containsKey('position')) {
+          final value = data['position'];
+          if (value is num) {
+            position = value.toDouble();
+            changed = true;
+          }
+        }
+        double? duration;
+        if (data.containsKey('duration')) {
+          final value = data['duration'];
+          if (value is num) {
+            final d = value.toDouble();
+            if (d.isFinite && d > 0) {
+              duration = d;
+              changed = true;
+            }
+          }
+        }
+        int? width;
+        int? height;
+        if (data.containsKey('width')) {
+          final value = data['width'];
+          if (value is num && value > 0) {
+            width = value.toInt();
+            changed = true;
+          }
+        }
+        if (data.containsKey('height')) {
+          final value = data['height'];
+          if (value is num && value > 0) {
+            height = value.toInt();
+            changed = true;
+          }
+        }
+        Uint8List? snapshot;
+        final snapshotValue = data['snapshot'];
+        if (snapshotValue is String && snapshotValue.isNotEmpty) {
+          try {
+            snapshot = base64Decode(snapshotValue);
+            changed = true;
+          } catch (_) {}
+        }
+        String? poster;
+        final posterValue = data['poster'];
+        if (posterValue is String) {
+          final trimmedPoster = posterValue.trim();
+          if (trimmedPoster.isNotEmpty &&
+              trimmedPoster != candidate.posterUrl) {
+            poster = trimmedPoster;
+            changed = true;
+          }
+        }
+        if (!changed) {
+          continue;
+        }
+        final updated = candidate.copyWith(
+          positionSeconds: position ?? candidate.positionSeconds,
+          durationSeconds: duration ?? candidate.durationSeconds,
+          videoWidth: width ?? candidate.videoWidth,
+          videoHeight: height ?? candidate.videoHeight,
+          snapshot: snapshot ?? candidate.snapshot,
+          posterUrl: poster ?? candidate.posterUrl,
+        );
+        repo.upsertPlayingVideo(updated);
+      }
+    } finally {
+      _nowPlayingRefreshInProgress = false;
+    }
+  }
+
   /// Format bytes into a human friendly string.
   /// Examples: 532 -> 532 B, 1_234 -> 1.21 KB, 5_678_901 -> 5.42 MB
   String _fmtSize(int? bytes) {
@@ -2423,7 +2699,7 @@ class _BrowserPageState extends State<BrowserPage>
       '${repo.playingVideos.value.length} candidate(s)',
     );
     _suppressLinkLongPress = true;
-    _activateWebViewInteractionGuard();
+
     if (kDebugMode) {
       debugPrint(
         '[Debug][NowPlaying] Long press interactions suppressed while sheet is visible.',
@@ -2490,7 +2766,7 @@ class _BrowserPageState extends State<BrowserPage>
             '[Debug][NowPlaying] Long press interactions restored after sheet closed.',
           );
         }
-        _releaseWebViewInteractionGuard();
+
         unawaited(_restoreIosLinkInteractions());
       });
     }
@@ -3185,6 +3461,7 @@ class _BrowserPageState extends State<BrowserPage>
     repo.adBlockFilterSets.addListener(_onAdBlockFilterSetsChanged);
     repo.longPressDetectionEnabled.addListener(_onLongPressDetectionChanged);
     repo.snifferEnabled.addListener(_onSnifferSettingChanged);
+    repo.playingVideos.addListener(_onPlayingVideosChanged);
     _lastSnifferEnabled = repo.snifferEnabled.value;
     _lastAutoDetectEnabled = repo.longPressDetectionEnabled.value;
     // Listen to focus changes to handle paste button
@@ -3352,6 +3629,7 @@ class _BrowserPageState extends State<BrowserPage>
         ..addAll(_kDefaultIosUniversalLinkHosts)
         ..addAll(_learnedIosUniversalLinkHosts);
     }();
+    _onPlayingVideosChanged();
   }
 
   void _toggleBlockExternalAppSetting() async {
@@ -4726,6 +5004,8 @@ class _BrowserPageState extends State<BrowserPage>
     repo.adBlockFilterSets.removeListener(_onAdBlockFilterSetsChanged);
     repo.longPressDetectionEnabled.removeListener(_onLongPressDetectionChanged);
     repo.snifferEnabled.removeListener(_onSnifferSettingChanged);
+    repo.playingVideos.removeListener(_onPlayingVideosChanged);
+    _stopNowPlayingPolling();
     _urlFocus.dispose();
     _removeYtFetchBarrier();
     _webViewInteractionGuardTimer?.cancel();
@@ -6761,7 +7041,7 @@ class _BrowserPageState extends State<BrowserPage>
     if (!ok) {
       return;
     }
-    _activateWebViewInteractionGuard();
+
     try {
       await showModalBottomSheet(
         context: context,
@@ -7079,7 +7359,6 @@ class _BrowserPageState extends State<BrowserPage>
       );
     } finally {
       Future.delayed(const Duration(milliseconds: 150), () {
-        _releaseWebViewInteractionGuard();
         unawaited(_restoreIosLinkInteractions());
       });
     }
@@ -7149,7 +7428,7 @@ class _BrowserPageState extends State<BrowserPage>
   /// navigating away from the browser tab.
   void _openDownloadsSheet() {
     _suppressLinkLongPress = true;
-    _activateWebViewInteractionGuard();
+
     _resetAllSpeedTracking(clearCachedSpeeds: false);
     showModalBottomSheet(
       context: context,
@@ -7246,8 +7525,9 @@ class _BrowserPageState extends State<BrowserPage>
       },
     ).whenComplete(() {
       _suppressLinkLongPress = false;
-      _releaseWebViewInteractionGuard(delay: const Duration(milliseconds: 120));
-      unawaited(_restoreIosLinkInteractions());
+      Future.delayed(const Duration(milliseconds: 120), () {
+        unawaited(_restoreIosLinkInteractions());
+      });
     });
   }
 
