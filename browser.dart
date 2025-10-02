@@ -6112,22 +6112,21 @@ const bindVideo = (video) => {
           // Right side controls (all aligned right): Sniffer, Resources, Downloads
           final rightSideButtons = <Widget>[
             pad(
+              // 在 AppBar 的 actions 中添加臨時測試按鈕
               IconButton(
-                icon: const Icon(Icons.refresh),
+                icon: Icon(Icons.refresh),
                 onPressed: () async {
                   _suppressLinkLongPress = false;
                   final controller = _tabs[_currentTabIndex].controller;
                   if (controller != null) {
                     await controller.evaluateJavascript(
-                      source:
-                          '''
+                      source: '''
           document.body.style.pointerEvents = 'auto';
           document.documentElement.style.pointerEvents = 'auto';
-        '''.trim(),
+        ''',
                     );
                   }
                 },
-                visualDensity: VisualDensity.compact,
               ),
             ),
             // Sniffer toggle (eye icon)
