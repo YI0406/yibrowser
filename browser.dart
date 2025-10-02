@@ -137,6 +137,7 @@ enum _ToolbarMenuAction {
   openHistory,
   clearBrowsingData,
   toggleAdBlocker,
+  toggleAutoDetectMedia,
   toggleBlockPopup,
   blockExternalApp,
   addHome,
@@ -1029,7 +1030,7 @@ class _BrowserPageState extends State<BrowserPage>
     _ytFetchBarrier = null;
   }
 
-  void _onYtOptionsChanged() {
+  Future<void> _onYtOptionsChanged() async {
     final opts = repo.ytOptions.value;
     if (opts == null || _ytMenuOpen) return;
     _ytMenuOpen = true;
@@ -1103,132 +1104,135 @@ class _BrowserPageState extends State<BrowserPage>
       return parts.join(' · ');
     }
 
-    showModalBottomSheet(
-      context: context,
-      useSafeArea: true,
-      isScrollControlled: true,
-      enableDrag: true,
-      backgroundColor: theme.colorScheme.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-      ),
-      builder: (sheetContext) {
-        final media = MediaQuery.of(sheetContext);
-        final screenHeight = media.size.height;
-        const double minSheetHeight = 180;
-        const double headerHeight = 104;
-        const double itemExtent = 64;
-        final double maxSheetHeight = math.max(
-          minSheetHeight,
-          screenHeight * 0.7,
-        );
-        final double desiredHeight =
-            headerHeight + itemExtent * opts.length.toDouble();
-        final double sheetHeight = desiredHeight.clamp(
-          minSheetHeight,
-          maxSheetHeight,
-        );
+    try {
+      await showModalBottomSheet(
+        context: context,
+        useSafeArea: true,
+        isScrollControlled: true,
+        enableDrag: true,
+        backgroundColor: theme.colorScheme.surface,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+        ),
+        builder: (sheetContext) {
+          final media = MediaQuery.of(sheetContext);
+          final screenHeight = media.size.height;
+          const double minSheetHeight = 180;
+          const double headerHeight = 104;
+          const double itemExtent = 64;
+          final double maxSheetHeight = math.max(
+            minSheetHeight,
+            screenHeight * 0.7,
+          );
+          final double desiredHeight =
+              headerHeight + itemExtent * opts.length.toDouble();
+          final double sheetHeight = desiredHeight.clamp(
+            minSheetHeight,
+            maxSheetHeight,
+          );
 
-        return SizedBox(
-          height: sheetHeight,
-          child: Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 16, 12, 8),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            title,
-                            style: theme.textTheme.titleMedium,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            context.l10n(
-                              'browser.dialog.downloadQuality.subtitle',
+          return SizedBox(
+            height: sheetHeight,
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 12, 8),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              title,
+                              style: theme.textTheme.titleMedium,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
                             ),
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: theme.colorScheme.onSurface.withOpacity(
-                                0.7,
+                            const SizedBox(height: 6),
+                            Text(
+                              context.l10n(
+                                'browser.dialog.downloadQuality.subtitle',
+                              ),
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: theme.colorScheme.onSurface.withOpacity(
+                                  0.7,
+                                ),
                               ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
-                    ),
-                    IconButton(
-                      tooltip: context.l10n('common.close'),
-                      onPressed: () => Navigator.of(sheetContext).pop(),
-                      icon: const Icon(Icons.close),
-                    ),
-                  ],
+                      IconButton(
+                        tooltip: context.l10n('common.close'),
+                        onPressed: () => Navigator.of(sheetContext).pop(),
+                        icon: const Icon(Icons.close),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              const Divider(height: 1),
-              Expanded(
-                child: ListView.separated(
-                  physics: const BouncingScrollPhysics(),
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  itemCount: opts.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1),
-                  itemBuilder: (_, i) {
-                    final o = opts[i];
-                    return ListTile(
-                      dense: true,
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 20,
-                        vertical: 6,
-                      ),
-                      leading: Icon(iconFor(o)),
-                      title: Text(
-                        titleFor(o),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      subtitle: Text(
-                        subtitleFor(o),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      trailing: const Icon(Icons.download),
-                      onTap: () async {
-                        Navigator.of(sheetContext).pop();
-                        await AppRepo.I.enqueueYoutubeOption(
-                          o,
-                          sourceUrl: repo.currentPageUrl.value,
-                          titleOverride: repo.ytTitle.value,
-                        );
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              duration: const Duration(seconds: 1),
-                              content: Text(
-                                context.l10n('browser.snack.addedDownload'),
-                              ),
-                            ),
+                const Divider(height: 1),
+                Expanded(
+                  child: ListView.separated(
+                    physics: const BouncingScrollPhysics(),
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    itemCount: opts.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    itemBuilder: (_, i) {
+                      final o = opts[i];
+                      return ListTile(
+                        dense: true,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 20,
+                          vertical: 6,
+                        ),
+                        leading: Icon(iconFor(o)),
+                        title: Text(
+                          titleFor(o),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        subtitle: Text(
+                          subtitleFor(o),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        trailing: const Icon(Icons.download),
+                        onTap: () async {
+                          Navigator.of(sheetContext).pop();
+                          await AppRepo.I.enqueueYoutubeOption(
+                            o,
+                            sourceUrl: repo.currentPageUrl.value,
+                            titleOverride: repo.ytTitle.value,
                           );
-                        }
-                      },
-                    );
-                  },
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                duration: const Duration(seconds: 1),
+                                content: Text(
+                                  context.l10n('browser.snack.addedDownload'),
+                                ),
+                              ),
+                            );
+                          }
+                        },
+                      );
+                    },
+                  ),
                 ),
-              ),
-            ],
-          ),
-        );
-      },
-    ).whenComplete(() {
+              ],
+            ),
+          );
+        },
+      );
+    } finally {
       _ytMenuOpen = false;
       // 重置，不要重複彈出
       repo.ytOptions.value = null;
       repo.ytTitle.value = null;
-    });
+      await _refocusWebView();
+    }
   }
 
   void _onUaChanged() {
@@ -1801,8 +1805,8 @@ class _BrowserPageState extends State<BrowserPage>
     AppRepo.I.ytOptions.value = info.options;
   }
 
-  Future<_LinkContextMenuAction?> _showLinkContextMenu(String url) {
-    return showGeneralDialog<_LinkContextMenuAction>(
+  Future<_LinkContextMenuAction?> _showLinkContextMenu(String url) async {
+    final result = await showGeneralDialog<_LinkContextMenuAction>(
       context: context,
       barrierDismissible: true,
       barrierLabel: 'link-menu',
@@ -1920,6 +1924,10 @@ class _BrowserPageState extends State<BrowserPage>
         );
       },
     );
+    if (mounted) {
+      await _refocusWebView();
+    }
+    return result;
   }
 
   Future<void> _openLinkInNewTab(
@@ -2351,11 +2359,11 @@ class _BrowserPageState extends State<BrowserPage>
   /// Present a bottom sheet for a specific home item allowing the user to
   /// edit or delete the entry. Editing pops up a dialog prefilled with
   /// the current name and URL. Deleting removes the entry immediately.
-  void _showHomeItemMenu(int index) {
+  void _showHomeItemMenu(int index) async {
     final items = repo.homeItems.value;
     if (index < 0 || index >= items.length) return;
     final item = items[index];
-    showModalBottomSheet(
+    await showModalBottomSheet(
       context: context,
       builder:
           (sheetContext) => SafeArea(
@@ -2386,17 +2394,20 @@ class _BrowserPageState extends State<BrowserPage>
             ),
           ),
     );
+    if (mounted) {
+      await _refocusWebView();
+    }
   }
 
   /// Show a dialog allowing the user to edit an existing home entry. The
   /// current values are prefilled. On confirmation the entry is updated.
-  void _editHomeItem(int index) {
+  void _editHomeItem(int index) async {
     final items = repo.homeItems.value;
     if (index < 0 || index >= items.length) return;
     final item = items[index];
     final nameCtrl = TextEditingController(text: item.name);
     final urlCtrlLocal = TextEditingController(text: item.url);
-    showDialog(
+    await showDialog(
       context: context,
       builder: (dialogContext) {
         return AlertDialog(
@@ -2439,6 +2450,9 @@ class _BrowserPageState extends State<BrowserPage>
         );
       },
     );
+    if (mounted) {
+      await _refocusWebView();
+    }
   }
 
   /// Prompt the user to add a page to the home screen. When [initialUrl]
@@ -2522,6 +2536,9 @@ class _BrowserPageState extends State<BrowserPage>
         );
       },
     );
+    if (mounted) {
+      await _refocusWebView();
+    }
   }
 
   @override
@@ -2652,6 +2669,16 @@ class _BrowserPageState extends State<BrowserPage>
       } else {
         final saved = sp.getBool('sniffer_enabled') ?? false;
         repo.setSnifferEnabled(saved);
+      }
+    }();
+    () async {
+      final sp = await SharedPreferences.getInstance();
+      if (!sp.containsKey('detect_media_long_press')) {
+        await sp.setBool('detect_media_long_press', true);
+        repo.setLongPressDetectionEnabled(true);
+      } else {
+        final saved = sp.getBool('detect_media_long_press') ?? true;
+        repo.setLongPressDetectionEnabled(saved);
       }
     }();
     // Load saved blockExternalApp preference, default to false if not set.
@@ -4113,7 +4140,10 @@ class _BrowserPageState extends State<BrowserPage>
                           c.addJavaScriptHandler(
                             handlerName: 'sniffer',
                             callback: (args) {
-                              if (!repo.snifferEnabled.value) {
+                              final bool snifferOn = repo.snifferEnabled.value;
+                              final bool autoDetectOn =
+                                  repo.longPressDetectionEnabled.value;
+                              if (!snifferOn && !autoDetectOn) {
                                 return {'ok': false, 'ignored': true};
                               }
                               final map = Map<String, dynamic>.from(args.first);
@@ -4135,6 +4165,7 @@ class _BrowserPageState extends State<BrowserPage>
                                   poster: poster,
                                   durationSeconds: dur,
                                 ),
+                                storeInHits: snifferOn,
                               );
                               return {'ok': true};
                             },
@@ -4227,8 +4258,10 @@ class _BrowserPageState extends State<BrowserPage>
                           // 注入嗅探腳本並同步開關
                           await c.evaluateJavascript(source: Sniffer.jsHook);
                           await c.evaluateJavascript(
-                            source: Sniffer.jsSetEnabled(
-                              repo.snifferEnabled.value,
+                            source: Sniffer.jsSetModes(
+                              networkOn: repo.snifferEnabled.value,
+                              autoDetectOn:
+                                  repo.longPressDetectionEnabled.value,
                             ),
                           );
 
@@ -4928,6 +4961,9 @@ class _BrowserPageState extends State<BrowserPage>
                     );
                   }
                 }
+                if (mounted) {
+                  await _refocusWebView();
+                }
               },
               child: Container(
                 key: _tabButtonKey,
@@ -5031,6 +5067,7 @@ class _BrowserPageState extends State<BrowserPage>
     final historyCount = repo.history.value.length;
     final blockPopupOn = repo.blockPopup.value;
     final adBlockOn = repo.adBlockEnabled.value;
+    final autoDetectOn = repo.longPressDetectionEnabled.value;
     final selectedProfiles = repo.adBlockFilterSets.value;
 
     PopupMenuItem<_ToolbarMenuAction> buildItem(
@@ -5103,6 +5140,12 @@ class _BrowserPageState extends State<BrowserPage>
         iconColor: adBlockOn ? colorScheme.primary : null,
       ),
       buildItem(
+        _ToolbarMenuAction.toggleAutoDetectMedia,
+        autoDetectOn ? Icons.toggle_on : Icons.toggle_off,
+        context.l10n('settings.detectMediaLongPress.title'),
+        iconColor: autoDetectOn ? colorScheme.primary : null,
+      ),
+      buildItem(
         _ToolbarMenuAction.toggleBlockPopup,
         blockPopupOn ? Icons.toggle_on : Icons.toggle_off,
         context.l10n('browser.menu.blockPopups'),
@@ -5138,7 +5181,13 @@ class _BrowserPageState extends State<BrowserPage>
       position: position,
       items: entries,
     );
-    if (!mounted || selected == null) {
+    if (!mounted) {
+      await _refocusWebView();
+      return;
+    }
+
+    if (selected == null) {
+      await _refocusWebView();
       return;
     }
 
@@ -5158,6 +5207,9 @@ class _BrowserPageState extends State<BrowserPage>
         break;
       case _ToolbarMenuAction.toggleAdBlocker:
         await _showAdBlockerSettings();
+        break;
+      case _ToolbarMenuAction.toggleAutoDetectMedia:
+        await _toggleAutoDetectMedia();
         break;
       case _ToolbarMenuAction.toggleBlockPopup:
         _toggleBlockPopupSetting();
@@ -5181,8 +5233,13 @@ class _BrowserPageState extends State<BrowserPage>
     if (keepOpen && mounted) {
       await Future.delayed(const Duration(milliseconds: 120));
       if (mounted) {
-        _showToolbarMenu();
+        unawaited(_showToolbarMenu());
       }
+      return;
+    }
+
+    if (mounted) {
+      await _refocusWebView();
     }
   }
 
@@ -5293,6 +5350,21 @@ class _BrowserPageState extends State<BrowserPage>
     );
   }
 
+  Future<void> _applySnifferModesToAllTabs() async {
+    if (_tabs.isEmpty) return;
+    final script = Sniffer.jsSetModes(
+      networkOn: repo.snifferEnabled.value,
+      autoDetectOn: repo.longPressDetectionEnabled.value,
+    );
+    for (final tab in _tabs) {
+      final controller = tab.controller;
+      if (controller == null) continue;
+      try {
+        await controller.evaluateJavascript(source: script);
+      } catch (_) {}
+    }
+  }
+
   Future<void> _toggleSniffer() async {
     final ok = await PurchaseService().ensurePremium(
       context: context,
@@ -5305,13 +5377,7 @@ class _BrowserPageState extends State<BrowserPage>
     repo.setSnifferEnabled(next);
     final sp = await SharedPreferences.getInstance();
     await sp.setBool('sniffer_enabled', next);
-    if (_tabs.isNotEmpty) {
-      final tab = _tabs[_currentTabIndex];
-      final controller = tab.controller;
-      if (controller != null) {
-        await controller.evaluateJavascript(source: Sniffer.jsSetEnabled(next));
-      }
-    }
+    await _applySnifferModesToAllTabs();
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -5323,6 +5389,56 @@ class _BrowserPageState extends State<BrowserPage>
         ),
       ),
     );
+  }
+
+  Future<void> _toggleAutoDetectMedia() async {
+    final next = !repo.longPressDetectionEnabled.value;
+    repo.setLongPressDetectionEnabled(next);
+    final sp = await SharedPreferences.getInstance();
+    await sp.setBool('detect_media_long_press', next);
+    await _applySnifferModesToAllTabs();
+    if (!mounted) return;
+    final snackKey =
+        next
+            ? 'settings.detectMediaLongPress.snack.enabled'
+            : 'settings.detectMediaLongPress.snack.disabled';
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 1),
+        content: Text(context.l10n(snackKey)),
+      ),
+    );
+  }
+
+  Future<void> _refocusWebView() async {
+    if (_tabs.isEmpty) return;
+    if (_currentTabIndex < 0 || _currentTabIndex >= _tabs.length) return;
+    final controller = _tabs[_currentTabIndex].controller;
+    if (controller == null) return;
+    try {
+      await controller.evaluateJavascript(
+        source: r'''
+(function(){
+  try {
+    if (document.activeElement &&
+        typeof document.activeElement.blur === 'function') {
+      document.activeElement.blur();
+    }
+  } catch (_) {}
+  try {
+    if (document.body && typeof document.body.focus === 'function') {
+      document.body.focus();
+    }
+  } catch (_) {}
+  try {
+    if (typeof window.focus === 'function') {
+      window.focus();
+    }
+  } catch (_) {}
+})();
+''',
+      );
+    } catch (_) {}
   }
 
   Future<void> _openFavoritesPage() async {
@@ -5384,6 +5500,9 @@ class _BrowserPageState extends State<BrowserPage>
             ],
           ),
     );
+    if (mounted) {
+      await _refocusWebView();
+    }
 
     if (confirm != true) {
       return;
@@ -5539,6 +5658,9 @@ class _BrowserPageState extends State<BrowserPage>
         );
       },
     );
+    if (mounted) {
+      await _refocusWebView();
+    }
     if (result == null) return;
     repo.setAdBlockFilterSets(result.selectedProfiles);
     repo.setAdBlockEnabled(
@@ -5733,6 +5855,9 @@ class _BrowserPageState extends State<BrowserPage>
         );
       },
     );
+    if (mounted) {
+      await _refocusWebView();
+    }
     if (acknowledged == true) {
       await _recordHelpAcknowledged();
       return true;
@@ -5794,6 +5919,9 @@ class _BrowserPageState extends State<BrowserPage>
                 ),
           ) ??
           false;
+      if (mounted) {
+        await _refocusWebView();
+      }
     }
     if (!ok) return;
     await AppRepo.I.enqueueDownload(url, skipYoutubeHandling: true);
@@ -5936,7 +6064,7 @@ class _BrowserPageState extends State<BrowserPage>
     }
 
     if (!mounted) return;
-    showModalBottomSheet(
+    await showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       builder:
@@ -6303,6 +6431,9 @@ class _BrowserPageState extends State<BrowserPage>
         );
       },
     );
+    if (mounted) {
+      await _refocusWebView();
+    }
   }
 
   /// --- Download speed helpers ---
@@ -6355,8 +6486,8 @@ class _BrowserPageState extends State<BrowserPage>
   /// displays its name (or URL), status, timestamp, and progress. This
   /// provides quick visibility into ongoing and completed downloads without
   /// navigating away from the browser tab.
-  void _openDownloadsSheet() {
-    showModalBottomSheet(
+  void _openDownloadsSheet() async {
+    await showModalBottomSheet(
       context: context,
       builder: (_) {
         return SafeArea(
@@ -6450,6 +6581,9 @@ class _BrowserPageState extends State<BrowserPage>
         );
       },
     );
+    if (mounted) {
+      await _refocusWebView();
+    }
   }
 
   /// Build a ListTile for a given download task. This encapsulates all the logic
@@ -6517,6 +6651,9 @@ class _BrowserPageState extends State<BrowserPage>
         );
       },
     );
+    if (mounted) {
+      await _refocusWebView();
+    }
     return result;
   }
 
@@ -6541,6 +6678,9 @@ class _BrowserPageState extends State<BrowserPage>
         ),
       ),
     );
+    if (mounted) {
+      await _refocusWebView();
+    }
   }
 
   Widget _buildDownloadTile(DownloadTask t) {
