@@ -1642,6 +1642,11 @@ final Map<String, Map<AppLanguage, String>> _translations = {
     AppLanguage.zhHans: '在新分页打开',
     AppLanguage.en: 'Open in new tab',
   },
+  'browser.playingNow.action.playInApp': {
+    AppLanguage.zhHant: '播放',
+    AppLanguage.zhHans: '播放',
+    AppLanguage.en: 'Play',
+  },
   'browser.context.addFavorite': {
     AppLanguage.zhHant: '收藏網址',
     AppLanguage.zhHans: '收藏网址',

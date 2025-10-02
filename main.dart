@@ -74,6 +74,7 @@ void main() async {
   await AppRepo.I.resumeIncompleteDownloads();
 
   await AdService.instance.init();
+
   // Request ATT prior to initializing ads (iOS only)
   await _requestATTIfNeeded();
   AdService.instance.setPremiumUnlocked(purchaseService.isPremiumUnlocked);

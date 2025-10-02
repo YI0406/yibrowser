@@ -687,7 +687,8 @@ class _BrowserPageState extends State<BrowserPage>
   final Set<String> _allKnownIosUniversalLinkHosts = {
     ..._kDefaultIosUniversalLinkHosts,
   };
-
+  bool _lastSnifferEnabled = false;
+  bool _lastAutoDetectEnabled = false;
   static const Set<String> _kWebSchemes = {
     'http',
     'https',
@@ -1757,9 +1758,150 @@ class _BrowserPageState extends State<BrowserPage>
   }
 
   void _onLongPressDetectionChanged() {
-    if (!repo.longPressDetectionEnabled.value) {
+    final enabled = repo.longPressDetectionEnabled.value;
+    if (!enabled) {
       repo.clearPlayingVideos();
     }
+    final shouldProbe = enabled && !_lastAutoDetectEnabled;
+    _lastAutoDetectEnabled = enabled;
+    unawaited(_syncSnifferSettings(probe: shouldProbe));
+  }
+
+  void _onSnifferSettingChanged() {
+    final enabled = repo.snifferEnabled.value;
+    final wasEnabled = _lastSnifferEnabled;
+    _lastSnifferEnabled = enabled;
+    final autoOn = enabled || repo.longPressDetectionEnabled.value;
+    final shouldProbe = autoOn && enabled && !wasEnabled;
+    unawaited(_syncSnifferSettings(probe: shouldProbe));
+  }
+
+  Future<void> _syncSnifferSettings({
+    InAppWebViewController? controller,
+    bool probe = false,
+  }) async {
+    final networkOn = repo.snifferEnabled.value;
+    final autoOn = networkOn || repo.longPressDetectionEnabled.value;
+    final script = Sniffer.jsSetModes(
+      networkOn: networkOn,
+      autoDetectOn: autoOn,
+    );
+    final targets = <InAppWebViewController>[];
+    if (controller != null) {
+      targets.add(controller);
+    } else {
+      for (final tab in _tabs) {
+        final ctrl = tab.controller;
+        if (ctrl != null) {
+          targets.add(ctrl);
+        }
+      }
+    }
+    for (final ctrl in targets) {
+      try {
+        await ctrl.evaluateJavascript(source: script);
+        if (probe && autoOn) {
+          await _probeActiveMedia(controller: ctrl);
+        }
+      } catch (_) {}
+    }
+  }
+
+  Future<void> _probeActiveMedia({InAppWebViewController? controller}) async {
+    final autoOn =
+        repo.snifferEnabled.value || repo.longPressDetectionEnabled.value;
+    if (!autoOn) {
+      return;
+    }
+    final targets = <InAppWebViewController>[];
+    if (controller != null) {
+      targets.add(controller);
+    } else {
+      for (final tab in _tabs) {
+        final ctrl = tab.controller;
+        if (ctrl != null) {
+          targets.add(ctrl);
+        }
+      }
+    }
+    for (final ctrl in targets) {
+      try {
+        final result = await ctrl.evaluateJavascript(
+          source: Sniffer.jsQueryActiveMedia,
+        );
+        final entries = _decodeMediaProbeResult(result);
+        for (final entry in entries) {
+          final url = (entry['url'] ?? '').toString().trim();
+          if (url.isEmpty) {
+            continue;
+          }
+          final rawType = (entry['type'] ?? 'video').toString();
+          if (!repo.snifferEnabled.value && rawType.toLowerCase() != 'video') {
+            continue;
+          }
+          final posterValue = entry['poster'];
+          String poster = '';
+          if (posterValue is String) {
+            poster = posterValue;
+          } else if (posterValue != null) {
+            poster = posterValue.toString();
+          }
+          final durationRaw = entry['duration'];
+          double? durationSeconds;
+          if (durationRaw is num) {
+            if (durationRaw.isFinite && durationRaw > 0) {
+              durationSeconds = durationRaw.toDouble();
+            }
+          }
+          repo.addHit(
+            MediaHit(
+              url: url,
+              type: rawType,
+              contentType: '',
+              poster: poster,
+              durationSeconds: durationSeconds,
+            ),
+            storeInHits: repo.snifferEnabled.value,
+          );
+        }
+      } catch (_) {}
+    }
+  }
+
+  List<Map<String, dynamic>> _decodeMediaProbeResult(dynamic result) {
+    if (result == null) {
+      return const [];
+    }
+    dynamic parsed = result;
+    if (parsed is String) {
+      final trimmed = parsed.trim();
+      if (trimmed.isEmpty) {
+        return const [];
+      }
+      try {
+        parsed = jsonDecode(trimmed);
+      } catch (_) {
+        return const [];
+      }
+    }
+    if (parsed is! List) {
+      return const [];
+    }
+    final List<Map<String, dynamic>> maps = [];
+    for (final item in parsed) {
+      if (item is Map) {
+        try {
+          maps.add(Map<String, dynamic>.from(item as Map));
+        } catch (_) {
+          final converted = <String, dynamic>{};
+          item.forEach((key, value) {
+            converted['$key'] = value;
+          });
+          maps.add(converted);
+        }
+      }
+    }
+    return maps;
   }
 
   // All tab‑specific controllers live on the individual [_TabData] instances.
@@ -2083,6 +2225,7 @@ class _BrowserPageState extends State<BrowserPage>
         isYoutube
             ? sheetContext.l10n('browser.playingNow.action.stream')
             : sheetContext.l10n('common.download');
+    final canPlayInApp = hasDirectUrl;
     final navigator = Navigator.of(sheetContext);
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -2130,6 +2273,35 @@ class _BrowserPageState extends State<BrowserPage>
               spacing: 8,
               runSpacing: 8,
               children: [
+                FilledButton.icon(
+                  icon: const Icon(Icons.play_arrow),
+                  label: Text(
+                    sheetContext.l10n('browser.playingNow.action.playInApp'),
+                  ),
+                  onPressed:
+                      canPlayInApp
+                          ? () {
+                            navigator.pop();
+                            Duration? startAt;
+                            final position = candidate.positionSeconds;
+                            if (position != null &&
+                                position.isFinite &&
+                                position > 0) {
+                              startAt = Duration(
+                                milliseconds: (position * 1000).round(),
+                              );
+                            }
+                            _playMedia(
+                              directUrl,
+                              title:
+                                  candidate.title.isNotEmpty
+                                      ? candidate.title
+                                      : null,
+                              startAt: startAt,
+                            );
+                          }
+                          : null,
+                ),
                 FilledButton.icon(
                   icon: Icon(isYoutube ? Icons.stream : Icons.download),
                   label: Text(downloadLabel),
@@ -2199,13 +2371,6 @@ class _BrowserPageState extends State<BrowserPage>
                             );
                           }
                           : null,
-                ),
-                TextButton.icon(
-                  icon: const Icon(Icons.close),
-                  label: Text(sheetContext.l10n('common.cancel')),
-                  onPressed: () {
-                    AppRepo.I.removePlayingVideo(candidate.id);
-                  },
                 ),
               ],
             ),
@@ -2983,6 +3148,9 @@ class _BrowserPageState extends State<BrowserPage>
     repo.pendingNewTab.addListener(_onPendingNewTab);
     repo.adBlockFilterSets.addListener(_onAdBlockFilterSetsChanged);
     repo.longPressDetectionEnabled.addListener(_onLongPressDetectionChanged);
+    repo.snifferEnabled.addListener(_onSnifferSettingChanged);
+    _lastSnifferEnabled = repo.snifferEnabled.value;
+    _lastAutoDetectEnabled = repo.longPressDetectionEnabled.value;
     // Listen to focus changes to handle paste button
     _urlFocus.addListener(() {
       if (_urlFocus.hasFocus) {
@@ -4521,6 +4689,7 @@ class _BrowserPageState extends State<BrowserPage>
     repo.pendingNewTab.removeListener(_onPendingNewTab);
     repo.adBlockFilterSets.removeListener(_onAdBlockFilterSetsChanged);
     repo.longPressDetectionEnabled.removeListener(_onLongPressDetectionChanged);
+    repo.snifferEnabled.removeListener(_onSnifferSettingChanged);
     _urlFocus.dispose();
     _removeYtFetchBarrier();
     super.dispose();
@@ -4771,19 +4940,67 @@ class _BrowserPageState extends State<BrowserPage>
                           c.addJavaScriptHandler(
                             handlerName: 'sniffer',
                             callback: (args) {
-                              if (!repo.snifferEnabled.value) {
+                              if (args.isEmpty || args.first is! Map) {
                                 return {'ok': false, 'ignored': true};
                               }
-                              final map = Map<String, dynamic>.from(args.first);
-                              final url = (map['url'] ?? '').toString();
+                              final sniffEnabled = repo.snifferEnabled.value;
+                              final autoDetectOn =
+                                  repo.longPressDetectionEnabled.value;
+                              Map<String, dynamic> map;
+                              try {
+                                map = Map<String, dynamic>.from(
+                                  args.first as Map,
+                                );
+                              } catch (_) {
+                                return {'ok': false, 'ignored': true};
+                              }
+                              final originRaw =
+                                  (map['origin'] ?? '').toString();
+                              final isElementOrigin = originRaw
+                                  .toLowerCase()
+                                  .startsWith('element');
+                              if (!sniffEnabled &&
+                                  !(autoDetectOn && isElementOrigin)) {
+                                return {'ok': false, 'ignored': true};
+                              }
+                              final url = (map['url'] ?? '').toString().trim();
+                              if (url.isEmpty) {
+                                return {
+                                  'ok': false,
+                                  'ignored': true,
+                                  'reason': 'emptyUrl',
+                                };
+                              }
                               final type = (map['type'] ?? 'video').toString();
                               final contentType =
                                   (map['contentType'] ?? '').toString();
-                              final poster = map['poster'] as String? ?? '';
+                              final posterValue = map['poster'];
+                              String poster = '';
+                              if (posterValue is String) {
+                                poster = posterValue;
+                              } else if (posterValue != null) {
+                                poster = posterValue.toString();
+                              }
                               double? dur;
                               final d = map['duration'];
                               if (d is num) {
-                                dur = d.toDouble();
+                                if (d.isFinite && d > 0) {
+                                  dur = d.toDouble();
+                                }
+                              }
+                              if (!sniffEnabled && autoDetectOn) {
+                                final normalizedType = type.toLowerCase();
+                                final normalizedCt = contentType.toLowerCase();
+                                final looksVideo =
+                                    normalizedType == 'video' ||
+                                    normalizedCt.startsWith('video/');
+                                if (!isElementOrigin || !looksVideo) {
+                                  return {
+                                    'ok': false,
+                                    'ignored': true,
+                                    'reason': 'filtered',
+                                  };
+                                }
                               }
                               repo.addHit(
                                 MediaHit(
@@ -4793,6 +5010,7 @@ class _BrowserPageState extends State<BrowserPage>
                                   poster: poster,
                                   durationSeconds: dur,
                                 ),
+                                storeInHits: sniffEnabled,
                               );
                               return {'ok': true};
                             },
@@ -4938,10 +5156,11 @@ class _BrowserPageState extends State<BrowserPage>
                           await _injectDebugTapLogger(c);
                           // 注入嗅探腳本並同步開關
                           await c.evaluateJavascript(source: Sniffer.jsHook);
-                          await c.evaluateJavascript(
-                            source: Sniffer.jsSetEnabled(
-                              repo.snifferEnabled.value,
-                            ),
+                          await _syncSnifferSettings(
+                            controller: c,
+                            probe:
+                                repo.longPressDetectionEnabled.value ||
+                                repo.snifferEnabled.value,
                           );
 
                           final curUrl = await c.getUrl();
@@ -5653,6 +5872,7 @@ class _BrowserPageState extends State<BrowserPage>
           repo.setLongPressDetectionEnabled(next);
           final sp = await SharedPreferences.getInstance();
           await sp.setBool('detect_media_long_press', next);
+          await _syncSnifferSettings(probe: next);
           if (!mounted) {
             break;
           }
@@ -5814,13 +6034,7 @@ class _BrowserPageState extends State<BrowserPage>
     repo.setSnifferEnabled(next);
     final sp = await SharedPreferences.getInstance();
     await sp.setBool('sniffer_enabled', next);
-    if (_tabs.isNotEmpty) {
-      final tab = _tabs[_currentTabIndex];
-      final controller = tab.controller;
-      if (controller != null) {
-        await controller.evaluateJavascript(source: Sniffer.jsSetEnabled(next));
-      }
-    }
+    await _syncSnifferSettings(probe: next);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(

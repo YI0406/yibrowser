@@ -53,8 +53,24 @@ class Sniffer {
   }
 
   /// Returns a small JS snippet to turn the sniffer on/off inside the page.
+  /// This now controls both the network sniffing hooks and the in-page media
+  /// element observer used for automatic playback detection.
   static String jsSetEnabled(bool on) =>
-      "window._SNF_ON = " + (on ? "true" : "false") + ";";
+      jsSetModes(networkOn: on, autoDetectOn: on);
+
+  /// Returns JS to independently control the network sniffing hooks and the
+  /// DOM media element observer. `networkOn` controls whether fetch/XHR
+  /// interception is active, while `autoDetectOn` controls whether `<video>`
+  /// or `<audio>` element events are forwarded for auto detection.
+  static String jsSetModes({
+    required bool networkOn,
+    required bool autoDetectOn,
+  }) =>
+      "window._SNF_ON = " +
+      (networkOn ? "true" : "false") +
+      ";window._SNF_AUTO_ON = " +
+      (autoDetectOn ? "true" : "false") +
+      ";";
 
   /// JavaScript code injected into webpages to intercept media/image requests.
   /// It hooks into fetch, XMLHttpRequest, and media tags (video/audio/img) to
@@ -63,11 +79,21 @@ class Sniffer {
   /// and filters OUT everything that is not image/video/audio.
   static const jsHook = r"""
   (function(){
-    // On/off toggle flag (Flutter can set window._SNF_ON later)
+      // On/off toggle flags (Flutter can update them later)
     if (typeof window._SNF_ON === 'undefined') window._SNF_ON = true;
+    if (typeof window._SNF_AUTO_ON === 'undefined') window._SNF_AUTO_ON = false;
 
     const send = (p) => {
-      if (!window._SNF_ON) return;
+      if (!p) return;
+      let origin = 'network';
+      try { origin = (p.origin || 'network') + ''; } catch (_) {}
+      origin = origin.toLowerCase();
+      const isElement = origin.startsWith('element');
+      if (isElement) {
+        if (!window._SNF_AUTO_ON && !window._SNF_ON) return;
+      } else if (!window._SNF_ON) {
+        return;
+      }
       try { window.flutter_inappwebview.callHandler('sniffer', p); } catch(_) {}
     };
 
@@ -113,7 +139,7 @@ class Sniffer {
           const ct = (res && res.headers && res.headers.get) ? (res.headers.get('content-type') || '') : (init && init.headers && (init.headers['Content-Type']||init.headers['content-type']||'')) || '';
           if (sniffable(url, ct)) {
             const type = kindFrom(url, ct);
-            send({url, type, contentType: ct, duration: null});
+            send({url, type, contentType: ct, duration: null, poster: '', origin: 'network-fetch'});
           }
         } catch(e){}
         return res;
@@ -138,7 +164,7 @@ class Sniffer {
               const ct = this.getResponseHeader ? (this.getResponseHeader('Content-Type') || this.getResponseHeader('content-type') || '') : '';
               if (sniffable(url, ct)) {
                 const type = kindFrom(url, ct);
-                send({url, type, contentType: ct, duration: null});
+                send({url, type, contentType: ct, duration: null, poster: '', origin: 'network-xhr'});
               }
             }catch(e){}
           }
@@ -165,7 +191,7 @@ class Sniffer {
             const dur = el.duration;
             if (typeof dur === 'number' && isFinite(dur) && dur > 0) d = dur;
           }
-          send({url: u, type: type, contentType: '', duration: d, poster: (el.poster || '')});
+          send({url: u, type: type, contentType: '', duration: d, poster: (el.poster || ''), origin: 'element-media'});
         };
         // Listen to various events that are fired on HLS/DASH players as they attach mediasource/blob
         el.addEventListener('loadedmetadata', go, {once:true});
@@ -185,6 +211,9 @@ class Sniffer {
         if ((el.tagName||'').toLowerCase() === 'img') {
           if (el.complete) go(); else el.addEventListener('load', go, {once:true});
         }
+        // Trigger once immediately so existing media gets reported even if
+        // events have already fired before the hook was installed.
+        try { go(); } catch (_) {}
       });
     };
 
@@ -3416,40 +3445,46 @@ class AppRepo extends ChangeNotifier {
     return incomingScore >= currentScore ? incoming : existing;
   }
 
-  void addHit(MediaHit h) {
+  void addHit(MediaHit h, {bool storeInHits = true}) {
     final normalizedType = _normalizeHitType(h.url, h.type, h.contentType);
     final normalizedHit = h.copyWith(type: normalizedType);
-    final list = [...hits.value];
-    final idx = list.indexWhere((e) => e.url == normalizedHit.url);
-    if (idx >= 0) {
-      final cur = list[idx];
-      final mergedType = _mergeHitType(cur.type, normalizedType);
-      final mergedContentType =
-          cur.contentType.isNotEmpty
-              ? cur.contentType
-              : normalizedHit.contentType;
-      final mergedPoster =
-          cur.poster.isNotEmpty ? cur.poster : normalizedHit.poster;
-      final mergedDuration =
-          cur.durationSeconds ?? normalizedHit.durationSeconds;
-      list[idx] = cur.copyWith(
-        type: mergedType,
-        contentType: mergedContentType,
-        poster: mergedPoster,
-        durationSeconds: mergedDuration,
-      );
-    } else {
-      list.add(normalizedHit);
+    MediaHit effectiveHit = normalizedHit;
+    if (storeInHits) {
+      final list = [...hits.value];
+      final idx = list.indexWhere((e) => e.url == normalizedHit.url);
+      if (idx >= 0) {
+        final cur = list[idx];
+        final mergedType = _mergeHitType(cur.type, normalizedType);
+        final mergedContentType =
+            cur.contentType.isNotEmpty
+                ? cur.contentType
+                : normalizedHit.contentType;
+        final mergedPoster =
+            cur.poster.isNotEmpty ? cur.poster : normalizedHit.poster;
+        final mergedDuration =
+            cur.durationSeconds ?? normalizedHit.durationSeconds;
+        effectiveHit = cur.copyWith(
+          type: mergedType,
+          contentType: mergedContentType,
+          poster: mergedPoster,
+          durationSeconds: mergedDuration,
+        );
+        list[idx] = effectiveHit;
+      } else {
+        list.add(normalizedHit);
+        effectiveHit = normalizedHit;
+      }
+      hits.value = list;
     }
-    hits.value = list;
+
     if (longPressDetectionEnabled.value &&
-        (normalizedHit.type == 'video' || normalizedHit.type == 'audio')) {
+        (effectiveHit.type == 'video' || effectiveHit.type == 'audio')) {
       final pageUrl = currentPageUrl.value ?? '';
-      final mediaUrl = normalizedHit.url.trim();
+      final mediaUrl = effectiveHit.url.trim();
       if (pageUrl.isNotEmpty && mediaUrl.isNotEmpty) {
         final idSource = '$pageUrl::$mediaUrl';
         final id = sha1.convert(utf8.encode(idSource)).toString();
-        final poster = normalizedHit.poster.trim();
+        final poster = effectiveHit.poster.trim();
         String _deriveCandidateTitle() {
           final pageTitle = currentPageTitle.value?.trim();
           if (pageTitle != null && pageTitle.isNotEmpty) {
@@ -3472,7 +3507,7 @@ class AppRepo extends ChangeNotifier {
             url: mediaUrl,
             pageUrl: pageUrl,
             title: _deriveCandidateTitle(),
-            durationSeconds: normalizedHit.durationSeconds,
+            durationSeconds: effectiveHit.durationSeconds,
             positionSeconds: null,
             videoWidth: null,
             videoHeight: null,
