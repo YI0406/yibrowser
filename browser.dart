@@ -751,194 +751,6 @@ class _BrowserPageState extends State<BrowserPage>
   bool _suppressLinkLongPress = false;
   YtVideoInfo? _cachedYoutubeInfo;
 
-  static const String _kVideoDetectorBridge = r'''
-(function () {
-  if (window.__flutterVideoDetectorInstalled) {
-     if (window.__flutterVideoDetectorRefresh) {
-      try {
-        window.__flutterVideoDetectorRefresh();
-      } catch (_) {}
-    }
-    return;
-  }
-  window.__flutterVideoDetectorInstalled = true;
-  window.__flutterVideoDetectorEnabled = true;
-
-
-
-  const resolveSrc = (video) => {
-    if (!video) return '';
-    
-    const candidates = [video.currentSrc, video.src];
-    if (video.querySelectorAll) {
-      video.querySelectorAll('source').forEach((source) => {
-        if (source.src) {
-          candidates.push(source.src);
-        }
-      });
-    }
-      if (video.dataset) {
-      ['src', 'source', 'video', 'stream'].forEach((key) => {
-        if (video.dataset[key]) {
-          candidates.push(video.dataset[key]);
-        }
-      });
-    }
-    for (let i = 0; i < candidates.length; i += 1) {
-      const value = candidates[i];
-      if (value && ('' + value).trim().length > 0) {
-        return value;
-      }
-    }
-  
-    return video.currentSrc || video.src || '';
-  };
-
-  const inferTitle = (video) => {
-    const tryRead = (node) => {
-      if (!node) return '';
-      const attrs = ['data-title', 'aria-label', 'title', 'alt'];
-      for (let i = 0; i < attrs.length; i += 1) {
-        const attr = attrs[i];
-        const value = node.getAttribute && node.getAttribute(attr);
-        if (value && value.trim().length > 0) {
-          return value.trim();
-        }
-      }
-      return '';
-    };
-    let title = tryRead(video);
-    if (title) return title;
-    if (video.parentElement) {
-      title = tryRead(video.parentElement);
-      if (title) return title;
-    }
-    if (video.closest) {
-      const labelled = video.closest('[data-title], [aria-label], [title]');
-      if (labelled) {
-        title = tryRead(labelled);
-        if (title) return title;
-      }
-    }
-    return document.title || '';
-  };
-
-  const captureFrame = (video) => {
-    try {
-      const width = video.videoWidth || video.clientWidth;
-      const height = video.videoHeight || video.clientHeight;
-      if (!width || !height) return '';
-      const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return '';
-      ctx.drawImage(video, 0, 0, width, height);
-      return canvas.toDataURL('image/jpeg', 0.75);
-    } catch (err) {
-      return '';
-    }
-  };
-
-  const isPlaying = (video) => {
-    if (!video) return false;
-    if (video.readyState < 2) return false;
-    return !video.paused && !video.ended;
-  };
-
-  const sendPayload = (video) => {
-    if (!window.__flutterVideoDetectorEnabled) {
-      return;
-    }
-    const now = Date.now();
-    const last = video.__flutterVideoDetectorLastSent || 0;
-    if (now - last < 500) {
-      return;
-    }
-    video.__flutterVideoDetectorLastSent = now;
-    const payload = {
-      src: resolveSrc(video) || '',
-      title: inferTitle(video) || '',
-      pageTitle: document.title || '',
-      pageUrl: window.location ? window.location.href : '',
-      duration: Number.isFinite(video.duration) ? video.duration : null,
-      currentTime: Number.isFinite(video.currentTime) ? video.currentTime : null,
-      width: video.videoWidth || null,
-      height: video.videoHeight || null,
-      poster: video.poster || '',
-      capture: captureFrame(video) || '',
-      timestamp: now,
-    };
-    try {
-      if (window.flutter_inappwebview && window.flutter_inappwebview.callHandler) {
-        window.flutter_inappwebview.callHandler('videoDetected', payload);
-      }
-    } catch (_) {}
-  };
-
-const bindVideo = (video) => {
-    if (!video || video.__flutterVideoDetectorBound) {
-      return;
-    }
-    video.__flutterVideoDetectorBound = true;
-
- const maybeSend = () => {
-      if (!window.__flutterVideoDetectorEnabled) {
-        return;
-      }
-      if (!isPlaying(video)) {
-        return;
-      }
-      sendPayload(video);
-  
-    };
-
-    const resetStamp = () => {
-      video.__flutterVideoDetectorLastSent = 0;
-    };
-
-    video.addEventListener('playing', () => {
-      resetStamp();
-      maybeSend();
-    }, { passive: true });
-    video.addEventListener('loadeddata', maybeSend, { passive: true });
-    video.addEventListener('loadedmetadata', maybeSend, { passive: true });
-    video.addEventListener('timeupdate', maybeSend, { passive: true });
-    video.addEventListener('seeking', resetStamp, { passive: true });
-    video.addEventListener('pause', resetStamp, { passive: true });
-    video.addEventListener('ended', resetStamp, { passive: true });
-
-    if (isPlaying(video)) {
-      maybeSend();
-    }
-  };
-
-  const scan = () => {
-    document.querySelectorAll('video').forEach((video) => bindVideo(video));
-  };
-
-  window.__flutterVideoDetectorSetEnabled = (value) => {
-    window.__flutterVideoDetectorEnabled = !!value;
-    if (!value) {
-   document.querySelectorAll('video').forEach((video) => {
-        video.__flutterVideoDetectorLastSent = 0;
-      });
-    } else {
-      scan();
-    }
-  };
-
-  window.__flutterVideoDetectorRefresh = scan;
-
-  scan();
-  const observer = new MutationObserver(scan);
-  observer.observe(document.documentElement || document.body, {
-    childList: true,
-    subtree: true,
-  });
-})();
-''';
-
   static const String _kDebugTapLoggerJS = r'''
 (function () {
   if (typeof window === 'undefined') {
@@ -1965,18 +1777,8 @@ const bindVideo = (video) => {
   }
 
   void _onLongPressDetectionChanged() {
-    final enabled = repo.longPressDetectionEnabled.value;
-    if (!enabled) {
+    if (!repo.longPressDetectionEnabled.value) {
       repo.clearPlayingVideos();
-    }
-    for (final tab in _tabs) {
-      final controller = tab.controller;
-      if (controller == null) continue;
-
-      unawaited(_setVideoDetectorEnabled(controller, enabled));
-      if (Platform.isIOS && !enabled) {
-        unawaited(_resetAndReleaseWebViewAfterContextMenu(controller));
-      }
     }
   }
 
@@ -2205,16 +2007,6 @@ const bindVideo = (video) => {
     }
   }
 
-  Future<void> _injectVideoDetector(InAppWebViewController controller) async {
-    try {
-      await controller.evaluateJavascript(source: _kVideoDetectorBridge);
-    } catch (_) {}
-    await _setVideoDetectorEnabled(
-      controller,
-      repo.longPressDetectionEnabled.value,
-    );
-  }
-
   Future<void> _injectDebugTapLogger(InAppWebViewController controller) async {
     try {
       final result = await controller.evaluateJavascript(
@@ -2263,24 +2055,6 @@ const bindVideo = (video) => {
       return _LinkContextKind.audio;
     }
     return _LinkContextKind.generic;
-  }
-
-  Future<void> _setVideoDetectorEnabled(
-    InAppWebViewController controller,
-    bool enabled,
-  ) async {
-    final script = '''
-      try {
-        if (window.__flutterVideoDetectorSetEnabled) {
-          window.__flutterVideoDetectorSetEnabled(${enabled ? 'true' : 'false'});
-        } else {
-          window.__flutterVideoDetectorEnabled = ${enabled ? 'true' : 'false'};
-        }
-      } catch (_) {}
-    ''';
-    try {
-      await controller.evaluateJavascript(source: script);
-    } catch (_) {}
   }
 
   Future<void> _handleLinkContextMenuWithFeedback(
@@ -2400,107 +2174,6 @@ const bindVideo = (video) => {
         }
         break;
     }
-  }
-
-  Future<void> _handleDetectedVideo(Map<String, dynamic> payload) async {
-    if (!repo.longPressDetectionEnabled.value) {
-      return;
-    }
-    final rawUrl = (payload['src'] as String? ?? '').trim();
-    final pageUrl = (payload['pageUrl'] as String? ?? '').trim();
-    if (rawUrl.isEmpty && pageUrl.isEmpty) {
-      return;
-    }
-    final effectiveUrl = rawUrl.isNotEmpty ? rawUrl : pageUrl;
-    final normalizedUrl = (rawUrl.isNotEmpty ? rawUrl : effectiveUrl).trim();
-    final lowerUrl = normalizedUrl.toLowerCase();
-    final bool looksHttp =
-        lowerUrl.startsWith('http://') || lowerUrl.startsWith('https://');
-    final bool isBlobUrl = lowerUrl.startsWith('blob:');
-
-    final bool isYoutubeCandidate =
-        AppRepo.I.isYoutubeUrl(normalizedUrl) ||
-        AppRepo.I.isYoutubeUrl(effectiveUrl) ||
-        AppRepo.I.isYoutubeUrl(pageUrl) ||
-        AppRepo.I.isYoutubeUrl(repo.currentPageUrl.value ?? '');
-    if (normalizedUrl.isEmpty) {
-      return;
-    }
-    if (!looksHttp && !isYoutubeCandidate) {
-      return;
-    }
-    if (isBlobUrl && !isYoutubeCandidate) {
-      return;
-    }
-
-    final capture = payload['capture'] as String?;
-    final poster = (payload['poster'] as String? ?? '').trim();
-    final duration = _asDouble(payload['duration']);
-    final position = _asDouble(payload['currentTime']);
-    final width = _asInt(payload['width']);
-    final height = _asInt(payload['height']);
-    final titleCandidates = <String?>[
-      (payload['title'] as String?)?.trim(),
-      (payload['label'] as String?)?.trim(),
-      (payload['ariaLabel'] as String?)?.trim(),
-      (payload['pageTitle'] as String?)?.trim(),
-      (_tabs.isNotEmpty ? _tabs[_currentTabIndex].pageTitle?.trim() : null),
-    ];
-
-    final fallbackTitle =
-        effectiveUrl.isNotEmpty
-            ? _prettyFileName(effectiveUrl)
-            : (repo.currentPageTitle.value ?? '');
-    final resolvedTitle =
-        titleCandidates
-            .firstWhere(
-              (element) => element != null && element.isNotEmpty,
-              orElse: () => fallbackTitle,
-            )
-            ?.trim();
-
-    String resolvedPageUrl = pageUrl;
-    if (isYoutubeCandidate) {
-      final candidates = <String?>[
-        pageUrl,
-        repo.currentPageUrl.value,
-        effectiveUrl,
-      ];
-      for (final candidateUrl in candidates) {
-        if (candidateUrl != null &&
-            candidateUrl.isNotEmpty &&
-            AppRepo.I.isYoutubeUrl(candidateUrl)) {
-          resolvedPageUrl = candidateUrl;
-          break;
-        }
-      }
-    }
-
-    resolvedPageUrl = resolvedPageUrl.trim();
-
-    final resolvedStreamUrl = rawUrl.isNotEmpty ? rawUrl : effectiveUrl;
-    final idSourceUrl =
-        isYoutubeCandidate && resolvedPageUrl.isNotEmpty
-            ? resolvedPageUrl
-            : resolvedStreamUrl;
-
-    final candidate = PlayingVideoCandidate(
-      id: _buildPlayingCandidateId(idSourceUrl, resolvedPageUrl),
-      url: resolvedStreamUrl,
-      pageUrl: resolvedPageUrl,
-      title:
-          (resolvedTitle == null || resolvedTitle.isEmpty)
-              ? _prettyFileName(effectiveUrl)
-              : resolvedTitle,
-      durationSeconds: duration,
-      positionSeconds: position,
-      videoWidth: width,
-      videoHeight: height,
-      snapshot: _decodeVideoSnapshot(capture),
-      posterUrl: poster.isNotEmpty ? poster : null,
-      detectedAt: DateTime.now(),
-    );
-    repo.upsertPlayingVideo(candidate);
   }
 
   Widget _buildPlayingVideoCard(
@@ -5378,6 +5051,7 @@ const bindVideo = (video) => {
                           useOnLoadResource: true,
                           useShouldOverrideUrlLoading: true,
                           javaScriptEnabled: true,
+                          javaScriptCanOpenWindowsAutomatically: true,
 
                           supportMultipleWindows: true,
 
@@ -5429,27 +5103,7 @@ const bindVideo = (video) => {
                               return {'ok': true};
                             },
                           );
-                          c.addJavaScriptHandler(
-                            handlerName: 'videoDetected',
-                            callback: (args) async {
-                              if (args.isEmpty) {
-                                return {'handled': false};
-                              }
-                              final raw = args.first;
-                              if (raw is! Map) {
-                                return {'handled': false};
-                              }
-                              try {
-                                final map = Map<String, dynamic>.from(
-                                  raw as Map,
-                                );
-                                await _handleDetectedVideo(map);
-                                return {'handled': true};
-                              } catch (_) {
-                                return {'handled': false};
-                              }
-                            },
-                          );
+
                           c.addJavaScriptHandler(
                             handlerName: 'debugTapLogger',
                             callback: (args) {
@@ -5525,51 +5179,7 @@ const bindVideo = (video) => {
                               return {'logged': true};
                             },
                           );
-                          if (Platform.isIOS) {
-                            c.addJavaScriptHandler(
-                              handlerName: 'linkLongPress',
-                              callback: (args) async {
-                                if (args.isEmpty) {
-                                  return {'handled': false};
-                                }
 
-                                if (_suppressLinkLongPress) {
-                                  return {'handled': false};
-                                }
-                                final dynamic raw = args.first;
-                                if (raw is! String) {
-                                  return {'handled': false};
-                                }
-                                final resolved = await _resolveHitTestUrl(
-                                  c,
-                                  raw,
-                                );
-                                final normalized = resolved?.trim();
-                                if (normalized == null || normalized.isEmpty) {
-                                  return {'handled': false};
-                                }
-                                _lastIosLinkMenuUrl = normalized;
-                                _lastIosLinkMenuTime = DateTime.now();
-                                final bool isYoutube =
-                                    AppRepo.I.isYoutubeUrl(normalized) ||
-                                    AppRepo.I.isYoutubeUrl(
-                                      repo.currentPageUrl.value ?? '',
-                                    );
-                                final kind = _inferLinkContextKind(
-                                  normalized,
-                                  isYoutube: isYoutube,
-                                );
-                                await _handleLinkContextMenuWithFeedback(
-                                  normalized,
-                                  releaseController: c,
-                                  kind: kind,
-                                  isYoutube: isYoutube,
-                                );
-                                return {'handled': true};
-                              },
-                            );
-                          }
-                          unawaited(_injectVideoDetector(c));
                           unawaited(_injectDebugTapLogger(c));
                         },
                         onLoadStart: (c, u) async {
@@ -5587,7 +5197,6 @@ const bindVideo = (video) => {
                             return;
                           }
 
-                          await _injectVideoDetector(c);
                           await _injectDebugTapLogger(c);
                           repo.clearPlayingVideos();
                           final tab = _tabs[tabIndex];
@@ -5632,7 +5241,6 @@ const bindVideo = (video) => {
                           }
                         },
                         onLoadStop: (c, u) async {
-                          await _injectVideoDetector(c);
                           await _injectDebugTapLogger(c);
                           // 注入嗅探腳本並同步開關
                           await c.evaluateJavascript(source: Sniffer.jsHook);
