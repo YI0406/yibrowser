@@ -736,42 +736,10 @@ class _BrowserPageState extends State<BrowserPage>
   static const double _edgeSwipeVelocityThreshold = 700.0;
 
   bool _suppressLinkLongPress = false;
-  bool _webViewInteractionGuardActive = false;
-  Timer? _webViewInteractionGuardTimer;
+
   Timer? _nowPlayingRefreshTimer;
   bool _nowPlayingRefreshInProgress = false;
   static const Duration _kNowPlayingRefreshInterval = Duration(seconds: 2);
-
-  void _setWebViewInteractionGuardActive(bool active) {
-    if (_webViewInteractionGuardActive == active) {
-      return;
-    }
-    if (mounted) {
-      setState(() {
-        _webViewInteractionGuardActive = active;
-      });
-    } else {
-      _webViewInteractionGuardActive = active;
-    }
-  }
-
-  void _activateWebViewInteractionGuard() {
-    _webViewInteractionGuardTimer?.cancel();
-    _webViewInteractionGuardTimer = null;
-    _setWebViewInteractionGuardActive(true);
-  }
-
-  void _releaseWebViewInteractionGuard({Duration delay = Duration.zero}) {
-    _webViewInteractionGuardTimer?.cancel();
-    if (delay <= Duration.zero) {
-      _setWebViewInteractionGuardActive(false);
-      return;
-    }
-    _webViewInteractionGuardTimer = Timer(delay, () {
-      _setWebViewInteractionGuardActive(false);
-      _webViewInteractionGuardTimer = null;
-    });
-  }
 
   YtVideoInfo? _cachedYoutubeInfo;
 
@@ -5008,7 +4976,7 @@ class _BrowserPageState extends State<BrowserPage>
     _stopNowPlayingPolling();
     _urlFocus.dispose();
     _removeYtFetchBarrier();
-    _webViewInteractionGuardTimer?.cancel();
+
     super.dispose();
   }
 
@@ -5683,13 +5651,6 @@ class _BrowserPageState extends State<BrowserPage>
                           ],
                         ),
                       ),
-                      if (_webViewInteractionGuardActive)
-                        Positioned.fill(
-                          child: AbsorbPointer(
-                            absorbing: true,
-                            child: Container(color: Colors.transparent),
-                          ),
-                        ),
                     ],
                   ),
               ],
