@@ -2797,6 +2797,8 @@ const bindVideo = (video) => {
                                 directUrl,
                                 skipPrompt: true,
                               );
+                            } else {
+                              await _confirmDownload(directUrl);
                             }
                           }
                           : null,
