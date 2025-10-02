@@ -2898,7 +2898,20 @@ const bindVideo = (video) => {
       );
     } finally {
       Future.delayed(const Duration(milliseconds: 250), () {
+        if (!mounted) {
+          return;
+        }
         _suppressLinkLongPress = false;
+        _restoreWebViewInteractionAfterSheet();
+
+        if (mounted &&
+            _currentTabIndex >= 0 &&
+            _currentTabIndex < _tabs.length) {
+          final controller = _tabs[_currentTabIndex].controller;
+          if (controller != null) {
+            unawaited(_resetAndReleaseWebViewAfterContextMenu(controller));
+          }
+        }
       });
     }
   }
@@ -4330,6 +4343,19 @@ const bindVideo = (video) => {
   ) async {
     await _resetIosLinkContextMenuBridge(controller);
     await _releaseWebViewAfterContextMenu(controller);
+  }
+
+  void _restoreWebViewInteractionAfterSheet() {
+    if (!mounted) {
+      return;
+    }
+    if (_currentTabIndex < 0 || _currentTabIndex >= _tabs.length) {
+      return;
+    }
+    final controller = _tabs[_currentTabIndex].controller;
+    if (controller != null) {
+      unawaited(_resetAndReleaseWebViewAfterContextMenu(controller));
+    }
   }
 
   bool _flagTruthy(dynamic value) {
@@ -6446,6 +6472,12 @@ const bindVideo = (video) => {
       position: position,
       items: entries,
     );
+    if (mounted && _currentTabIndex >= 0 && _currentTabIndex < _tabs.length) {
+      final controller = _tabs[_currentTabIndex].controller;
+      if (controller != null) {
+        unawaited(_resetAndReleaseWebViewAfterContextMenu(controller));
+      }
+    }
     if (!mounted || selected == null) {
       return;
     }
@@ -7622,7 +7654,9 @@ const bindVideo = (video) => {
           ),
         );
       },
-    );
+    ).whenComplete(() {
+      _restoreWebViewInteractionAfterSheet();
+    });
   }
 
   /// --- Download speed helpers ---
@@ -7785,6 +7819,13 @@ const bindVideo = (video) => {
       },
     ).whenComplete(() {
       _suppressLinkLongPress = false;
+      _restoreWebViewInteractionAfterSheet();
+      if (_currentTabIndex >= 0 && _currentTabIndex < _tabs.length) {
+        final controller = _tabs[_currentTabIndex].controller;
+        if (controller != null) {
+          unawaited(_resetAndReleaseWebViewAfterContextMenu(controller));
+        }
+      }
     });
   }
 
