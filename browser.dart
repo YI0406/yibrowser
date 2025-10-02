@@ -6099,6 +6099,7 @@ const bindVideo = (video) => {
                 onPressed: () => _navigateHistoryDelta(-1),
               ),
             ),
+
             pad(
               IconButton(
                 icon: const Icon(Icons.arrow_forward),
@@ -6110,6 +6111,25 @@ const bindVideo = (video) => {
 
           // Right side controls (all aligned right): Sniffer, Resources, Downloads
           final rightSideButtons = <Widget>[
+            pad(
+              IconButton(
+                icon: const Icon(Icons.refresh),
+                onPressed: () async {
+                  _suppressLinkLongPress = false;
+                  final controller = _tabs[_currentTabIndex].controller;
+                  if (controller != null) {
+                    await controller.evaluateJavascript(
+                      source:
+                          '''
+          document.body.style.pointerEvents = 'auto';
+          document.documentElement.style.pointerEvents = 'auto';
+        '''.trim(),
+                    );
+                  }
+                },
+                visualDensity: VisualDensity.compact,
+              ),
+            ),
             // Sniffer toggle (eye icon)
             pad(
               ValueListenableBuilder<bool>(
@@ -6149,6 +6169,7 @@ const bindVideo = (video) => {
                 },
               ),
             ),
+
             // Resources (detected hits) with live badge
             pad(
               ValueListenableBuilder<bool>(
