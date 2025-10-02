@@ -271,6 +271,40 @@ class _BrowserPageState extends State<BrowserPage>
     );
   }
 
+  /// 關閉 sheet/dialog 後完整重置 WebView 觸控狀態
+  Future<void> _resetWebViewAfterSheet() async {
+    // 立即重置抑制旗標
+    _suppressLinkLongPress = false;
+
+    if (_currentTabIndex < 0 || _currentTabIndex >= _tabs.length) {
+      return;
+    }
+
+    final controller = _tabs[_currentTabIndex].controller;
+    if (controller == null) {
+      return;
+    }
+
+    // 稍微延遲以確保 sheet 動畫完成
+    await Future.delayed(const Duration(milliseconds: 100));
+
+    if (!mounted) return;
+
+    // 重置並釋放 WebView
+    await _resetAndReleaseWebViewAfterContextMenu(controller);
+
+    // iOS 需要重新啟用橋接
+    if (Platform.isIOS) {
+      await _setIosLinkContextMenuBridgeEnabled(controller, true);
+    }
+
+    // 重新啟用影片檢測器
+    await _setVideoDetectorEnabled(
+      controller,
+      repo.longPressDetectionEnabled.value,
+    );
+  }
+
   Future<void> _showYoutubePreviewDialog(
     String url, {
     InAppWebViewController? releaseController,
@@ -1775,6 +1809,7 @@ const bindVideo = (video) => {
       // 重置，不要重複彈出
       repo.ytOptions.value = null;
       repo.ytTitle.value = null;
+      unawaited(_resetWebViewAfterSheet());
       _suppressLinkLongPress = false;
     });
   }
@@ -2897,22 +2932,7 @@ const bindVideo = (video) => {
         },
       );
     } finally {
-      Future.delayed(const Duration(milliseconds: 250), () {
-        if (!mounted) {
-          return;
-        }
-        _suppressLinkLongPress = false;
-        _restoreWebViewInteractionAfterSheet();
-
-        if (mounted &&
-            _currentTabIndex >= 0 &&
-            _currentTabIndex < _tabs.length) {
-          final controller = _tabs[_currentTabIndex].controller;
-          if (controller != null) {
-            unawaited(_resetAndReleaseWebViewAfterContextMenu(controller));
-          }
-        }
-      });
+      unawaited(_resetWebViewAfterSheet());
     }
   }
 
@@ -6472,6 +6492,11 @@ const bindVideo = (video) => {
       position: position,
       items: entries,
     );
+    await _resetWebViewAfterSheet();
+
+    if (!mounted || selected == null) {
+      return;
+    }
     if (mounted && _currentTabIndex >= 0 && _currentTabIndex < _tabs.length) {
       final controller = _tabs[_currentTabIndex].controller;
       if (controller != null) {
@@ -7655,7 +7680,7 @@ const bindVideo = (video) => {
         );
       },
     ).whenComplete(() {
-      _restoreWebViewInteractionAfterSheet();
+      unawaited(_resetWebViewAfterSheet());
     });
   }
 
@@ -7818,14 +7843,7 @@ const bindVideo = (video) => {
         );
       },
     ).whenComplete(() {
-      _suppressLinkLongPress = false;
-      _restoreWebViewInteractionAfterSheet();
-      if (_currentTabIndex >= 0 && _currentTabIndex < _tabs.length) {
-        final controller = _tabs[_currentTabIndex].controller;
-        if (controller != null) {
-          unawaited(_resetAndReleaseWebViewAfterContextMenu(controller));
-        }
-      }
+      unawaited(_resetWebViewAfterSheet());
     });
   }
 
