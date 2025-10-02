@@ -7246,15 +7246,8 @@ class _BrowserPageState extends State<BrowserPage>
       },
     ).whenComplete(() {
       _suppressLinkLongPress = false;
-      if (kDebugMode) {
-        debugPrint(
-          '[Debug][YouTube] Long press interactions restored after download options sheet closed.',
-        );
-      }
       _releaseWebViewInteractionGuard(delay: const Duration(milliseconds: 120));
-      Future.delayed(const Duration(milliseconds: 120), () {
-        unawaited(_restoreIosLinkInteractions());
-      });
+      unawaited(_restoreIosLinkInteractions());
     });
   }
 
