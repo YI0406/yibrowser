@@ -120,13 +120,25 @@ enum _ToolbarMenuAction {
   openHistory,
   clearBrowsingData,
   toggleAdBlocker,
-  toggleAutoDetectMedia,
   toggleBlockPopup,
   blockExternalApp,
   addHome,
   goHome,
   help,
 }
+
+enum _LinkContextMenuAction {
+  copyLink,
+  openInNewTab,
+  addFavorite,
+  addHome,
+  downloadLink,
+  downloadImage,
+  downloadMedia,
+  playMedia,
+}
+
+enum _LinkContextKind { generic, image, video, audio }
 
 /// BrowserPage encapsulates a WebView with URL entry, navigation, and a bar
 /// showing detected media resources. It hooks into resource loading
@@ -267,11 +279,6 @@ class _BrowserPageState extends State<BrowserPage>
     if (_ytFetchInFlight) return;
 
     _suppressLinkLongPress = true;
-    if (kDebugMode) {
-      debugPrint(
-        '[Debug][YouTube] Long press interactions suppressed while preview dialog is open.',
-      );
-    }
 
     try {
       _ytFetchInFlight = true;
@@ -392,15 +399,10 @@ class _BrowserPageState extends State<BrowserPage>
 
       if (!_ytMenuOpen) {
         _suppressLinkLongPress = false;
-        if (kDebugMode) {
-          debugPrint(
-            '[Debug][YouTube] Long press interactions restored after preview dialog closed.',
-          );
-        }
       }
     } finally {
       if (releaseController != null) {
-        await _restoreIosLinkInteractions(controller: releaseController);
+        await _resetAndReleaseWebViewAfterContextMenu(releaseController);
       }
     }
   }
@@ -604,9 +606,6 @@ class _BrowserPageState extends State<BrowserPage>
   // Global key for the toolbar menu button so we can reopen the menu at the
   // same location after toggling quick actions.
   final GlobalKey _menuButtonKey = GlobalKey();
-  PersistentBottomSheetController? _playingSheetController;
-  PersistentBottomSheetController? _detectedSheetController;
-  PersistentBottomSheetController? _downloadsSheetController;
 
   // List of open tabs. At least one tab is always present.
   final List<_TabData> _tabs = [];
@@ -690,8 +689,7 @@ class _BrowserPageState extends State<BrowserPage>
   final Set<String> _allKnownIosUniversalLinkHosts = {
     ..._kDefaultIosUniversalLinkHosts,
   };
-  bool _lastSnifferEnabled = false;
-  bool _lastAutoDetectEnabled = false;
+
   static const Set<String> _kWebSchemes = {
     'http',
     'https',
@@ -737,96 +735,490 @@ class _BrowserPageState extends State<BrowserPage>
   static const double _edgeSwipeWidth = 32.0;
   static const double _edgeSwipeDistanceThreshold = 48.0;
   static const double _edgeSwipeVelocityThreshold = 700.0;
-
+  bool _iosLinkMenuBridgeReady = false;
+  String? _lastIosLinkMenuUrl;
+  DateTime? _lastIosLinkMenuTime;
   bool _suppressLinkLongPress = false;
-
-  Timer? _nowPlayingRefreshTimer;
-  bool _nowPlayingRefreshInProgress = false;
-  static const Duration _kNowPlayingRefreshInterval = Duration(seconds: 2);
-
   YtVideoInfo? _cachedYoutubeInfo;
 
-  static const String _kDebugTapLoggerJS = r'''
-(function () {
-  if (typeof window === 'undefined') {
-    return false;
+  static const String _kIosLinkContextMenuJS = r'''
+(() => {
+  if (window.__flutterIosLinkMenuInstalled) {
+    return;
   }
-  if (window.__flutterDebugTapLoggerInstalled) {
-    return true;
-  }
-  if (!window.flutter_inappwebview || !window.flutter_inappwebview.callHandler) {
-    return false;
+  window.__flutterIosLinkMenuInstalled = true;
+  if (typeof window.flutterIosLinkMenuEnabled === 'undefined') {
+    window.flutterIosLinkMenuEnabled = true;
   }
 
-  window.__flutterDebugTapLoggerInstalled = true;
+  const LONG_PRESS_DELAY = 650;
+  const MOVE_TOLERANCE = 14;
+   const SUPPRESS_TIMEOUT = 400;
+  let suppressNextClick = false;
+  let suppressedAnchor = null;
+  let activeAnchor = null;
+  let longPressTimer = null;
+  let startX = 0;
+  let startY = 0;
+  let suppressResetTimer = null;
+  const styleId = 'flutter-ios-link-menu-style';
+  let styleNode = null;
 
-  const limit = (value) => {
-    if (!value) return null;
-    const text = ('' + value).trim();
-    if (!text) return null;
-    if (text.length <= 120) return text;
-    return text.slice(0, 117) + '...';
+  const isEnabled = () => !!window.flutterIosLinkMenuEnabled;
+
+  const removeStyle = () => {
+    const node = styleNode || document.getElementById(styleId);
+    if (node && node.parentNode) {
+      node.parentNode.removeChild(node);
+    }
+    styleNode = null;
   };
 
-  const safeClosest = (element, selector) => {
-    if (!element || typeof element.closest !== 'function') {
+  const resetClickSuppression = () => {
+    suppressNextClick = false;
+    suppressedAnchor = null;
+    if (suppressResetTimer !== null) {
+      clearTimeout(suppressResetTimer);
+      suppressResetTimer = null;
+    }
+  };
+
+  const scheduleSuppressReset = () => {
+    if (suppressResetTimer !== null) {
+      clearTimeout(suppressResetTimer);
+    }
+    suppressResetTimer = setTimeout(() => {
+      suppressResetTimer = null;
+      suppressNextClick = false;
+      suppressedAnchor = null;
+    }, SUPPRESS_TIMEOUT);
+  };
+
+  const ensureStyle = () => {
+    if (!isEnabled()) {
+      removeStyle();
+      return;
+    }
+    if (styleNode && styleNode.parentNode) {
+      return;
+    }
+    styleNode = styleNode || document.getElementById(styleId);
+    if (!styleNode) {
+      styleNode = document.createElement('style');
+      styleNode.id = styleId;
+      styleNode.textContent = 'a, a * { -webkit-touch-callout: none !important; }';
+    }
+    if (styleNode && !styleNode.parentNode) {
+      document.documentElement.appendChild(styleNode);
+    }
+  };
+
+  const resolveHref = (anchor) => {
+    if (!anchor) {
+      return null;
+    }
+    let href = anchor.getAttribute('href') || '';
+    if (!href && anchor.href) {
+      href = anchor.href;
+    }
+    if (!href) {
       return null;
     }
     try {
-      return element.closest(selector);
-    } catch (_) {
-      return null;
+      return new URL(href, window.location.href).href;
+    } catch (err) {
+      return href;
     }
   };
 
-  const describe = (target) => {
-    if (!target) return {};
-    const info = {
-      tag: target.tagName || null,
-      id: target.id || null,
-      classes: typeof target.className === 'string' ? target.className : null,
+  const clearPending = () => {
+    if (longPressTimer !== null) {
+      clearTimeout(longPressTimer);
+      longPressTimer = null;
+    }
+    activeAnchor = null;
+    startX = 0;
+    startY = 0;
+  };
+  const resetState = () => {
+    clearPending();
+    resetClickSuppression();
+  };
+
+  document.addEventListener(
+    'touchstart',
+    (event) => {
+      if (!isEnabled()) {
+        clearPending();
+        return;
+      }
+      if (!event || !event.touches || event.touches.length !== 1) {
+        clearPending();
+        return;
+      }
+      const touch = event.touches[0];
+      ensureStyle();
+      const anchor =
+        event.target && event.target.closest
+          ? event.target.closest('a[href]')
+          : null;
+      if (!anchor) {
+        clearPending();
+        return;
+      }
+      if (longPressTimer !== null) {
+        clearTimeout(longPressTimer);
+      }
+      activeAnchor = anchor;
+      startX = touch.clientX;
+      startY = touch.clientY;
+      longPressTimer = setTimeout(() => {
+       if (!isEnabled()) {
+          resetState();
+          return;
+        }
+        const anchor = activeAnchor;
+        const resolved = resolveHref(anchor);
+        try {
+          const selection = window.getSelection && window.getSelection();
+          if (selection && selection.removeAllRanges) {
+            selection.removeAllRanges();
+          }
+        } catch (_) {}
+        clearPending();
+        if (
+          resolved &&
+          window.flutter_inappwebview &&
+          window.flutter_inappwebview.callHandler
+        ) {
+          suppressNextClick = true;
+          suppressedAnchor = anchor;
+          scheduleSuppressReset();
+          try {
+            const maybePromise =
+              window.flutter_inappwebview.callHandler('linkLongPress', resolved);
+            if (
+              maybePromise &&
+              typeof maybePromise.catch === 'function'
+            ) {
+              maybePromise.catch(() => {});
+            }
+          } catch (err) {
+            if (typeof console !== 'undefined' && console.warn) {
+              console.warn('Failed to notify Flutter about link long press', err);
+            }
+          } finally {
+            resetState();
+          }
+        }
+      }, LONG_PRESS_DELAY);
+    },
+    { passive: true }
+  );
+
+  document.addEventListener(
+    'touchmove',
+    (event) => {
+      if (!activeAnchor) {
+        return;
+      }
+      if (!isEnabled()) {
+        clearPending();
+        return;
+      }
+      const touch =
+        event && event.touches && event.touches.length > 0
+          ? event.touches[0]
+          : null;
+      if (!touch) {
+        clearPending();
+        return;
+      }
+      const dx = touch.clientX - startX;
+      const dy = touch.clientY - startY;
+      if (Math.hypot(dx, dy) > MOVE_TOLERANCE) {
+        clearPending();
+        return;
+      }
+      if (!event || !event.target || !event.target.closest) {
+        clearPending();
+        return;
+      }
+      const anchor = event.target.closest('a[href]');
+      if (!anchor || anchor !== activeAnchor) {
+        clearPending();
+      }
+    },
+    { passive: true }
+  );
+
+  document.addEventListener('touchend', clearPending, { passive: true });
+  document.addEventListener('touchcancel', clearPending, { passive: true });
+
+   
+
+  window.__flutterResetLinkMenu = resetState;
+  window.__flutterSetLinkMenuEnabled = (value) => {
+    const enabled = !!value;
+    window.flutterIosLinkMenuEnabled = enabled;
+    if (enabled) {
+      ensureStyle();
+      resetClickSuppression();
+    } else {
+      removeStyle();
+      resetState();
+    }
+  };
+  document.addEventListener(
+    'click',
+    (event) => {
+      if (!isEnabled()) {
+        return;
+      }
+      if (!suppressNextClick) {
+        return;
+      }
+      const anchor = suppressedAnchor;
+      if (anchor && event && event.target) {
+        const target = event.target;
+        const shouldSuppress =
+          target === anchor ||
+          (typeof anchor.contains === 'function' && anchor.contains(target));
+        if (shouldSuppress) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      }
+      resetClickSuppression();
+       },
+    { capture: true }
+  );
+  document.addEventListener(
+    'pointerdown',
+    () => {
+      if (!isEnabled()) {
+        return;
+      }
+      resetClickSuppression();
+    
+    },
+    { capture: true }
+  );
+  document.addEventListener(
+    'contextmenu',
+    (event) => {
+      if (!isEnabled()) {
+        return;
+      }
+      const anchor =
+        event && event.target && event.target.closest
+          ? event.target.closest('a[href]')
+          : null;
+      if (anchor) {
+        event.preventDefault();
+      }
+    },
+    { capture: true }
+  );
+  document.addEventListener(
+    'visibilitychange',
+    () => {
+      if (document.visibilityState !== 'visible') {
+        resetClickSuppression();
+      }
+    },
+    { capture: true }
+  );
+  window.addEventListener('pagehide', resetClickSuppression, { capture: true });
+  window.addEventListener('blur', resetClickSuppression, { capture: true });
+})();
+''';
+
+  static const String _kVideoDetectorBridge = r'''
+(function () {
+  if (window.__flutterVideoDetectorInstalled) {
+   if (window.__flutterVideoDetectorRefresh) {
+      try {
+        window.__flutterVideoDetectorRefresh();
+      } catch (_) {}
+    }
+    return;
+  }
+  window.__flutterVideoDetectorInstalled = true;
+  window.__flutterVideoDetectorEnabled = true;
+
+
+
+  const resolveSrc = (video) => {
+    if (!video) return '';
+    
+    const candidates = [video.currentSrc, video.src];
+    if (video.querySelectorAll) {
+      video.querySelectorAll('source').forEach((source) => {
+        if (source.src) {
+          candidates.push(source.src);
+        }
+      });
+    }
+      if (video.dataset) {
+      ['src', 'source', 'video', 'stream'].forEach((key) => {
+        if (video.dataset[key]) {
+          candidates.push(video.dataset[key]);
+        }
+      });
+    }
+    for (let i = 0; i < candidates.length; i += 1) {
+      const value = candidates[i];
+      if (value && ('' + value).trim().length > 0) {
+        return value;
+      }
+    }
+  
+    return video.currentSrc || video.src || '';
+  };
+
+  const inferTitle = (video) => {
+    const tryRead = (node) => {
+      if (!node) return '';
+      const attrs = ['data-title', 'aria-label', 'title', 'alt'];
+      for (let i = 0; i < attrs.length; i += 1) {
+        const attr = attrs[i];
+        const value = node.getAttribute && node.getAttribute(attr);
+        if (value && value.trim().length > 0) {
+          return value.trim();
+        }
+      }
+      return '';
+    };
+    let title = tryRead(video);
+    if (title) return title;
+    if (video.parentElement) {
+      title = tryRead(video.parentElement);
+      if (title) return title;
+    }
+    if (video.closest) {
+      const labelled = video.closest('[data-title], [aria-label], [title]');
+      if (labelled) {
+        title = tryRead(labelled);
+        if (title) return title;
+      }
+    }
+    return document.title || '';
+  };
+
+  const captureFrame = (video) => {
+    try {
+      const width = video.videoWidth || video.clientWidth;
+      const height = video.videoHeight || video.clientHeight;
+      if (!width || !height) return '';
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return '';
+      ctx.drawImage(video, 0, 0, width, height);
+      return canvas.toDataURL('image/jpeg', 0.75);
+    } catch (err) {
+      return '';
+    }
+  };
+
+  const isPlaying = (video) => {
+    if (!video) return false;
+    if (video.readyState < 2) return false;
+    return !video.paused && !video.ended;
+  };
+
+  const sendPayload = (video) => {
+    if (!window.__flutterVideoDetectorEnabled) {
+      return;
+    }
+    const now = Date.now();
+    const last = video.__flutterVideoDetectorLastSent || 0;
+    if (now - last < 500) {
+      return;
+    }
+    video.__flutterVideoDetectorLastSent = now;
+    const payload = {
+      src: resolveSrc(video) || '',
+      title: inferTitle(video) || '',
+      pageTitle: document.title || '',
+      pageUrl: window.location ? window.location.href : '',
+      duration: Number.isFinite(video.duration) ? video.duration : null,
+      currentTime: Number.isFinite(video.currentTime) ? video.currentTime : null,
+      width: video.videoWidth || null,
+      height: video.videoHeight || null,
+      poster: video.poster || '',
+      capture: captureFrame(video) || '',
+      timestamp: now,
+    };
+    try {
+      if (window.flutter_inappwebview && window.flutter_inappwebview.callHandler) {
+        window.flutter_inappwebview.callHandler('videoDetected', payload);
+      }
+    } catch (_) {}
+  };
+
+const bindVideo = (video) => {
+    if (!video || video.__flutterVideoDetectorBound) {
+      return;
+    }
+    video.__flutterVideoDetectorBound = true;
+
+ const maybeSend = () => {
+      if (!window.__flutterVideoDetectorEnabled) {
+        return;
+      }
+      if (!isPlaying(video)) {
+        return;
+      }
+      sendPayload(video);
+  
     };
 
-    const anchor = safeClosest(target, 'a,area');
-    if (anchor) {
-      info.linkHref = anchor.getAttribute('href') || anchor.href || null;
-      info.linkText = limit(anchor.innerText || anchor.textContent);
-    } else if (target.href) {
-      info.linkHref = target.getAttribute('href') || target.href || null;
+    const resetStamp = () => {
+      video.__flutterVideoDetectorLastSent = 0;
+    };
+
+    video.addEventListener('playing', () => {
+      resetStamp();
+      maybeSend();
+    }, { passive: true });
+    video.addEventListener('loadeddata', maybeSend, { passive: true });
+    video.addEventListener('loadedmetadata', maybeSend, { passive: true });
+    video.addEventListener('timeupdate', maybeSend, { passive: true });
+    video.addEventListener('seeking', resetStamp, { passive: true });
+    video.addEventListener('pause', resetStamp, { passive: true });
+    video.addEventListener('ended', resetStamp, { passive: true });
+
+    if (isPlaying(video)) {
+      maybeSend();
     }
+  };
 
-    const button = safeClosest(target, 'button');
-    if (button) {
-      info.buttonText = limit(button.innerText || button.textContent);
-    } else if (target.tagName === 'BUTTON') {
-      info.buttonText = limit(target.innerText || target.textContent);
+  const scan = () => {
+    document.querySelectorAll('video').forEach((video) => bindVideo(video));
+  };
+
+  window.__flutterVideoDetectorSetEnabled = (value) => {
+    window.__flutterVideoDetectorEnabled = !!value;
+    if (!value) {
+   document.querySelectorAll('video').forEach((video) => {
+        video.__flutterVideoDetectorLastSent = 0;
+      });
+    } else {
+      scan();
     }
-
-    info.text = limit(target.innerText || target.textContent);
-    return info;
   };
 
-  const forward = (event) => {
-    try {
-      const payload = describe(event.target);
-      payload.eventType = event.type;
-      payload.timestamp = Date.now();
-      window.flutter_inappwebview.callHandler('debugTapLogger', payload);
-    } catch (err) {}
-  };
+  window.__flutterVideoDetectorRefresh = scan;
 
-  const install = () => {
-    document.addEventListener('click', forward, true);
-    document.addEventListener('touchend', forward, true);
-  };
-
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', install, { once: true });
-  } else {
-    install();
-  }
-
-  return true;
+  scan();
+  const observer = new MutationObserver(scan);
+  observer.observe(document.documentElement || document.body, {
+    childList: true,
+    subtree: true,
+  });
 })();
 ''';
 
@@ -1033,7 +1425,13 @@ class _BrowserPageState extends State<BrowserPage>
                           ],
                         ),
                         const SizedBox(height: 6),
-
+                        // 迷你預覽（可拿掉，只留控制列也行）
+                        if (_miniCtrl != null && _miniCtrl!.value.isInitialized)
+                          AspectRatio(
+                            aspectRatio: _miniCtrl!.value.aspectRatio,
+                            child: VideoPlayer(_miniCtrl!),
+                          ),
+                        const SizedBox(height: 6),
                         // 控制列：後退15、播放/暫停、快轉15
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -1287,11 +1685,6 @@ class _BrowserPageState extends State<BrowserPage>
     }
 
     _suppressLinkLongPress = true;
-    if (kDebugMode) {
-      debugPrint(
-        '[Debug][YouTube] Long press interactions suppressed while download options sheet is open.',
-      );
-    }
     showModalBottomSheet(
       context: context,
       useSafeArea: true,
@@ -1418,11 +1811,6 @@ class _BrowserPageState extends State<BrowserPage>
       repo.ytOptions.value = null;
       repo.ytTitle.value = null;
       _suppressLinkLongPress = false;
-      if (kDebugMode) {
-        debugPrint(
-          '[Debug][YouTube] Long press interactions restored after download options sheet closed.',
-        );
-      }
     });
   }
 
@@ -1509,37 +1897,6 @@ class _BrowserPageState extends State<BrowserPage>
     return candidate.url.trim();
   }
 
-  String? _truncateForDebugLog(String? value, {int maxLength = 80}) {
-    if (value == null) {
-      return null;
-    }
-    final trimmed = value.trim();
-    if (trimmed.isEmpty) {
-      return null;
-    }
-    if (trimmed.length <= maxLength) {
-      return trimmed;
-    }
-    if (maxLength <= 1) {
-      return trimmed.substring(0, 1);
-    }
-    return '${trimmed.substring(0, maxLength - 1)}…';
-  }
-
-  String? _stringFromPayload(dynamic value) {
-    if (value == null) {
-      return null;
-    }
-    if (value is String) {
-      return value;
-    }
-    try {
-      return value.toString();
-    } catch (_) {
-      return null;
-    }
-  }
-
   String _hostnameFromUrl(String url) {
     if (url.isEmpty) {
       return '';
@@ -1596,279 +1953,6 @@ class _BrowserPageState extends State<BrowserPage>
       alignment: Alignment.center,
       child: const Icon(Icons.ondemand_video),
     );
-  }
-
-  String _normalizePageUrl(String url) {
-    var trimmed = url.trim();
-    if (trimmed.isEmpty) {
-      return '';
-    }
-    try {
-      final uri = Uri.parse(trimmed);
-      trimmed = uri.replace(fragment: '').toString();
-    } catch (_) {
-      final hashIndex = trimmed.indexOf('#');
-      if (hashIndex >= 0) {
-        trimmed = trimmed.substring(0, hashIndex);
-      }
-    }
-    if (trimmed.endsWith('/') && trimmed.length > 1) {
-      return trimmed.substring(0, trimmed.length - 1);
-    }
-    return trimmed;
-  }
-
-  InAppWebViewController? _controllerForCandidate(
-    PlayingVideoCandidate candidate,
-  ) {
-    final targetPage = _normalizePageUrl(candidate.pageUrl);
-    if (targetPage.isEmpty) {
-      return null;
-    }
-    for (final tab in _tabs) {
-      final current = tab.currentUrl;
-      if (current == null || current.isEmpty) {
-        continue;
-      }
-      if (_normalizePageUrl(current) == targetPage) {
-        return tab.controller;
-      }
-    }
-    return null;
-  }
-
-  void _ensureNowPlayingPolling() {
-    if (_nowPlayingRefreshTimer != null) {
-      return;
-    }
-    _nowPlayingRefreshTimer = Timer.periodic(
-      _kNowPlayingRefreshInterval,
-      (_) => unawaited(_refreshNowPlayingMetadata()),
-    );
-    unawaited(_refreshNowPlayingMetadata());
-  }
-
-  void _stopNowPlayingPolling() {
-    _nowPlayingRefreshTimer?.cancel();
-    _nowPlayingRefreshTimer = null;
-  }
-
-  void _onPlayingVideosChanged() {
-    if (repo.playingVideos.value.isEmpty) {
-      _stopNowPlayingPolling();
-    } else {
-      _ensureNowPlayingPolling();
-    }
-  }
-
-  Future<void> _refreshNowPlayingMetadata() async {
-    if (_nowPlayingRefreshInProgress) {
-      return;
-    }
-    final candidates = List<PlayingVideoCandidate>.from(
-      repo.playingVideos.value,
-    );
-    if (candidates.isEmpty) {
-      _stopNowPlayingPolling();
-      return;
-    }
-    _nowPlayingRefreshInProgress = true;
-    try {
-      for (final candidate in candidates) {
-        final controller = _controllerForCandidate(candidate);
-        if (controller == null) {
-          continue;
-        }
-        final script = '''
-          (function(targetUrl) {
-            try {
-              const response = { ok: false };
-              const url = (targetUrl || '').toString();
-              const videos = Array.from(document.querySelectorAll('video'));
-              const match = videos.find(function(video) {
-                try {
-                  const current = (video.currentSrc || video.src || '').toString();
-                  if (!current) {
-                    return false;
-                  }
-                  if (!url) {
-                    return true;
-                  }
-                  if (current === url) {
-                    return true;
-                  }
-                  const normalizedCurrent = current.split('#')[0];
-                  const normalizedTarget = url.split('#')[0];
-                  if (normalizedCurrent === normalizedTarget) {
-                    return true;
-                  }
-                  if (url.startsWith('blob:') && current.startsWith('blob:')) {
-                    return true;
-                  }
-                  return false;
-                } catch (err) {
-                  return false;
-                }
-              });
-              if (!match) {
-                response.reason = 'no-match';
-                return JSON.stringify(response);
-              }
-              response.ok = true;
-              try {
-                const position = match.currentTime;
-                if (typeof position === 'number' && isFinite(position) && position >= 0) {
-                  response.position = position;
-                }
-              } catch (_) {}
-              try {
-                const duration = match.duration;
-                if (typeof duration === 'number' && isFinite(duration) && duration > 0) {
-                  response.duration = duration;
-                }
-              } catch (_) {}
-              try {
-                const width = match.videoWidth || match.clientWidth || 0;
-                const height = match.videoHeight || match.clientHeight || 0;
-                if (width > 0 && height > 0) {
-                  response.width = width;
-                  response.height = height;
-                  const canvas = document.createElement('canvas');
-                  canvas.width = width;
-                  canvas.height = height;
-                  const ctx = canvas.getContext('2d');
-                  if (ctx) {
-                    ctx.drawImage(match, 0, 0, width, height);
-                    const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
-                    if (dataUrl && dataUrl.startsWith('data:image')) {
-                      const parts = dataUrl.split(',', 2);
-                      if (parts.length === 2) {
-                        response.snapshot = parts[1];
-                      }
-                    }
-                  }
-                }
-              } catch (err) {
-                response.snapshotError = String(err);
-              }
-              try {
-                const poster = match.poster;
-                if (poster) {
-                  response.poster = poster;
-                }
-              } catch (_) {}
-              return JSON.stringify(response);
-            } catch (err) {
-              return JSON.stringify({ ok: false, error: String(err) });
-            }
-          })(${jsonEncode(candidate.url)});
-        ''';
-        dynamic raw;
-        try {
-          raw = await controller.evaluateJavascript(source: script);
-        } catch (err, stack) {
-          if (kDebugMode) {
-            debugPrint(
-              '[Debug][NowPlaying] Failed to evaluate snapshot script: $err',
-            );
-            debugPrint('$stack');
-          }
-          continue;
-        }
-        Map<String, dynamic>? data;
-        if (raw is String) {
-          final trimmed = raw.trim();
-          if (trimmed.isEmpty) {
-            continue;
-          }
-          try {
-            final decoded = jsonDecode(trimmed);
-            if (decoded is Map<String, dynamic>) {
-              data = decoded;
-            }
-          } catch (_) {
-            continue;
-          }
-        } else if (raw is Map) {
-          try {
-            data = Map<String, dynamic>.from(raw as Map);
-          } catch (_) {
-            data = null;
-          }
-        }
-        if (data == null || data['ok'] != true) {
-          continue;
-        }
-        bool changed = false;
-        double? position;
-        if (data.containsKey('position')) {
-          final value = data['position'];
-          if (value is num) {
-            position = value.toDouble();
-            changed = true;
-          }
-        }
-        double? duration;
-        if (data.containsKey('duration')) {
-          final value = data['duration'];
-          if (value is num) {
-            final d = value.toDouble();
-            if (d.isFinite && d > 0) {
-              duration = d;
-              changed = true;
-            }
-          }
-        }
-        int? width;
-        int? height;
-        if (data.containsKey('width')) {
-          final value = data['width'];
-          if (value is num && value > 0) {
-            width = value.toInt();
-            changed = true;
-          }
-        }
-        if (data.containsKey('height')) {
-          final value = data['height'];
-          if (value is num && value > 0) {
-            height = value.toInt();
-            changed = true;
-          }
-        }
-        Uint8List? snapshot;
-        final snapshotValue = data['snapshot'];
-        if (snapshotValue is String && snapshotValue.isNotEmpty) {
-          try {
-            snapshot = base64Decode(snapshotValue);
-            changed = true;
-          } catch (_) {}
-        }
-        String? poster;
-        final posterValue = data['poster'];
-        if (posterValue is String) {
-          final trimmedPoster = posterValue.trim();
-          if (trimmedPoster.isNotEmpty &&
-              trimmedPoster != candidate.posterUrl) {
-            poster = trimmedPoster;
-            changed = true;
-          }
-        }
-        if (!changed) {
-          continue;
-        }
-        final updated = candidate.copyWith(
-          positionSeconds: position ?? candidate.positionSeconds,
-          durationSeconds: duration ?? candidate.durationSeconds,
-          videoWidth: width ?? candidate.videoWidth,
-          videoHeight: height ?? candidate.videoHeight,
-          snapshot: snapshot ?? candidate.snapshot,
-          posterUrl: poster ?? candidate.posterUrl,
-        );
-        repo.upsertPlayingVideo(updated);
-      }
-    } finally {
-      _nowPlayingRefreshInProgress = false;
-    }
   }
 
   /// Format bytes into a human friendly string.
@@ -2043,146 +2127,18 @@ class _BrowserPageState extends State<BrowserPage>
     if (!enabled) {
       repo.clearPlayingVideos();
     }
-    final shouldProbe = enabled && !_lastAutoDetectEnabled;
-    _lastAutoDetectEnabled = enabled;
-    unawaited(_syncSnifferSettings(probe: shouldProbe));
-  }
+    for (final tab in _tabs) {
+      final controller = tab.controller;
+      if (controller == null) continue;
 
-  void _onSnifferSettingChanged() {
-    final enabled = repo.snifferEnabled.value;
-    final wasEnabled = _lastSnifferEnabled;
-    _lastSnifferEnabled = enabled;
-    final autoOn = enabled || repo.longPressDetectionEnabled.value;
-    final shouldProbe = autoOn && enabled && !wasEnabled;
-    unawaited(_syncSnifferSettings(probe: shouldProbe));
-  }
-
-  Future<void> _syncSnifferSettings({
-    InAppWebViewController? controller,
-    bool probe = false,
-  }) async {
-    final networkOn = repo.snifferEnabled.value;
-    final autoOn = networkOn || repo.longPressDetectionEnabled.value;
-    final script = Sniffer.jsSetModes(
-      networkOn: networkOn,
-      autoDetectOn: autoOn,
-    );
-    final targets = <InAppWebViewController>[];
-    if (controller != null) {
-      targets.add(controller);
-    } else {
-      for (final tab in _tabs) {
-        final ctrl = tab.controller;
-        if (ctrl != null) {
-          targets.add(ctrl);
+      unawaited(_setVideoDetectorEnabled(controller, enabled));
+      if (Platform.isIOS) {
+        if (!enabled) {
+          unawaited(_resetAndReleaseWebViewAfterContextMenu(controller));
         }
+        unawaited(_setIosLinkContextMenuBridgeEnabled(controller, true));
       }
     }
-    for (final ctrl in targets) {
-      try {
-        await ctrl.evaluateJavascript(source: script);
-        if (probe && autoOn) {
-          await _probeActiveMedia(controller: ctrl);
-        }
-      } catch (_) {}
-    }
-  }
-
-  Future<void> _probeActiveMedia({InAppWebViewController? controller}) async {
-    final autoOn =
-        repo.snifferEnabled.value || repo.longPressDetectionEnabled.value;
-    if (!autoOn) {
-      return;
-    }
-    final targets = <InAppWebViewController>[];
-    if (controller != null) {
-      targets.add(controller);
-    } else {
-      for (final tab in _tabs) {
-        final ctrl = tab.controller;
-        if (ctrl != null) {
-          targets.add(ctrl);
-        }
-      }
-    }
-    for (final ctrl in targets) {
-      try {
-        final result = await ctrl.evaluateJavascript(
-          source: Sniffer.jsQueryActiveMedia,
-        );
-        final entries = _decodeMediaProbeResult(result);
-        for (final entry in entries) {
-          final url = (entry['url'] ?? '').toString().trim();
-          if (url.isEmpty) {
-            continue;
-          }
-          final rawType = (entry['type'] ?? 'video').toString();
-          if (!repo.snifferEnabled.value && rawType.toLowerCase() != 'video') {
-            continue;
-          }
-          final posterValue = entry['poster'];
-          String poster = '';
-          if (posterValue is String) {
-            poster = posterValue;
-          } else if (posterValue != null) {
-            poster = posterValue.toString();
-          }
-          final durationRaw = entry['duration'];
-          double? durationSeconds;
-          if (durationRaw is num) {
-            if (durationRaw.isFinite && durationRaw > 0) {
-              durationSeconds = durationRaw.toDouble();
-            }
-          }
-          repo.addHit(
-            MediaHit(
-              url: url,
-              type: rawType,
-              contentType: '',
-              poster: poster,
-              durationSeconds: durationSeconds,
-            ),
-            storeInHits: repo.snifferEnabled.value,
-          );
-        }
-      } catch (_) {}
-    }
-  }
-
-  List<Map<String, dynamic>> _decodeMediaProbeResult(dynamic result) {
-    if (result == null) {
-      return const [];
-    }
-    dynamic parsed = result;
-    if (parsed is String) {
-      final trimmed = parsed.trim();
-      if (trimmed.isEmpty) {
-        return const [];
-      }
-      try {
-        parsed = jsonDecode(trimmed);
-      } catch (_) {
-        return const [];
-      }
-    }
-    if (parsed is! List) {
-      return const [];
-    }
-    final List<Map<String, dynamic>> maps = [];
-    for (final item in parsed) {
-      if (item is Map) {
-        try {
-          maps.add(Map<String, dynamic>.from(item as Map));
-        } catch (_) {
-          final converted = <String, dynamic>{};
-          item.forEach((key, value) {
-            converted['$key'] = value;
-          });
-          maps.add(converted);
-        }
-      }
-    }
-    return maps;
   }
 
   // All tab‑specific controllers live on the individual [_TabData] instances.
@@ -2410,22 +2366,84 @@ class _BrowserPageState extends State<BrowserPage>
     }
   }
 
-  Future<void> _injectDebugTapLogger(InAppWebViewController controller) async {
+  Future<void> _injectIosLinkContextMenuBridge(
+    InAppWebViewController controller,
+  ) async {
+    if (!Platform.isIOS) {
+      return;
+    }
+
     try {
-      final result = await controller.evaluateJavascript(
-        source: _kDebugTapLoggerJS,
-      );
-      if (kDebugMode && result != true) {
-        debugPrint(
-          '[Debug][WebTap] Tap logger injection reported result: $result',
-        );
-      }
-    } catch (err, stack) {
+      await controller.evaluateJavascript(source: _kIosLinkContextMenuJS);
+      _iosLinkMenuBridgeReady = true;
+    } catch (_) {
+      _iosLinkMenuBridgeReady = false;
+    }
+    await _setIosLinkContextMenuBridgeEnabled(controller, true);
+  }
+
+  Future<void> _resetIosLinkContextMenuBridge(
+    InAppWebViewController controller,
+  ) async {
+    if (!Platform.isIOS) {
+      return;
+    }
+    const script = r'''
+ (function() {
+        try {
+          if (typeof window !== 'undefined' && window.__flutterResetLinkMenu) {
+            window.__flutterResetLinkMenu();
+            return true;
+          }
+        } catch (_) {}
+        return false;
+      })();
+    ''';
+    var resetSucceeded = false;
+    try {
+      final result = await controller.evaluateJavascript(source: script);
+      resetSucceeded = result == true;
+    } catch (err, _) {
       if (kDebugMode) {
-        debugPrint('[Debug][WebTap] Failed to inject tap logger: $err');
-        debugPrint('$stack');
+        debugPrint('Failed to evaluate iOS link menu reset script: $err');
       }
     }
+    if (resetSucceeded) {
+      return;
+    }
+    const fallbackScript = r'''
+      try {
+         if (typeof window === 'undefined') {
+          return;
+        }
+        if (window.__flutterSetLinkMenuEnabled) {
+          const previousEnabled = !!window.flutterIosLinkMenuEnabled;
+          window.__flutterSetLinkMenuEnabled(false);
+          if (previousEnabled) {
+            window.__flutterSetLinkMenuEnabled(true);
+          }
+        } else if (window.__flutterResetLinkMenu) {
+          window.__flutterResetLinkMenu();
+        }
+      } catch (_) {}
+    ''';
+    try {
+      await controller.evaluateJavascript(source: fallbackScript);
+    } catch (err, _) {
+      if (kDebugMode) {
+        debugPrint('Fallback reset for iOS link menu bridge failed: $err');
+      }
+    }
+  }
+
+  Future<void> _injectVideoDetector(InAppWebViewController controller) async {
+    try {
+      await controller.evaluateJavascript(source: _kVideoDetectorBridge);
+    } catch (_) {}
+    await _setVideoDetectorEnabled(
+      controller,
+      repo.longPressDetectionEnabled.value,
+    );
   }
 
   bool _hasKnownExtension(String lowerUrl, Set<String> extensions) {
@@ -2435,6 +2453,98 @@ class _BrowserPageState extends State<BrowserPage>
       }
     }
     return false;
+  }
+
+  _LinkContextKind _inferLinkContextKind(
+    String url, {
+    bool isImageHit = false,
+    bool isVideoHit = false,
+    bool isAudioHit = false,
+    bool isYoutube = false,
+  }) {
+    final lower = url.toLowerCase();
+    if (isYoutube) {
+      return _LinkContextKind.video;
+    }
+    if (isImageHit || _hasKnownExtension(lower, _kImageExtensions)) {
+      return _LinkContextKind.image;
+    }
+    if (isVideoHit || _hasKnownExtension(lower, _kVideoExtensions)) {
+      return _LinkContextKind.video;
+    }
+    if (isAudioHit || _hasKnownExtension(lower, _kAudioExtensions)) {
+      return _LinkContextKind.audio;
+    }
+    return _LinkContextKind.generic;
+  }
+
+  Future<void> _setVideoDetectorEnabled(
+    InAppWebViewController controller,
+    bool enabled,
+  ) async {
+    final script = '''
+      try {
+        if (window.__flutterVideoDetectorSetEnabled) {
+          window.__flutterVideoDetectorSetEnabled(${enabled ? 'true' : 'false'});
+        } else {
+          window.__flutterVideoDetectorEnabled = ${enabled ? 'true' : 'false'};
+        }
+      } catch (_) {}
+    ''';
+    try {
+      await controller.evaluateJavascript(source: script);
+    } catch (_) {}
+  }
+
+  Future<void> _setIosLinkContextMenuBridgeEnabled(
+    InAppWebViewController controller,
+    bool enabled,
+  ) async {
+    if (!Platform.isIOS) {
+      return;
+    }
+    final script = '''
+      try {
+        if (typeof window !== 'undefined' && window.__flutterSetLinkMenuEnabled) {
+          window.__flutterSetLinkMenuEnabled(${enabled ? 'true' : 'false'});
+        } else if (typeof window !== 'undefined') {
+          window.flutterIosLinkMenuEnabled = ${enabled ? 'true' : 'false'};
+        }
+      } catch (_) {}
+    ''';
+    try {
+      await controller.evaluateJavascript(source: script);
+    } catch (_) {}
+  }
+
+  Future<void> _handleLinkContextMenuWithFeedback(
+    String url, {
+    InAppWebViewController? releaseController,
+    _LinkContextKind kind = _LinkContextKind.generic,
+    bool isYoutube = false,
+  }) async {
+    if (_suppressLinkLongPress) {
+      if (releaseController != null) {
+        try {
+          await _resetAndReleaseWebViewAfterContextMenu(releaseController);
+        } catch (_) {}
+      }
+      return;
+    }
+    _suppressLinkLongPress = true;
+    try {
+      await HapticFeedback.selectionClick();
+    } catch (_) {}
+    try {
+      await _handleLinkContextMenu(url, kind: kind, isYoutube: isYoutube);
+    } finally {
+      _suppressLinkLongPress = false;
+      if (releaseController != null) {
+        try {
+          await _resetAndReleaseWebViewAfterContextMenu(releaseController);
+        } catch (_) {}
+      }
+    }
   }
 
   bool _isOnYoutubeWatchPage() {
@@ -2455,11 +2565,159 @@ class _BrowserPageState extends State<BrowserPage>
     return false;
   }
 
+  Future<void> _handleLinkContextMenu(
+    String url, {
+    _LinkContextKind kind = _LinkContextKind.generic,
+    bool isYoutube = false,
+  }) async {
+    final action = await _showLinkContextMenu(url, kind, isYoutube);
+    if (action == null) return;
+    switch (action) {
+      case _LinkContextMenuAction.copyLink:
+        await Clipboard.setData(ClipboardData(text: url));
+        _showSnackBar(context.l10n('browser.snack.copiedLink'));
+        break;
+      case _LinkContextMenuAction.downloadImage:
+        await _confirmDownload(url);
+        break;
+      case _LinkContextMenuAction.downloadMedia:
+        if (isYoutube) {
+          final currentUrl = repo.currentPageUrl.value;
+          final target =
+              (currentUrl != null && currentUrl.isNotEmpty) ? currentUrl : url;
+          if (target.isNotEmpty) {
+            await _showYoutubePreviewDialog(target);
+          }
+        } else {
+          await _confirmDownload(url);
+        }
+        break;
+      case _LinkContextMenuAction.downloadLink:
+        await _confirmDownload(url);
+        break;
+      case _LinkContextMenuAction.openInNewTab:
+        await _openLinkInNewTab(url);
+        _showSnackBar(context.l10n('browser.snack.openedNewTab'));
+        break;
+      case _LinkContextMenuAction.addFavorite:
+        _addUrlToFavorites(url);
+        break;
+      case _LinkContextMenuAction.addHome:
+        await _showAddToHomeDialog(initialUrl: url);
+        break;
+      case _LinkContextMenuAction.playMedia:
+        if (!isYoutube) {
+          _playMedia(url);
+        }
+        break;
+    }
+  }
+
+  Future<void> _handleDetectedVideo(Map<String, dynamic> payload) async {
+    if (!repo.longPressDetectionEnabled.value) {
+      return;
+    }
+    final rawUrl = (payload['src'] as String? ?? '').trim();
+    final pageUrl = (payload['pageUrl'] as String? ?? '').trim();
+    if (rawUrl.isEmpty && pageUrl.isEmpty) {
+      return;
+    }
+    final effectiveUrl = rawUrl.isNotEmpty ? rawUrl : pageUrl;
+    final normalizedUrl = (rawUrl.isNotEmpty ? rawUrl : effectiveUrl).trim();
+    final lowerUrl = normalizedUrl.toLowerCase();
+    final bool looksHttp =
+        lowerUrl.startsWith('http://') || lowerUrl.startsWith('https://');
+    final bool isBlobUrl = lowerUrl.startsWith('blob:');
+
+    final bool isYoutubeCandidate =
+        AppRepo.I.isYoutubeUrl(normalizedUrl) ||
+        AppRepo.I.isYoutubeUrl(effectiveUrl) ||
+        AppRepo.I.isYoutubeUrl(pageUrl) ||
+        AppRepo.I.isYoutubeUrl(repo.currentPageUrl.value ?? '');
+    if (normalizedUrl.isEmpty) {
+      return;
+    }
+    if (!looksHttp && !isYoutubeCandidate) {
+      return;
+    }
+    if (isBlobUrl && !isYoutubeCandidate) {
+      return;
+    }
+
+    final capture = payload['capture'] as String?;
+    final poster = (payload['poster'] as String? ?? '').trim();
+    final duration = _asDouble(payload['duration']);
+    final position = _asDouble(payload['currentTime']);
+    final width = _asInt(payload['width']);
+    final height = _asInt(payload['height']);
+    final titleCandidates = <String?>[
+      (payload['title'] as String?)?.trim(),
+      (payload['label'] as String?)?.trim(),
+      (payload['ariaLabel'] as String?)?.trim(),
+      (payload['pageTitle'] as String?)?.trim(),
+      (_tabs.isNotEmpty ? _tabs[_currentTabIndex].pageTitle?.trim() : null),
+    ];
+
+    final fallbackTitle =
+        effectiveUrl.isNotEmpty
+            ? _prettyFileName(effectiveUrl)
+            : (repo.currentPageTitle.value ?? '');
+    final resolvedTitle =
+        titleCandidates
+            .firstWhere(
+              (element) => element != null && element.isNotEmpty,
+              orElse: () => fallbackTitle,
+            )
+            ?.trim();
+
+    String resolvedPageUrl = pageUrl;
+    if (isYoutubeCandidate) {
+      final candidates = <String?>[
+        pageUrl,
+        repo.currentPageUrl.value,
+        effectiveUrl,
+      ];
+      for (final candidateUrl in candidates) {
+        if (candidateUrl != null &&
+            candidateUrl.isNotEmpty &&
+            AppRepo.I.isYoutubeUrl(candidateUrl)) {
+          resolvedPageUrl = candidateUrl;
+          break;
+        }
+      }
+    }
+
+    resolvedPageUrl = resolvedPageUrl.trim();
+
+    final resolvedStreamUrl = rawUrl.isNotEmpty ? rawUrl : effectiveUrl;
+    final idSourceUrl =
+        isYoutubeCandidate && resolvedPageUrl.isNotEmpty
+            ? resolvedPageUrl
+            : resolvedStreamUrl;
+
+    final candidate = PlayingVideoCandidate(
+      id: _buildPlayingCandidateId(idSourceUrl, resolvedPageUrl),
+      url: resolvedStreamUrl,
+      pageUrl: resolvedPageUrl,
+      title:
+          (resolvedTitle == null || resolvedTitle.isEmpty)
+              ? _prettyFileName(effectiveUrl)
+              : resolvedTitle,
+      durationSeconds: duration,
+      positionSeconds: position,
+      videoWidth: width,
+      videoHeight: height,
+      snapshot: _decodeVideoSnapshot(capture),
+      posterUrl: poster.isNotEmpty ? poster : null,
+      detectedAt: DateTime.now(),
+    );
+    repo.upsertPlayingVideo(candidate);
+  }
+
   Widget _buildPlayingVideoCard(
     BuildContext sheetContext,
     PlayingVideoCandidate candidate, {
     required bool isPrimary,
-    required VoidCallback onClose,
   }) {
     final theme = Theme.of(sheetContext);
     final preview = _buildPlayingVideoPreview(candidate);
@@ -2485,30 +2743,11 @@ class _BrowserPageState extends State<BrowserPage>
     final canDownload = isYoutube ? youtubeSource.isNotEmpty : hasDirectUrl;
     final openInNewTabUrl =
         isYoutube ? youtubeSource : (hasDirectUrl ? directUrl : '');
-    String? _validHomeUrl(String source) {
-      final trimmed = source.trim();
-      if (trimmed.isEmpty) {
-        return null;
-      }
-      final uri = Uri.tryParse(trimmed);
-      if (uri == null) {
-        return null;
-      }
-      if (uri.scheme != 'http' && uri.scheme != 'https') {
-        return null;
-      }
-      return uri.toString();
-    }
-
-    final homeCandidateUrl =
-        _validHomeUrl(displayUrl) ?? _validHomeUrl(candidate.url) ?? '';
-    final canAddHome = homeCandidateUrl.isNotEmpty;
     final downloadLabel =
         isYoutube
             ? sheetContext.l10n('browser.playingNow.action.stream')
             : sheetContext.l10n('common.download');
-    final canPlayInApp = hasDirectUrl;
-
+    final navigator = Navigator.of(sheetContext);
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: Padding(
@@ -2556,41 +2795,12 @@ class _BrowserPageState extends State<BrowserPage>
               runSpacing: 8,
               children: [
                 FilledButton.icon(
-                  icon: const Icon(Icons.play_arrow),
-                  label: Text(
-                    sheetContext.l10n('browser.playingNow.action.playInApp'),
-                  ),
-                  onPressed:
-                      canPlayInApp
-                          ? () {
-                            onClose();
-                            Duration? startAt;
-                            final position = candidate.positionSeconds;
-                            if (position != null &&
-                                position.isFinite &&
-                                position > 0) {
-                              startAt = Duration(
-                                milliseconds: (position * 1000).round(),
-                              );
-                            }
-                            _playMedia(
-                              directUrl,
-                              title:
-                                  candidate.title.isNotEmpty
-                                      ? candidate.title
-                                      : null,
-                              startAt: startAt,
-                            );
-                          }
-                          : null,
-                ),
-                FilledButton.icon(
                   icon: Icon(isYoutube ? Icons.stream : Icons.download),
                   label: Text(downloadLabel),
                   onPressed:
                       canDownload
                           ? () async {
-                            onClose();
+                            navigator.pop();
                             if (isYoutube) {
                               final target =
                                   youtubeSource.isNotEmpty
@@ -2599,11 +2809,17 @@ class _BrowserPageState extends State<BrowserPage>
                               if (target.isNotEmpty) {
                                 await _showYoutubePreviewDialog(target);
                               }
-                            } else if (directUrl.isNotEmpty) {
                               await _confirmDownload(
                                 directUrl,
                                 skipPrompt: true,
                               );
+                            } else {
+                              if (directUrl.isNotEmpty) {
+                                await _confirmDownload(
+                                  directUrl,
+                                  skipPrompt: true,
+                                );
+                              }
                             }
                           }
                           : null,
@@ -2614,7 +2830,7 @@ class _BrowserPageState extends State<BrowserPage>
                   onPressed:
                       copyUrl.isNotEmpty
                           ? () async {
-                            onClose();
+                            navigator.pop();
                             await Clipboard.setData(
                               ClipboardData(text: copyUrl),
                             );
@@ -2632,23 +2848,27 @@ class _BrowserPageState extends State<BrowserPage>
                   onPressed:
                       openInNewTabUrl.isNotEmpty
                           ? () async {
-                            onClose();
+                            navigator.pop();
                             await _openLinkInNewTab(openInNewTabUrl);
                           }
                           : null,
                 ),
                 OutlinedButton.icon(
-                  icon: const Icon(Icons.home_outlined),
-                  label: Text(sheetContext.l10n('browser.context.addHome')),
+                  icon: const Icon(Icons.play_arrow),
+                  label: Text(sheetContext.l10n('common.play')),
                   onPressed:
-                      canAddHome
-                          ? () async {
-                            onClose();
-                            await _showAddToHomeDialog(
-                              initialUrl: homeCandidateUrl,
-                              initialName:
-                                  candidate.title.isNotEmpty
-                                      ? candidate.title
+                      hasDirectUrl
+                          ? () {
+                            navigator.pop();
+                            final startAt = candidate.positionSeconds;
+                            _playMedia(
+                              directUrl,
+                              title: candidate.title,
+                              startAt:
+                                  startAt != null
+                                      ? Duration(
+                                        milliseconds: (startAt * 1000).round(),
+                                      )
                                       : null,
                             );
                           }
@@ -2666,104 +2886,63 @@ class _BrowserPageState extends State<BrowserPage>
     if (repo.playingVideos.value.isEmpty) {
       return;
     }
-    if (_playingSheetController != null) {
-      _playingSheetController!.close();
-      return;
-    }
-    debugPrint(
-      '[Debug][NowPlaying] Opening playing videos sheet with '
-      '${repo.playingVideos.value.length} candidate(s)',
-    );
     _suppressLinkLongPress = true;
-
-    if (kDebugMode) {
-      debugPrint(
-        '[Debug][NowPlaying] Long press interactions suppressed while sheet is visible.',
-      );
-    }
-    final scaffoldState = _scaffoldKey.currentState;
-    if (scaffoldState == null) {
-      _suppressLinkLongPress = false;
-      return;
-    }
-
-    PersistentBottomSheetController? controller;
-    controller = scaffoldState.showBottomSheet(
-      (sheetContext) {
-        void closeSheet() => controller?.close();
-        return FractionallySizedBox(
-          heightFactor: 0.75,
-          child: SafeArea(
-            child: Column(
-              children: [
-                ListTile(
-                  title: Text(
-                    sheetContext.l10n('browser.playingNow.sheetTitle'),
-                  ),
-                  trailing: IconButton(
-                    icon: const Icon(Icons.close),
-                    onPressed: closeSheet,
-                  ),
-                ),
-                const Divider(height: 1),
-                Expanded(
-                  child: ValueListenableBuilder<List<PlayingVideoCandidate>>(
-                    valueListenable: repo.playingVideos,
-                    builder: (context, candidates, _) {
-                      if (candidates.isEmpty) {
-                        return Center(
-                          child: Text(
-                            sheetContext.l10n(
-                              'browser.mediaDetection.emptyState',
-                            ),
-                          ),
-                        );
-                      }
-                      return ListView.builder(
-                        itemCount: candidates.length,
-                        itemBuilder: (context, index) {
-                          final candidate = candidates[index];
-                          return _buildPlayingVideoCard(
-                            sheetContext,
-                            candidate,
-                            isPrimary: index == 0,
-                            onClose: closeSheet,
-                          );
-                        },
-                      );
-                    },
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-      backgroundColor:
-          Theme.of(context).bottomSheetTheme.backgroundColor ??
-          Theme.of(context).colorScheme.surface,
-    );
-    if (controller == null) {
-      _suppressLinkLongPress = false;
-      return;
-    }
-    _playingSheetController = controller;
     try {
-      await controller.closed;
-    } finally {
-      if (_playingSheetController == controller) {
-        _playingSheetController = null;
-      }
-      if (!mounted) return;
-      Future.delayed(const Duration(milliseconds: 250), () {
-        if (!mounted) return;
-        _suppressLinkLongPress = false;
-        if (kDebugMode) {
-          debugPrint(
-            '[Debug][NowPlaying] Long press interactions restored after sheet closed.',
+      await showModalBottomSheet(
+        context: context,
+        isScrollControlled: true,
+        builder: (sheetContext) {
+          return FractionallySizedBox(
+            heightFactor: 0.75,
+            child: SafeArea(
+              child: Column(
+                children: [
+                  ListTile(
+                    title: Text(
+                      sheetContext.l10n('browser.playingNow.sheetTitle'),
+                    ),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () => Navigator.of(sheetContext).pop(),
+                    ),
+                  ),
+                  const Divider(height: 1),
+                  Expanded(
+                    child: ValueListenableBuilder<List<PlayingVideoCandidate>>(
+                      valueListenable: repo.playingVideos,
+                      builder: (context, candidates, _) {
+                        if (candidates.isEmpty) {
+                          return Center(
+                            child: Text(
+                              sheetContext.l10n(
+                                'browser.mediaDetection.emptyState',
+                              ),
+                            ),
+                          );
+                        }
+                        return ListView.builder(
+                          itemCount: candidates.length,
+                          itemBuilder: (context, index) {
+                            final candidate = candidates[index];
+                            return _buildPlayingVideoCard(
+                              sheetContext,
+                              candidate,
+                              isPrimary: index == 0,
+                            );
+                          },
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
           );
-        }
-
+        },
+      );
+    } finally {
+      Future.delayed(const Duration(milliseconds: 250), () {
+        _suppressLinkLongPress = false;
         unawaited(_restoreIosLinkInteractions());
       });
     }
@@ -2836,6 +3015,183 @@ class _BrowserPageState extends State<BrowserPage>
     // Reset before assigning so listeners fire even if same list reference is reused.
     AppRepo.I.ytOptions.value = null;
     AppRepo.I.ytOptions.value = info.options;
+  }
+
+  Future<_LinkContextMenuAction?> _showLinkContextMenu(
+    String url,
+    _LinkContextKind kind,
+    bool isYoutube,
+  ) {
+    return showGeneralDialog<_LinkContextMenuAction>(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: 'link-menu',
+      barrierColor: Colors.black45,
+      transitionDuration: const Duration(milliseconds: 150),
+      pageBuilder: (context, animation, secondaryAnimation) {
+        final theme = Theme.of(context);
+        final colorScheme = theme.colorScheme;
+        Widget buildItem(
+          IconData icon,
+          String label,
+          _LinkContextMenuAction action,
+        ) {
+          return ListTile(
+            leading: Icon(icon, color: colorScheme.primary),
+            title: Text(label),
+            dense: true,
+            visualDensity: VisualDensity.compact,
+            onTap: () => Navigator.of(context).pop(action),
+          );
+        }
+
+        void addEntry(
+          List<Widget> list,
+          IconData icon,
+          String label,
+          _LinkContextMenuAction action,
+        ) {
+          if (list.isNotEmpty) {
+            list.add(const Divider(height: 1));
+          }
+          list.add(buildItem(icon, label, action));
+        }
+
+        return SafeArea(
+          child: Align(
+            alignment: Alignment.centerRight,
+            child: Padding(
+              padding: const EdgeInsets.only(right: 12),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.18),
+                      blurRadius: 18,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
+                ),
+                child: Material(
+                  color: colorScheme.surface,
+                  borderRadius: BorderRadius.circular(12),
+                  clipBehavior: Clip.antiAlias,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 280),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 12,
+                          ),
+                          child: Text(
+                            url,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: colorScheme.onSurface.withOpacity(0.75),
+                            ),
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        const Divider(height: 1),
+                        Builder(
+                          builder: (context) {
+                            final items = <Widget>[];
+                            addEntry(
+                              items,
+                              Icons.copy,
+                              context.l10n('browser.context.copyLink'),
+                              _LinkContextMenuAction.copyLink,
+                            );
+                            switch (kind) {
+                              case _LinkContextKind.image:
+                                addEntry(
+                                  items,
+                                  Icons.download,
+                                  context.l10n('browser.context.downloadImage'),
+                                  _LinkContextMenuAction.downloadImage,
+                                );
+                                break;
+                              case _LinkContextKind.video:
+                              case _LinkContextKind.audio:
+                                if (!isYoutube) {
+                                  addEntry(
+                                    items,
+                                    Icons.play_arrow,
+                                    context.l10n('browser.context.playVideo'),
+                                    _LinkContextMenuAction.playMedia,
+                                  );
+                                }
+                                addEntry(
+                                  items,
+                                  Icons.download,
+                                  context.l10n('browser.context.downloadVideo'),
+                                  _LinkContextMenuAction.downloadMedia,
+                                );
+                                break;
+                              case _LinkContextKind.generic:
+                                addEntry(
+                                  items,
+                                  Icons.download,
+                                  context.l10n('browser.context.downloadLink'),
+                                  _LinkContextMenuAction.downloadLink,
+                                );
+                                break;
+                            }
+                            addEntry(
+                              items,
+                              Icons.open_in_new,
+                              context.l10n('browser.context.openInNewTab'),
+                              _LinkContextMenuAction.openInNewTab,
+                            );
+                            addEntry(
+                              items,
+                              Icons.bookmark_add,
+                              context.l10n('browser.context.addFavorite'),
+                              _LinkContextMenuAction.addFavorite,
+                            );
+                            addEntry(
+                              items,
+                              Icons.home,
+                              context.l10n('browser.context.addHome'),
+                              _LinkContextMenuAction.addHome,
+                            );
+                            return Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: items,
+                            );
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+      transitionBuilder: (context, animation, secondaryAnimation, child) {
+        final curved = CurvedAnimation(
+          parent: animation,
+          curve: Curves.easeOutCubic,
+        );
+        return FadeTransition(
+          opacity: curved,
+          child: SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(0.15, 0),
+              end: Offset.zero,
+            ).animate(curved),
+            child: child,
+          ),
+        );
+      },
+    );
   }
 
   Future<void> _openLinkInNewTab(
@@ -3457,10 +3813,6 @@ class _BrowserPageState extends State<BrowserPage>
     repo.pendingNewTab.addListener(_onPendingNewTab);
     repo.adBlockFilterSets.addListener(_onAdBlockFilterSetsChanged);
     repo.longPressDetectionEnabled.addListener(_onLongPressDetectionChanged);
-    repo.snifferEnabled.addListener(_onSnifferSettingChanged);
-    repo.playingVideos.addListener(_onPlayingVideosChanged);
-    _lastSnifferEnabled = repo.snifferEnabled.value;
-    _lastAutoDetectEnabled = repo.longPressDetectionEnabled.value;
     // Listen to focus changes to handle paste button
     _urlFocus.addListener(() {
       if (_urlFocus.hasFocus) {
@@ -3626,7 +3978,6 @@ class _BrowserPageState extends State<BrowserPage>
         ..addAll(_kDefaultIosUniversalLinkHosts)
         ..addAll(_learnedIosUniversalLinkHosts);
     }();
-    _onPlayingVideosChanged();
   }
 
   void _toggleBlockExternalAppSetting() async {
@@ -4022,36 +4373,29 @@ class _BrowserPageState extends State<BrowserPage>
   Future<void> _resetAndReleaseWebViewAfterContextMenu(
     InAppWebViewController controller,
   ) async {
-    if (kDebugMode) {
-      debugPrint('[Debug][LinkMenu] Resetting web view after context menu.');
-    }
-
+    await _resetIosLinkContextMenuBridge(controller);
     await _releaseWebViewAfterContextMenu(controller);
   }
 
-  Future<void> _restoreIosLinkInteractions({
-    InAppWebViewController? controller,
-  }) async {
+  Future<void> _restoreIosLinkInteractions() async {
     if (!Platform.isIOS) {
       return;
     }
-
-    InAppWebViewController? target = controller;
-    if (target == null) {
-      if (_tabs.isEmpty || _currentTabIndex < 0) {
-        return;
-      }
-      if (_currentTabIndex >= _tabs.length) {
-        return;
-      }
-      target = _tabs[_currentTabIndex].controller;
-    }
-    if (target == null) {
+    if (_tabs.isEmpty || _currentTabIndex < 0) {
       return;
     }
-
+    if (_currentTabIndex >= _tabs.length) {
+      return;
+    }
+    final controller = _tabs[_currentTabIndex].controller;
+    if (controller == null) {
+      return;
+    }
     try {
-      await _resetAndReleaseWebViewAfterContextMenu(target);
+      await _resetAndReleaseWebViewAfterContextMenu(controller);
+    } catch (_) {}
+    try {
+      await _setIosLinkContextMenuBridgeEnabled(controller, true);
     } catch (_) {}
   }
 
@@ -5000,12 +5344,8 @@ class _BrowserPageState extends State<BrowserPage>
     repo.pendingNewTab.removeListener(_onPendingNewTab);
     repo.adBlockFilterSets.removeListener(_onAdBlockFilterSetsChanged);
     repo.longPressDetectionEnabled.removeListener(_onLongPressDetectionChanged);
-    repo.snifferEnabled.removeListener(_onSnifferSettingChanged);
-    repo.playingVideos.removeListener(_onPlayingVideosChanged);
-    _stopNowPlayingPolling();
     _urlFocus.dispose();
     _removeYtFetchBarrier();
-
     super.dispose();
   }
 
@@ -5216,7 +5556,7 @@ class _BrowserPageState extends State<BrowserPage>
                         contextMenu: ContextMenu(
                           // ignore: deprecated_member_use
                           options: ContextMenuOptions(
-                            hideDefaultSystemContextMenuItems: false,
+                            hideDefaultSystemContextMenuItems: Platform.isIOS,
                           ),
                         ),
                         initialSettings: InAppWebViewSettings(
@@ -5228,7 +5568,6 @@ class _BrowserPageState extends State<BrowserPage>
                           useOnLoadResource: true,
                           useShouldOverrideUrlLoading: true,
                           javaScriptEnabled: true,
-                          javaScriptCanOpenWindowsAutomatically: true,
 
                           supportMultipleWindows: true,
 
@@ -5254,67 +5593,19 @@ class _BrowserPageState extends State<BrowserPage>
                           c.addJavaScriptHandler(
                             handlerName: 'sniffer',
                             callback: (args) {
-                              if (args.isEmpty || args.first is! Map) {
+                              if (!repo.snifferEnabled.value) {
                                 return {'ok': false, 'ignored': true};
                               }
-                              final sniffEnabled = repo.snifferEnabled.value;
-                              final autoDetectOn =
-                                  repo.longPressDetectionEnabled.value;
-                              Map<String, dynamic> map;
-                              try {
-                                map = Map<String, dynamic>.from(
-                                  args.first as Map,
-                                );
-                              } catch (_) {
-                                return {'ok': false, 'ignored': true};
-                              }
-                              final originRaw =
-                                  (map['origin'] ?? '').toString();
-                              final isElementOrigin = originRaw
-                                  .toLowerCase()
-                                  .startsWith('element');
-                              if (!sniffEnabled &&
-                                  !(autoDetectOn && isElementOrigin)) {
-                                return {'ok': false, 'ignored': true};
-                              }
-                              final url = (map['url'] ?? '').toString().trim();
-                              if (url.isEmpty) {
-                                return {
-                                  'ok': false,
-                                  'ignored': true,
-                                  'reason': 'emptyUrl',
-                                };
-                              }
+                              final map = Map<String, dynamic>.from(args.first);
+                              final url = (map['url'] ?? '').toString();
                               final type = (map['type'] ?? 'video').toString();
                               final contentType =
                                   (map['contentType'] ?? '').toString();
-                              final posterValue = map['poster'];
-                              String poster = '';
-                              if (posterValue is String) {
-                                poster = posterValue;
-                              } else if (posterValue != null) {
-                                poster = posterValue.toString();
-                              }
+                              final poster = map['poster'] as String? ?? '';
                               double? dur;
                               final d = map['duration'];
                               if (d is num) {
-                                if (d.isFinite && d > 0) {
-                                  dur = d.toDouble();
-                                }
-                              }
-                              if (!sniffEnabled && autoDetectOn) {
-                                final normalizedType = type.toLowerCase();
-                                final normalizedCt = contentType.toLowerCase();
-                                final looksVideo =
-                                    normalizedType == 'video' ||
-                                    normalizedCt.startsWith('video/');
-                                if (!isElementOrigin || !looksVideo) {
-                                  return {
-                                    'ok': false,
-                                    'ignored': true,
-                                    'reason': 'filtered',
-                                  };
-                                }
+                                dur = d.toDouble();
                               }
                               repo.addHit(
                                 MediaHit(
@@ -5324,89 +5615,76 @@ class _BrowserPageState extends State<BrowserPage>
                                   poster: poster,
                                   durationSeconds: dur,
                                 ),
-                                storeInHits: sniffEnabled,
                               );
                               return {'ok': true};
                             },
                           );
-
                           c.addJavaScriptHandler(
-                            handlerName: 'debugTapLogger',
-                            callback: (args) {
+                            handlerName: 'videoDetected',
+                            callback: (args) async {
                               if (args.isEmpty) {
-                                return {'logged': false};
+                                return {'handled': false};
                               }
-                              final dynamic raw = args.first;
+                              final raw = args.first;
                               if (raw is! Map) {
-                                return {'logged': false};
+                                return {'handled': false};
                               }
-                              final data = Map<String, dynamic>.from(
-                                raw as Map,
-                              );
-                              if (kDebugMode) {
-                                final eventType =
-                                    _stringFromPayload(data['eventType']) ??
-                                    'unknown';
-                                final tag = _stringFromPayload(data['tag']);
-                                final elementId = _stringFromPayload(
-                                  data['id'],
+                              try {
+                                final map = Map<String, dynamic>.from(
+                                  raw as Map,
                                 );
-                                final classes = _stringFromPayload(
-                                  data['classes'],
-                                );
-                                final href = _stringFromPayload(
-                                  data['linkHref'],
-                                );
-                                final linkText = _truncateForDebugLog(
-                                  _stringFromPayload(data['linkText']),
-                                );
-                                final buttonText = _truncateForDebugLog(
-                                  _stringFromPayload(data['buttonText']),
-                                );
-                                final elementText = _truncateForDebugLog(
-                                  _stringFromPayload(data['text']),
-                                );
-                                final buffer = StringBuffer(
-                                  '[Debug][WebTap] $eventType on',
-                                );
-                                if (tag != null && tag.isNotEmpty) {
-                                  buffer.write(' <$tag>');
-                                } else {
-                                  buffer.write(' <unknown>');
-                                }
-                                if (elementId != null && elementId.isNotEmpty) {
-                                  buffer.write(' #$elementId');
-                                }
-                                if (classes != null && classes.isNotEmpty) {
-                                  buffer.write(' .$classes');
-                                }
-                                if (href != null && href.isNotEmpty) {
-                                  buffer.write(' href=$href');
-                                }
-                                if (linkText != null && linkText.isNotEmpty) {
-                                  buffer.write(' linkText="$linkText"');
-                                }
-                                if (buttonText != null &&
-                                    buttonText.isNotEmpty) {
-                                  buffer.write(' buttonText="$buttonText"');
-                                }
-                                if (elementText != null &&
-                                    elementText.isNotEmpty &&
-                                    (buttonText == null ||
-                                        buttonText.isEmpty) &&
-                                    (linkText == null || linkText.isEmpty)) {
-                                  buffer.write(' text="$elementText"');
-                                }
-                                buffer.write(
-                                  ' (longPressSuppressed=$_suppressLinkLongPress)',
-                                );
-                                debugPrint(buffer.toString());
+                                await _handleDetectedVideo(map);
+                                return {'handled': true};
+                              } catch (_) {
+                                return {'handled': false};
                               }
-                              return {'logged': true};
                             },
                           );
+                          if (Platform.isIOS) {
+                            c.addJavaScriptHandler(
+                              handlerName: 'linkLongPress',
+                              callback: (args) async {
+                                if (args.isEmpty) {
+                                  return {'handled': false};
+                                }
 
-                          unawaited(_injectDebugTapLogger(c));
+                                if (_suppressLinkLongPress) {
+                                  return {'handled': false};
+                                }
+                                final dynamic raw = args.first;
+                                if (raw is! String) {
+                                  return {'handled': false};
+                                }
+                                final resolved = await _resolveHitTestUrl(
+                                  c,
+                                  raw,
+                                );
+                                final normalized = resolved?.trim();
+                                if (normalized == null || normalized.isEmpty) {
+                                  return {'handled': false};
+                                }
+                                _lastIosLinkMenuUrl = normalized;
+                                _lastIosLinkMenuTime = DateTime.now();
+                                final bool isYoutube =
+                                    AppRepo.I.isYoutubeUrl(normalized) ||
+                                    AppRepo.I.isYoutubeUrl(
+                                      repo.currentPageUrl.value ?? '',
+                                    );
+                                final kind = _inferLinkContextKind(
+                                  normalized,
+                                  isYoutube: isYoutube,
+                                );
+                                await _handleLinkContextMenuWithFeedback(
+                                  normalized,
+                                  releaseController: c,
+                                  kind: kind,
+                                  isYoutube: isYoutube,
+                                );
+                                return {'handled': true};
+                              },
+                            );
+                          }
+                          unawaited(_injectVideoDetector(c));
                         },
                         onLoadStart: (c, u) async {
                           _cachedYoutubeInfo = null;
@@ -5422,8 +5700,9 @@ class _BrowserPageState extends State<BrowserPage>
                             );
                             return;
                           }
-
-                          await _injectDebugTapLogger(c);
+                          _iosLinkMenuBridgeReady = false;
+                          await _injectIosLinkContextMenuBridge(c);
+                          await _injectVideoDetector(c);
                           repo.clearPlayingVideos();
                           final tab = _tabs[tabIndex];
                           tab.isLoading.value = true;
@@ -5467,14 +5746,14 @@ class _BrowserPageState extends State<BrowserPage>
                           }
                         },
                         onLoadStop: (c, u) async {
-                          await _injectDebugTapLogger(c);
+                          await _injectIosLinkContextMenuBridge(c);
+                          await _injectVideoDetector(c);
                           // 注入嗅探腳本並同步開關
                           await c.evaluateJavascript(source: Sniffer.jsHook);
-                          await _syncSnifferSettings(
-                            controller: c,
-                            probe:
-                                repo.longPressDetectionEnabled.value ||
-                                repo.snifferEnabled.value,
+                          await c.evaluateJavascript(
+                            source: Sniffer.jsSetEnabled(
+                              repo.snifferEnabled.value,
+                            ),
                           );
 
                           final curUrl = await c.getUrl();
@@ -5630,21 +5909,6 @@ class _BrowserPageState extends State<BrowserPage>
                           controller,
                           navigationAction,
                         ) async {
-                          final requestUrl = navigationAction.request.url;
-                          final navType = navigationAction.navigationType;
-                          final navTypeDescription =
-                              navType != null
-                                  ? describeEnum(navType)
-                                  : 'unknown';
-                          final requestDescription =
-                              requestUrl?.rawValue ??
-                              requestUrl?.toString() ??
-                              'unknown';
-                          debugPrint(
-                            '[Debug][WebView] shouldOverrideUrlLoading triggered '
-                            'for $requestDescription '
-                            '(type: $navTypeDescription)',
-                          );
                           final blocked = _shouldPreventExternalNavigation(
                             navigationAction.request.url,
                             controller: controller,
@@ -5660,7 +5924,96 @@ class _BrowserPageState extends State<BrowserPage>
                           return NavigationActionPolicy.ALLOW;
                         },
                         onLongPressHitTestResult: (c, res) async {
-                          await _resetAndReleaseWebViewAfterContextMenu(c);
+                          if (_suppressLinkLongPress) {
+                            await _resetAndReleaseWebViewAfterContextMenu(c);
+                            return;
+                          }
+
+                          final extra = res.extra?.toString();
+                          InAppWebViewHitTestResultType? hitType;
+                          String typeString = '';
+                          try {
+                            hitType = res.type;
+                            typeString = hitType.toString();
+                          } catch (_) {}
+                          final bool isImageHit =
+                              hitType ==
+                                  InAppWebViewHitTestResultType.IMAGE_TYPE ||
+                              hitType ==
+                                  InAppWebViewHitTestResultType
+                                      .SRC_IMAGE_ANCHOR_TYPE ||
+                              typeString.contains('IMAGE');
+                          final bool isAnchorHit =
+                              hitType ==
+                                  InAppWebViewHitTestResultType
+                                      .SRC_ANCHOR_TYPE ||
+                              hitType ==
+                                  InAppWebViewHitTestResultType
+                                      .SRC_IMAGE_ANCHOR_TYPE ||
+                              typeString.contains('ANCHOR');
+                          final bool isVideoHit = typeString.contains('VIDEO');
+                          final bool isAudioHit = typeString.contains('AUDIO');
+
+                          final candidate = extra?.trim();
+                          if (candidate == null || candidate.isEmpty) {
+                            await _resetAndReleaseWebViewAfterContextMenu(c);
+                            return;
+                          }
+                          if (_iosLinkMenuBridgeReady &&
+                              Platform.isIOS &&
+                              isAnchorHit) {
+                            return;
+                          }
+                          if (Platform.isIOS &&
+                              _lastIosLinkMenuUrl != null &&
+                              _lastIosLinkMenuTime != null) {
+                            final difference = DateTime.now().difference(
+                              _lastIosLinkMenuTime!,
+                            );
+                            if (difference < const Duration(seconds: 1) &&
+                                _lastIosLinkMenuUrl == candidate) {
+                              return;
+                            }
+                          }
+                          final resolved = await _resolveHitTestUrl(
+                            c,
+                            candidate,
+                          );
+                          if (resolved == null) {
+                            await _resetAndReleaseWebViewAfterContextMenu(c);
+                            return;
+                          }
+                          final normalizedResolved = resolved.trim();
+                          if (normalizedResolved.isEmpty) {
+                            await _resetAndReleaseWebViewAfterContextMenu(c);
+                            return;
+                          }
+                          if (Platform.isIOS) {
+                            _lastIosLinkMenuUrl = normalizedResolved;
+                            _lastIosLinkMenuTime = DateTime.now();
+                          }
+                          final bool isYoutubeContext =
+                              AppRepo.I.isYoutubeUrl(
+                                repo.currentPageUrl.value ?? '',
+                              ) ||
+                              AppRepo.I.isYoutubeUrl(normalizedResolved);
+                          if ((_ytFetchInFlight || _ytMenuOpen) &&
+                              AppRepo.I.isYoutubeUrl(normalizedResolved)) {
+                            return;
+                          }
+                          final kind = _inferLinkContextKind(
+                            normalizedResolved,
+                            isImageHit: isImageHit,
+                            isVideoHit: isVideoHit,
+                            isAudioHit: isAudioHit,
+                            isYoutube: isYoutubeContext,
+                          );
+                          await _handleLinkContextMenuWithFeedback(
+                            normalizedResolved,
+                            releaseController: c,
+                            kind: kind,
+                            isYoutube: isYoutubeContext,
+                          );
                         },
                       ),
                       Positioned.fill(
@@ -6008,7 +6361,6 @@ class _BrowserPageState extends State<BrowserPage>
         repo.favorites,
         repo.history,
         repo.blockPopup,
-        repo.longPressDetectionEnabled,
         repo.adBlockEnabled,
         repo.adBlockFilterSets,
       ]),
@@ -6043,7 +6395,6 @@ class _BrowserPageState extends State<BrowserPage>
     final favoriteCount = repo.favorites.value.length;
     final historyCount = repo.history.value.length;
     final blockPopupOn = repo.blockPopup.value;
-    final autoDetectOn = repo.longPressDetectionEnabled.value;
     final adBlockOn = repo.adBlockEnabled.value;
     final selectedProfiles = repo.adBlockFilterSets.value;
 
@@ -6117,12 +6468,6 @@ class _BrowserPageState extends State<BrowserPage>
         iconColor: adBlockOn ? colorScheme.primary : null,
       ),
       buildItem(
-        _ToolbarMenuAction.toggleAutoDetectMedia,
-        autoDetectOn ? Icons.toggle_on : Icons.toggle_off,
-        context.l10n('settings.detectMediaLongPress.title'),
-        iconColor: autoDetectOn ? colorScheme.primary : null,
-      ),
-      buildItem(
         _ToolbarMenuAction.toggleBlockPopup,
         blockPopupOn ? Icons.toggle_on : Icons.toggle_off,
         context.l10n('browser.menu.blockPopups'),
@@ -6163,7 +6508,6 @@ class _BrowserPageState extends State<BrowserPage>
     }
 
     final keepOpen =
-        selected == _ToolbarMenuAction.toggleAutoDetectMedia ||
         selected == _ToolbarMenuAction.toggleBlockPopup ||
         selected == _ToolbarMenuAction.blockExternalApp;
 
@@ -6179,28 +6523,6 @@ class _BrowserPageState extends State<BrowserPage>
         break;
       case _ToolbarMenuAction.toggleAdBlocker:
         await _showAdBlockerSettings();
-        break;
-      case _ToolbarMenuAction.toggleAutoDetectMedia:
-        {
-          final next = !repo.longPressDetectionEnabled.value;
-          repo.setLongPressDetectionEnabled(next);
-          final sp = await SharedPreferences.getInstance();
-          await sp.setBool('detect_media_long_press', next);
-          await _syncSnifferSettings(probe: next);
-          if (!mounted) {
-            break;
-          }
-          final snackKey =
-              next
-                  ? 'settings.detectMediaLongPress.snack.enabled'
-                  : 'settings.detectMediaLongPress.snack.disabled';
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              duration: const Duration(seconds: 1),
-              content: Text(context.l10n(snackKey)),
-            ),
-          );
-        }
         break;
       case _ToolbarMenuAction.toggleBlockPopup:
         _toggleBlockPopupSetting();
@@ -6348,7 +6670,13 @@ class _BrowserPageState extends State<BrowserPage>
     repo.setSnifferEnabled(next);
     final sp = await SharedPreferences.getInstance();
     await sp.setBool('sniffer_enabled', next);
-    await _syncSnifferSettings(probe: next);
+    if (_tabs.isNotEmpty) {
+      final tab = _tabs[_currentTabIndex];
+      final controller = tab.controller;
+      if (controller != null) {
+        await controller.evaluateJavascript(source: Sniffer.jsSetEnabled(next));
+      }
+    }
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -7031,21 +7359,9 @@ class _BrowserPageState extends State<BrowserPage>
     if (!ok) {
       return;
     }
-
-    if (_detectedSheetController != null) {
-      _detectedSheetController!.close();
-      return;
-    }
-
-    final scaffoldState = _scaffoldKey.currentState;
-    if (scaffoldState == null) {
-      return;
-    }
-
-    PersistentBottomSheetController? controller;
-    controller = scaffoldState.showBottomSheet(
-      (sheetContext) {
-        void closeSheet() => controller?.close();
+    await showModalBottomSheet(
+      context: context,
+      builder: (_) {
         return SafeArea(
           child: ValueListenableBuilder(
             valueListenable: repo.hits,
@@ -7072,7 +7388,7 @@ class _BrowserPageState extends State<BrowserPage>
                       label: Text(context.l10n('common.clearAll')),
                       onPressed: () {
                         repo.hits.value = [];
-                        closeSheet();
+                        Navigator.pop(context);
                         if (mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
@@ -7335,7 +7651,7 @@ class _BrowserPageState extends State<BrowserPage>
                                 icon: const Icon(Icons.download),
                                 tooltip: context.l10n('common.download'),
                                 onPressed: () {
-                                  closeSheet();
+                                  Navigator.pop(context);
                                   _confirmDownload(h.url);
                                 },
                               ),
@@ -7351,26 +7667,7 @@ class _BrowserPageState extends State<BrowserPage>
           ),
         );
       },
-      backgroundColor:
-          Theme.of(context).bottomSheetTheme.backgroundColor ??
-          Theme.of(context).colorScheme.surface,
     );
-    if (controller == null) {
-      return;
-    }
-    _detectedSheetController = controller;
-    try {
-      await controller.closed;
-    } finally {
-      if (_detectedSheetController == controller) {
-        _detectedSheetController = null;
-      }
-      if (!mounted) return;
-      Future.delayed(const Duration(milliseconds: 150), () {
-        if (!mounted) return;
-        unawaited(_restoreIosLinkInteractions());
-      });
-    }
   }
 
   /// --- Download speed helpers ---
@@ -7436,23 +7733,11 @@ class _BrowserPageState extends State<BrowserPage>
   /// provides quick visibility into ongoing and completed downloads without
   /// navigating away from the browser tab.
   void _openDownloadsSheet() {
-    if (_downloadsSheetController != null) {
-      _downloadsSheetController!.close();
-      return;
-    }
     _suppressLinkLongPress = true;
-
     _resetAllSpeedTracking(clearCachedSpeeds: false);
-    final scaffoldState = _scaffoldKey.currentState;
-    if (scaffoldState == null) {
-      _suppressLinkLongPress = false;
-      return;
-    }
-
-    PersistentBottomSheetController? controller;
-    controller = scaffoldState.showBottomSheet(
-      (sheetContext) {
-        void closeSheet() => controller?.close();
+    showModalBottomSheet(
+      context: context,
+      builder: (_) {
         return SafeArea(
           child: AnimatedBuilder(
             animation: AppRepo.I,
@@ -7499,7 +7784,7 @@ class _BrowserPageState extends State<BrowserPage>
                             final cleared =
                                 await AppRepo.I.retainOnlyCompletedDownloads();
                             if (!mounted) return;
-                            closeSheet();
+                            Navigator.pop(context);
                             if (!cleared) {
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
@@ -7543,25 +7828,8 @@ class _BrowserPageState extends State<BrowserPage>
           ),
         );
       },
-      backgroundColor:
-          Theme.of(context).bottomSheetTheme.backgroundColor ??
-          Theme.of(context).colorScheme.surface,
-    );
-    if (controller == null) {
+    ).whenComplete(() {
       _suppressLinkLongPress = false;
-      return;
-    }
-    _downloadsSheetController = controller;
-    controller.closed.whenComplete(() {
-      if (_downloadsSheetController == controller) {
-        _downloadsSheetController = null;
-      }
-      if (!mounted) return;
-      _suppressLinkLongPress = false;
-      Future.delayed(const Duration(milliseconds: 120), () {
-        if (!mounted) return;
-        unawaited(_restoreIosLinkInteractions());
-      });
     });
   }
 
