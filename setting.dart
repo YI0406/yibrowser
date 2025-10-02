@@ -45,7 +45,7 @@ class _SettingPageState extends State<SettingPage> {
     _refreshCacheSize();
     _loadUaMode();
     _loadSearchEngine();
-    _loadLongPressDetectionPreference();
+
     // Ensure default OFF only once, and remind about photo permission on open.
     _ensureAutoSaveDefaultOff();
     _checkPhotoPermissionOnOpen();
@@ -73,17 +73,6 @@ class _SettingPageState extends State<SettingPage> {
     setState(() {
       _searchEngine = v;
     });
-  }
-
-  Future<void> _loadLongPressDetectionPreference() async {
-    final sp = await SharedPreferences.getInstance();
-    if (!sp.containsKey('detect_media_long_press')) {
-      await sp.setBool('detect_media_long_press', true);
-      AppRepo.I.setLongPressDetectionEnabled(true);
-      return;
-    }
-    final saved = sp.getBool('detect_media_long_press') ?? true;
-    AppRepo.I.setLongPressDetectionEnabled(saved);
   }
 
   Future<void> _saveSearchEngine(String v) async {
@@ -536,38 +525,7 @@ class _SettingPageState extends State<SettingPage> {
               );
             },
           ),
-          ValueListenableBuilder<bool>(
-            valueListenable: repo.longPressDetectionEnabled,
-            builder: (context, enabled, _) {
-              return SwitchListTile(
-                title: Text(
-                  context.l10n('settings.detectMediaLongPress.title'),
-                ),
-                subtitle: Text(
-                  context.l10n('settings.detectMediaLongPress.subtitle'),
-                ),
-                value: enabled,
-                onChanged: (value) {
-                  () async {
-                    repo.setLongPressDetectionEnabled(value);
-                    final sp = await SharedPreferences.getInstance();
-                    await sp.setBool('detect_media_long_press', value);
-                    if (!mounted) return;
-                    final snackKey =
-                        value
-                            ? 'settings.detectMediaLongPress.snack.enabled'
-                            : 'settings.detectMediaLongPress.snack.disabled';
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        duration: const Duration(seconds: 1),
-                        content: Text(context.l10n(snackKey)),
-                      ),
-                    );
-                  }();
-                },
-              );
-            },
-          ),
+
           ValueListenableBuilder<bool>(
             valueListenable: repo.downloadNotificationsEnabled,
             builder: (context, enabled, _) {
