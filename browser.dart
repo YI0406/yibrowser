@@ -736,6 +736,40 @@ class _BrowserPageState extends State<BrowserPage>
   static const double _edgeSwipeVelocityThreshold = 700.0;
 
   bool _suppressLinkLongPress = false;
+  bool _webViewInteractionGuardActive = false;
+  Timer? _webViewInteractionGuardTimer;
+
+  void _setWebViewInteractionGuardActive(bool active) {
+    if (_webViewInteractionGuardActive == active) {
+      return;
+    }
+    if (mounted) {
+      setState(() {
+        _webViewInteractionGuardActive = active;
+      });
+    } else {
+      _webViewInteractionGuardActive = active;
+    }
+  }
+
+  void _activateWebViewInteractionGuard() {
+    _webViewInteractionGuardTimer?.cancel();
+    _webViewInteractionGuardTimer = null;
+    _setWebViewInteractionGuardActive(true);
+  }
+
+  void _releaseWebViewInteractionGuard({Duration delay = Duration.zero}) {
+    _webViewInteractionGuardTimer?.cancel();
+    if (delay <= Duration.zero) {
+      _setWebViewInteractionGuardActive(false);
+      return;
+    }
+    _webViewInteractionGuardTimer = Timer(delay, () {
+      _setWebViewInteractionGuardActive(false);
+      _webViewInteractionGuardTimer = null;
+    });
+  }
+
   YtVideoInfo? _cachedYoutubeInfo;
 
   static const String _kDebugTapLoggerJS = r'''
@@ -2389,6 +2423,7 @@ class _BrowserPageState extends State<BrowserPage>
       '${repo.playingVideos.value.length} candidate(s)',
     );
     _suppressLinkLongPress = true;
+    _activateWebViewInteractionGuard();
     if (kDebugMode) {
       debugPrint(
         '[Debug][NowPlaying] Long press interactions suppressed while sheet is visible.',
@@ -2455,6 +2490,7 @@ class _BrowserPageState extends State<BrowserPage>
             '[Debug][NowPlaying] Long press interactions restored after sheet closed.',
           );
         }
+        _releaseWebViewInteractionGuard();
         unawaited(_restoreIosLinkInteractions());
       });
     }
@@ -4692,6 +4728,7 @@ class _BrowserPageState extends State<BrowserPage>
     repo.snifferEnabled.removeListener(_onSnifferSettingChanged);
     _urlFocus.dispose();
     _removeYtFetchBarrier();
+    _webViewInteractionGuardTimer?.cancel();
     super.dispose();
   }
 
@@ -5366,6 +5403,13 @@ class _BrowserPageState extends State<BrowserPage>
                           ],
                         ),
                       ),
+                      if (_webViewInteractionGuardActive)
+                        Positioned.fill(
+                          child: AbsorbPointer(
+                            absorbing: true,
+                            child: Container(color: Colors.transparent),
+                          ),
+                        ),
                     ],
                   ),
               ],
@@ -6717,315 +6761,328 @@ class _BrowserPageState extends State<BrowserPage>
     if (!ok) {
       return;
     }
-    await showModalBottomSheet(
-      context: context,
-      builder: (_) {
-        return SafeArea(
-          child: ValueListenableBuilder(
-            valueListenable: repo.hits,
-            builder: (_, list, __) {
-              if (list.isEmpty) {
-                return Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Text(
-                    context.l10n('browser.mediaDetection.emptyState'),
-                  ),
-                );
-              }
-              return Column(
-                children: [
-                  ListTile(
-                    title: Text(
-                      context.l10n(
-                        'browser.mediaDetection.titleWithCount',
-                        params: {'count': list.length.toString()},
+    _activateWebViewInteractionGuard();
+    try {
+      await showModalBottomSheet(
+        context: context,
+        builder: (_) {
+          return SafeArea(
+            child: ValueListenableBuilder(
+              valueListenable: repo.hits,
+              builder: (_, list, __) {
+                if (list.isEmpty) {
+                  return Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Text(
+                      context.l10n('browser.mediaDetection.emptyState'),
+                    ),
+                  );
+                }
+                return Column(
+                  children: [
+                    ListTile(
+                      title: Text(
+                        context.l10n(
+                          'browser.mediaDetection.titleWithCount',
+                          params: {'count': list.length.toString()},
+                        ),
+                      ),
+                      trailing: TextButton.icon(
+                        icon: const Icon(Icons.delete_sweep),
+                        label: Text(context.l10n('common.clearAll')),
+                        onPressed: () {
+                          repo.hits.value = [];
+                          Navigator.pop(context);
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                duration: const Duration(seconds: 1),
+                                content: Text(
+                                  context.l10n('browser.snack.mediaCleared'),
+                                ),
+                              ),
+                            );
+                          }
+                        },
                       ),
                     ),
-                    trailing: TextButton.icon(
-                      icon: const Icon(Icons.delete_sweep),
-                      label: Text(context.l10n('common.clearAll')),
-                      onPressed: () {
-                        repo.hits.value = [];
-                        Navigator.pop(context);
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              duration: const Duration(seconds: 1),
-                              content: Text(
-                                context.l10n('browser.snack.mediaCleared'),
-                              ),
-                            ),
-                          );
-                        }
-                      },
-                    ),
-                  ),
-                  const Divider(height: 1),
-                  Expanded(
-                    child: ListView.separated(
-                      itemCount: list.length,
-                      separatorBuilder: (_, __) => const Divider(height: 1),
-                      itemBuilder: (_, i) {
-                        final h = list[i];
-                        return ListTile(
-                          leading: SizedBox(
-                            width: 56,
-                            height: 56,
-                            child: () {
-                              if (h.type == 'image') {
-                                return ClipRRect(
-                                  borderRadius: BorderRadius.circular(6),
-                                  child: Image.network(
-                                    h.url,
-                                    fit: BoxFit.cover,
-                                    errorBuilder:
-                                        (_, __, ___) => const Icon(Icons.image),
-                                  ),
-                                );
-                              } else if (h.type == 'video') {
-                                return FutureBuilder<String?>(
-                                  future: _ensureVideoThumb(h.url),
-                                  builder: (_, snap) {
-                                    Widget base;
-                                    if (snap.connectionState ==
-                                        ConnectionState.waiting) {
-                                      base = Container(
-                                        decoration: BoxDecoration(
-                                          color: Colors.black12,
-                                          borderRadius: BorderRadius.circular(
-                                            6,
-                                          ),
-                                        ),
-                                        alignment: Alignment.center,
-                                        child: const SizedBox(
-                                          width: 18,
-                                          height: 18,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                          ),
-                                        ),
-                                      );
-                                    } else if (snap.hasData &&
-                                        snap.data != null) {
-                                      base = ClipRRect(
-                                        borderRadius: BorderRadius.circular(6),
-                                        child: Image.file(
-                                          File(snap.data!),
-                                          fit: BoxFit.cover,
-                                        ),
-                                      );
-                                    } else {
-                                      base = Container(
-                                        decoration: BoxDecoration(
-                                          color: Colors.black12,
-                                          borderRadius: BorderRadius.circular(
-                                            6,
-                                          ),
-                                        ),
-                                        alignment: Alignment.center,
-                                        child: const Icon(Icons.ondemand_video),
-                                      );
-                                    }
-                                    // overlay duration if available
-                                    return Stack(
-                                      children: [
-                                        Positioned.fill(child: base),
-                                        if (h.durationSeconds != null)
-                                          Positioned(
-                                            right: 4,
-                                            bottom: 4,
-                                            child: Container(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                    horizontal: 4,
-                                                    vertical: 2,
-                                                  ),
-                                              decoration: BoxDecoration(
-                                                color: Colors.black.withOpacity(
-                                                  0.6,
-                                                ),
-                                                borderRadius:
-                                                    BorderRadius.circular(4),
-                                              ),
-                                              child: Text(
-                                                _fmtDur(h.durationSeconds!),
-                                                style: const TextStyle(
-                                                  fontSize: 10,
-                                                  color: Colors.white,
-                                                ),
-                                              ),
-                                            ),
-                                          ),
-                                        if (h.durationSeconds == null &&
-                                            snap.connectionState ==
-                                                ConnectionState.waiting)
-                                          Positioned(
-                                            right: 4,
-                                            bottom: 4,
-                                            child: Container(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                    horizontal: 4,
-                                                    vertical: 2,
-                                                  ),
-                                              decoration: BoxDecoration(
-                                                color: Colors.black.withOpacity(
-                                                  0.4,
-                                                ),
-                                                borderRadius:
-                                                    BorderRadius.circular(4),
-                                              ),
-                                              child: Text(
-                                                context.l10n(
-                                                  'browser.media.statusResolving',
-                                                ),
-                                                style: const TextStyle(
-                                                  fontSize: 10,
-                                                  color: Colors.white,
-                                                ),
-                                              ),
-                                            ),
-                                          ),
-                                      ],
-                                    );
-                                  },
-                                );
-                              } else {
-                                return Container(
-                                  decoration: BoxDecoration(
+                    const Divider(height: 1),
+                    Expanded(
+                      child: ListView.separated(
+                        itemCount: list.length,
+                        separatorBuilder: (_, __) => const Divider(height: 1),
+                        itemBuilder: (_, i) {
+                          final h = list[i];
+                          return ListTile(
+                            leading: SizedBox(
+                              width: 56,
+                              height: 56,
+                              child: () {
+                                if (h.type == 'image') {
+                                  return ClipRRect(
                                     borderRadius: BorderRadius.circular(6),
-                                    color: Colors.black12,
-                                  ),
-                                  alignment: Alignment.center,
-                                  child: const Icon(Icons.audiotrack),
-                                );
-                              }
-                            }(),
-                          ),
-                          title: Text(
-                            _prettyFileName(h.url),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          subtitle: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 6,
-                                      vertical: 2,
+                                    child: Image.network(
+                                      h.url,
+                                      fit: BoxFit.cover,
+                                      errorBuilder:
+                                          (_, __, ___) =>
+                                              const Icon(Icons.image),
                                     ),
+                                  );
+                                } else if (h.type == 'video') {
+                                  return FutureBuilder<String?>(
+                                    future: _ensureVideoThumb(h.url),
+                                    builder: (_, snap) {
+                                      Widget base;
+                                      if (snap.connectionState ==
+                                          ConnectionState.waiting) {
+                                        base = Container(
+                                          decoration: BoxDecoration(
+                                            color: Colors.black12,
+                                            borderRadius: BorderRadius.circular(
+                                              6,
+                                            ),
+                                          ),
+                                          alignment: Alignment.center,
+                                          child: const SizedBox(
+                                            width: 18,
+                                            height: 18,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                            ),
+                                          ),
+                                        );
+                                      } else if (snap.hasData &&
+                                          snap.data != null) {
+                                        base = ClipRRect(
+                                          borderRadius: BorderRadius.circular(
+                                            6,
+                                          ),
+                                          child: Image.file(
+                                            File(snap.data!),
+                                            fit: BoxFit.cover,
+                                          ),
+                                        );
+                                      } else {
+                                        base = Container(
+                                          decoration: BoxDecoration(
+                                            color: Colors.black12,
+                                            borderRadius: BorderRadius.circular(
+                                              6,
+                                            ),
+                                          ),
+                                          alignment: Alignment.center,
+                                          child: const Icon(
+                                            Icons.ondemand_video,
+                                          ),
+                                        );
+                                      }
+                                      // overlay duration if available
+                                      return Stack(
+                                        children: [
+                                          Positioned.fill(child: base),
+                                          if (h.durationSeconds != null)
+                                            Positioned(
+                                              right: 4,
+                                              bottom: 4,
+                                              child: Container(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                      horizontal: 4,
+                                                      vertical: 2,
+                                                    ),
+                                                decoration: BoxDecoration(
+                                                  color: Colors.black
+                                                      .withOpacity(0.6),
+                                                  borderRadius:
+                                                      BorderRadius.circular(4),
+                                                ),
+                                                child: Text(
+                                                  _fmtDur(h.durationSeconds!),
+                                                  style: const TextStyle(
+                                                    fontSize: 10,
+                                                    color: Colors.white,
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          if (h.durationSeconds == null &&
+                                              snap.connectionState ==
+                                                  ConnectionState.waiting)
+                                            Positioned(
+                                              right: 4,
+                                              bottom: 4,
+                                              child: Container(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                      horizontal: 4,
+                                                      vertical: 2,
+                                                    ),
+                                                decoration: BoxDecoration(
+                                                  color: Colors.black
+                                                      .withOpacity(0.4),
+                                                  borderRadius:
+                                                      BorderRadius.circular(4),
+                                                ),
+                                                child: Text(
+                                                  context.l10n(
+                                                    'browser.media.statusResolving',
+                                                  ),
+                                                  style: const TextStyle(
+                                                    fontSize: 10,
+                                                    color: Colors.white,
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                        ],
+                                      );
+                                    },
+                                  );
+                                } else {
+                                  return Container(
                                     decoration: BoxDecoration(
-                                      color: (h.type == 'image'
-                                              ? Colors.blueGrey
-                                              : (h.type == 'audio'
-                                                  ? Colors.teal
-                                                  : Colors.deepPurple))
-                                          .withOpacity(0.15),
                                       borderRadius: BorderRadius.circular(6),
+                                      color: Colors.black12,
                                     ),
-                                    child: Text(
-                                      h.type.isNotEmpty
-                                          ? h.type
-                                          : (h.contentType.isNotEmpty
-                                              ? h.contentType.split('/').first
-                                              : ''),
-                                      style: const TextStyle(fontSize: 12),
-                                    ),
-                                  ),
-                                  if (h.contentType.isNotEmpty) ...[
-                                    const SizedBox(width: 8),
-                                    Expanded(
+                                    alignment: Alignment.center,
+                                    child: const Icon(Icons.audiotrack),
+                                  );
+                                }
+                              }(),
+                            ),
+                            title: Text(
+                              _prettyFileName(h.url),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            subtitle: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 6,
+                                        vertical: 2,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: (h.type == 'image'
+                                                ? Colors.blueGrey
+                                                : (h.type == 'audio'
+                                                    ? Colors.teal
+                                                    : Colors.deepPurple))
+                                            .withOpacity(0.15),
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
                                       child: Text(
-                                        h.contentType,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
+                                        h.type.isNotEmpty
+                                            ? h.type
+                                            : (h.contentType.isNotEmpty
+                                                ? h.contentType.split('/').first
+                                                : ''),
                                         style: const TextStyle(fontSize: 12),
                                       ),
                                     ),
-                                  ],
-                                ],
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                h.url,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontSize: 12,
-                                  color: Colors.grey,
-                                ),
-                              ),
-                              if (h.type != 'image')
-                                Text(
-                                  h.durationSeconds != null
-                                      ? context.l10n(
-                                        'browser.media.durationLabel',
-                                        params: {
-                                          'duration': _fmtDur(
-                                            h.durationSeconds!,
-                                          ),
-                                        },
-                                      )
-                                      : context.l10n(
-                                        'browser.media.durationResolving',
-                                      ),
-                                  style: const TextStyle(fontSize: 12),
-                                ),
-                            ],
-                          ),
-                          onLongPress: () async {
-                            await _previewHit(h);
-                          },
-                          trailing: Wrap(
-                            spacing: 4,
-                            children: [
-                              IconButton(
-                                icon: const Icon(Icons.link),
-                                tooltip: context.l10n(
-                                  'browser.context.copyLink',
-                                ),
-                                onPressed: () async {
-                                  await Clipboard.setData(
-                                    ClipboardData(text: h.url),
-                                  );
-                                  if (mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        duration: const Duration(seconds: 1),
-                                        content: Text(
-                                          context.l10n(
-                                            'browser.snack.copiedLink',
-                                          ),
+                                    if (h.contentType.isNotEmpty) ...[
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: Text(
+                                          h.contentType,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(fontSize: 12),
                                         ),
                                       ),
+                                    ],
+                                  ],
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  h.url,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.grey,
+                                  ),
+                                ),
+                                if (h.type != 'image')
+                                  Text(
+                                    h.durationSeconds != null
+                                        ? context.l10n(
+                                          'browser.media.durationLabel',
+                                          params: {
+                                            'duration': _fmtDur(
+                                              h.durationSeconds!,
+                                            ),
+                                          },
+                                        )
+                                        : context.l10n(
+                                          'browser.media.durationResolving',
+                                        ),
+                                    style: const TextStyle(fontSize: 12),
+                                  ),
+                              ],
+                            ),
+                            onLongPress: () async {
+                              await _previewHit(h);
+                            },
+                            trailing: Wrap(
+                              spacing: 4,
+                              children: [
+                                IconButton(
+                                  icon: const Icon(Icons.link),
+                                  tooltip: context.l10n(
+                                    'browser.context.copyLink',
+                                  ),
+                                  onPressed: () async {
+                                    await Clipboard.setData(
+                                      ClipboardData(text: h.url),
                                     );
-                                  }
-                                },
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.download),
-                                tooltip: context.l10n('common.download'),
-                                onPressed: () {
-                                  Navigator.pop(context);
-                                  _confirmDownload(h.url);
-                                },
-                              ),
-                            ],
-                          ),
-                        );
-                      },
+                                    if (mounted) {
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        SnackBar(
+                                          duration: const Duration(seconds: 1),
+                                          content: Text(
+                                            context.l10n(
+                                              'browser.snack.copiedLink',
+                                            ),
+                                          ),
+                                        ),
+                                      );
+                                    }
+                                  },
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.download),
+                                  tooltip: context.l10n('common.download'),
+                                  onPressed: () {
+                                    Navigator.pop(context);
+                                    _confirmDownload(h.url);
+                                  },
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
                     ),
-                  ),
-                ],
-              );
-            },
-          ),
-        );
-      },
-    );
+                  ],
+                );
+              },
+            ),
+          );
+        },
+      );
+    } finally {
+      Future.delayed(const Duration(milliseconds: 150), () {
+        _releaseWebViewInteractionGuard();
+        unawaited(_restoreIosLinkInteractions());
+      });
+    }
   }
 
   /// --- Download speed helpers ---
@@ -7092,6 +7149,7 @@ class _BrowserPageState extends State<BrowserPage>
   /// navigating away from the browser tab.
   void _openDownloadsSheet() {
     _suppressLinkLongPress = true;
+    _activateWebViewInteractionGuard();
     _resetAllSpeedTracking(clearCachedSpeeds: false);
     showModalBottomSheet(
       context: context,
@@ -7193,6 +7251,10 @@ class _BrowserPageState extends State<BrowserPage>
           '[Debug][YouTube] Long press interactions restored after download options sheet closed.',
         );
       }
+      _releaseWebViewInteractionGuard(delay: const Duration(milliseconds: 120));
+      Future.delayed(const Duration(milliseconds: 120), () {
+        unawaited(_restoreIosLinkInteractions());
+      });
     });
   }
 
