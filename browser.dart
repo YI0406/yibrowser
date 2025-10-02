@@ -122,6 +122,7 @@ enum _ToolbarMenuAction {
   toggleAdBlocker,
   toggleBlockPopup,
   blockExternalApp,
+  toggleMediaDetection,
   addHome,
   goHome,
   help,
@@ -2096,6 +2097,14 @@ const bindVideo = (video) => {
       if (controller == null) continue;
 
       unawaited(_setVideoDetectorEnabled(controller, enabled));
+      unawaited(
+        controller.evaluateJavascript(
+          source: Sniffer.jsSetModes(
+            networkOn: repo.snifferEnabled.value,
+            autoDetectOn: enabled,
+          ),
+        ),
+      );
       if (Platform.isIOS) {
         if (!enabled) {
           unawaited(_resetAndReleaseWebViewAfterContextMenu(controller));
@@ -2658,6 +2667,22 @@ const bindVideo = (video) => {
     final directUrl = candidate.url.trim();
     final isBlob = directUrl.toLowerCase().startsWith('blob:');
     final hasDirectUrl = directUrl.isNotEmpty && !isBlob && !isYoutube;
+    final addToHomeUrl = () {
+      final pageUrl = candidate.pageUrl.trim();
+      if (pageUrl.isNotEmpty) return pageUrl;
+      final normalizedDisplay = displayUrl.trim();
+      if (normalizedDisplay.isNotEmpty &&
+          !normalizedDisplay.toLowerCase().startsWith('blob:')) {
+        return normalizedDisplay;
+      }
+      if (!isBlob && directUrl.isNotEmpty) {
+        return directUrl;
+      }
+      return '';
+    }();
+    final canAddToHome = addToHomeUrl.isNotEmpty;
+    final addToHomeName =
+        candidate.title.trim().isNotEmpty ? candidate.title.trim() : null;
     final youtubeSource =
         displayUrl.isNotEmpty ? displayUrl : (repo.currentPageUrl.value ?? '');
     final copyUrl =
@@ -2767,6 +2792,20 @@ const bindVideo = (video) => {
                           ? () async {
                             navigator.pop();
                             await _openLinkInNewTab(openInNewTabUrl);
+                          }
+                          : null,
+                ),
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.home_outlined),
+                  label: Text(sheetContext.l10n('browser.context.addHome')),
+                  onPressed:
+                      canAddToHome
+                          ? () async {
+                            navigator.pop();
+                            await _showAddToHomeDialog(
+                              initialUrl: addToHomeUrl,
+                              initialName: addToHomeName,
+                            );
                           }
                           : null,
                 ),
@@ -5645,8 +5684,10 @@ const bindVideo = (video) => {
                           // 注入嗅探腳本並同步開關
                           await c.evaluateJavascript(source: Sniffer.jsHook);
                           await c.evaluateJavascript(
-                            source: Sniffer.jsSetEnabled(
-                              repo.snifferEnabled.value,
+                            source: Sniffer.jsSetModes(
+                              networkOn: repo.snifferEnabled.value,
+                              autoDetectOn:
+                                  repo.longPressDetectionEnabled.value,
                             ),
                           );
 
@@ -6290,6 +6331,8 @@ const bindVideo = (video) => {
     final historyCount = repo.history.value.length;
     final blockPopupOn = repo.blockPopup.value;
     final adBlockOn = repo.adBlockEnabled.value;
+    final mediaDetectionOn = repo.longPressDetectionEnabled.value;
+
     final selectedProfiles = repo.adBlockFilterSets.value;
 
     PopupMenuItem<_ToolbarMenuAction> buildItem(
@@ -6374,6 +6417,12 @@ const bindVideo = (video) => {
         iconColor:
             _blockExternalApp ? Theme.of(context).colorScheme.primary : null,
       ),
+      buildItem(
+        _ToolbarMenuAction.toggleMediaDetection,
+        mediaDetectionOn ? Icons.toggle_on : Icons.toggle_off,
+        context.l10n('browser.menu.mediaDetection'),
+        iconColor: mediaDetectionOn ? colorScheme.primary : null,
+      ),
       const PopupMenuDivider(),
       buildItem(
         _ToolbarMenuAction.addHome,
@@ -6403,7 +6452,8 @@ const bindVideo = (video) => {
 
     final keepOpen =
         selected == _ToolbarMenuAction.toggleBlockPopup ||
-        selected == _ToolbarMenuAction.blockExternalApp;
+        selected == _ToolbarMenuAction.blockExternalApp ||
+        selected == _ToolbarMenuAction.toggleMediaDetection;
 
     switch (selected) {
       case _ToolbarMenuAction.openFavorites:
@@ -6423,6 +6473,12 @@ const bindVideo = (video) => {
         break;
       case _ToolbarMenuAction.blockExternalApp:
         _toggleBlockExternalAppSetting();
+        break;
+      case _ToolbarMenuAction.toggleMediaDetection:
+        final next = !repo.longPressDetectionEnabled.value;
+        repo.setLongPressDetectionEnabled(next);
+        final sp = await SharedPreferences.getInstance();
+        await sp.setBool('detect_media_long_press', next);
         break;
       case _ToolbarMenuAction.addHome:
         await _showAddToHomeDialog();
@@ -6568,7 +6624,12 @@ const bindVideo = (video) => {
       final tab = _tabs[_currentTabIndex];
       final controller = tab.controller;
       if (controller != null) {
-        await controller.evaluateJavascript(source: Sniffer.jsSetEnabled(next));
+        await controller.evaluateJavascript(
+          source: Sniffer.jsSetModes(
+            networkOn: next,
+            autoDetectOn: repo.longPressDetectionEnabled.value,
+          ),
+        );
       }
     }
     if (!mounted) return;
