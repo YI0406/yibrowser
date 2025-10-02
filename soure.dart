@@ -3442,6 +3442,47 @@ class AppRepo extends ChangeNotifier {
       list.add(normalizedHit);
     }
     hits.value = list;
+    if (longPressDetectionEnabled.value &&
+        (normalizedHit.type == 'video' || normalizedHit.type == 'audio')) {
+      final pageUrl = currentPageUrl.value ?? '';
+      final mediaUrl = normalizedHit.url.trim();
+      if (pageUrl.isNotEmpty && mediaUrl.isNotEmpty) {
+        final idSource = '$pageUrl::$mediaUrl';
+        final id = sha1.convert(utf8.encode(idSource)).toString();
+        final poster = normalizedHit.poster.trim();
+        String _deriveCandidateTitle() {
+          final pageTitle = currentPageTitle.value?.trim();
+          if (pageTitle != null && pageTitle.isNotEmpty) {
+            return pageTitle;
+          }
+          try {
+            final uri = Uri.parse(mediaUrl);
+            final segments =
+                uri.pathSegments.where((s) => s.isNotEmpty).toList();
+            if (segments.isNotEmpty) {
+              return segments.last;
+            }
+          } catch (_) {}
+          return mediaUrl;
+        }
+
+        upsertPlayingVideo(
+          PlayingVideoCandidate(
+            id: id,
+            url: mediaUrl,
+            pageUrl: pageUrl,
+            title: _deriveCandidateTitle(),
+            durationSeconds: normalizedHit.durationSeconds,
+            positionSeconds: null,
+            videoWidth: null,
+            videoHeight: null,
+            snapshot: null,
+            posterUrl: poster.isNotEmpty ? poster : null,
+            detectedAt: DateTime.now(),
+          ),
+        );
+      }
+    }
   }
 
   /// Creates a unique file path in the persistent downloads directory with
