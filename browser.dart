@@ -745,405 +745,11 @@ class _BrowserPageState extends State<BrowserPage>
   static const double _edgeSwipeWidth = 32.0;
   static const double _edgeSwipeDistanceThreshold = 48.0;
   static const double _edgeSwipeVelocityThreshold = 700.0;
-  bool _iosLinkMenuBridgeReady = false;
+
   String? _lastIosLinkMenuUrl;
   DateTime? _lastIosLinkMenuTime;
   bool _suppressLinkLongPress = false;
   YtVideoInfo? _cachedYoutubeInfo;
-
-  static const String _kIosLinkContextMenuJS = r'''
-(() => {
-  if (window.__flutterIosLinkMenuInstalled) {
-    return;
-  }
-  window.__flutterIosLinkMenuInstalled = true;
-  if (typeof window.flutterIosLinkMenuEnabled === 'undefined') {
-    window.flutterIosLinkMenuEnabled = true;
-  }
-
-  const LONG_PRESS_DELAY = 650;
-  const MOVE_TOLERANCE = 14;
-   const SUPPRESS_TIMEOUT = 400;
-  const CLICK_FALLBACK_DELAY = 140;
-  let suppressNextClick = false;
-  let suppressedAnchor = null;
-  let activeAnchor = null;
-  let longPressTimer = null;
-  let pendingClickAnchor = null;
-  let pendingClickTimer = null;
-  let lastInteractionWasLongPress = false;
-  let startX = 0;
-  let startY = 0;
-  let suppressResetTimer = null;
-  const styleId = 'flutter-ios-link-menu-style';
-  let styleNode = null;
-
-  const isEnabled = () => !!window.flutterIosLinkMenuEnabled;
-
-  const removeStyle = () => {
-    const node = styleNode || document.getElementById(styleId);
-    if (node && node.parentNode) {
-      node.parentNode.removeChild(node);
-    }
-    styleNode = null;
-  };
-
-  const resetClickSuppression = () => {
-    suppressNextClick = false;
-    suppressedAnchor = null;
-    if (suppressResetTimer !== null) {
-      clearTimeout(suppressResetTimer);
-      suppressResetTimer = null;
-    }
-     cancelPendingClick();
-  };
-
-  const scheduleSuppressReset = () => {
-    if (suppressResetTimer !== null) {
-      clearTimeout(suppressResetTimer);
-    }
-    suppressResetTimer = setTimeout(() => {
-      suppressResetTimer = null;
-      suppressNextClick = false;
-      suppressedAnchor = null;
-    }, SUPPRESS_TIMEOUT);
-  };
- const cancelPendingClick = () => {
-    if (pendingClickTimer !== null) {
-      clearTimeout(pendingClickTimer);
-      pendingClickTimer = null;
-    }
-    pendingClickAnchor = null;
-  };
-
-  const scheduleClickFallback = (anchor) => {
-    cancelPendingClick();
-    if (!anchor) {
-      return;
-    }
-    pendingClickAnchor = anchor;
-    pendingClickTimer = setTimeout(() => {
-      const target = pendingClickAnchor;
-      pendingClickAnchor = null;
-      pendingClickTimer = null;
-      if (!target) {
-        return;
-      }
-      try {
-        target.click();
-        return;
-      } catch (_) {}
-      try {
-        const url = resolveHref(target);
-        if (url) {
-          window.location.href = url;
-        }
-      } catch (_) {}
-    }, CLICK_FALLBACK_DELAY);
-  };
-
-  const ensureStyle = () => {
-    if (!isEnabled()) {
-      removeStyle();
-      return;
-    }
-    if (styleNode && styleNode.parentNode) {
-      return;
-    }
-    styleNode = styleNode || document.getElementById(styleId);
-    if (!styleNode) {
-      styleNode = document.createElement('style');
-      styleNode.id = styleId;
-      styleNode.textContent = 'a, a * { -webkit-touch-callout: none !important; }';
-    }
-    if (styleNode && !styleNode.parentNode) {
-      document.documentElement.appendChild(styleNode);
-    }
-  };
-
-  const resolveHref = (anchor) => {
-    if (!anchor) {
-      return null;
-    }
-    let href = anchor.getAttribute('href') || '';
-    if (!href && anchor.href) {
-      href = anchor.href;
-    }
-    if (!href) {
-      return null;
-    }
-    try {
-      return new URL(href, window.location.href).href;
-    } catch (err) {
-      return href;
-    }
-  };
-
-  const clearPending = (preserveLongPress = false) => {
-    if (longPressTimer !== null) {
-      clearTimeout(longPressTimer);
-      longPressTimer = null;
-    }
-    activeAnchor = null;
-    startX = 0;
-    startY = 0;
-    if (!preserveLongPress) {
-      lastInteractionWasLongPress = false;
-    }
-  };
-  const resetState = () => {
-    clearPending();
-    resetClickSuppression();
-    lastInteractionWasLongPress = false;
-  };
-
-  document.addEventListener(
-    'touchstart',
-    (event) => {
-      cancelPendingClick();
-      lastInteractionWasLongPress = false;
-      if (!isEnabled()) {
-        clearPending();
-        return;
-      }
-      if (!event || !event.touches || event.touches.length !== 1) {
-        clearPending();
-        return;
-      }
-      const touch = event.touches[0];
-      ensureStyle();
-      resetClickSuppression();
-      const anchor =
-        event.target && event.target.closest
-          ? event.target.closest('a[href]')
-          : null;
-      if (!anchor) {
-        clearPending();
-        return;
-      }
-      if (longPressTimer !== null) {
-        clearTimeout(longPressTimer);
-      }
-      activeAnchor = anchor;
-      startX = touch.clientX;
-      startY = touch.clientY;
-      longPressTimer = setTimeout(() => {
-       if (!isEnabled()) {
-          resetState();
-          return;
-        }
-        const anchor = activeAnchor;
-        const resolved = resolveHref(anchor);
-        try {
-          const selection = window.getSelection && window.getSelection();
-          if (selection && selection.removeAllRanges) {
-            selection.removeAllRanges();
-          }
-        } catch (_) {}
-        lastInteractionWasLongPress = true;
-        clearPending(true);
-        if (
-          resolved &&
-          window.flutter_inappwebview &&
-          window.flutter_inappwebview.callHandler
-        ) {
-          suppressNextClick = true;
-          suppressedAnchor = anchor;
-          scheduleSuppressReset();
-          try {
-            const maybePromise =
-              window.flutter_inappwebview.callHandler('linkLongPress', resolved);
-            if (
-              maybePromise &&
-              typeof maybePromise.catch === 'function'
-            ) {
-              maybePromise.catch(() => {});
-            }
-          } catch (err) {
-            if (typeof console !== 'undefined' && console.warn) {
-              console.warn('Failed to notify Flutter about link long press', err);
-            }
-          } finally {
-            resetState();
-          }
-        }
-      }, LONG_PRESS_DELAY);
-    },
-    { passive: true }
-  );
-
-  document.addEventListener(
-    'touchmove',
-    (event) => {
-      if (!activeAnchor) {
-        return;
-      }
-      if (!isEnabled()) {
-        clearPending();
-        cancelPendingClick();
-        return;
-      }
-      const touch =
-        event && event.touches && event.touches.length > 0
-          ? event.touches[0]
-          : null;
-      if (!touch) {
-        clearPending();
-        cancelPendingClick();
-        return;
-      }
-      const dx = touch.clientX - startX;
-      const dy = touch.clientY - startY;
-      if (Math.hypot(dx, dy) > MOVE_TOLERANCE) {
-        clearPending();
-        cancelPendingClick();
-        return;
-      }
-      if (!event || !event.target || !event.target.closest) {
-        clearPending();
-        cancelPendingClick();
-        return;
-      }
-      const anchor = event.target.closest('a[href]');
-      if (!anchor || anchor !== activeAnchor) {
-        clearPending();
-        cancelPendingClick()
-      }
-    },
-    { passive: true }
-  );
-
- document.addEventListener(
-    'touchend',
-    (event) => {
-      cancelPendingClick();
-      const wasLongPress = lastInteractionWasLongPress;
-      if (!isEnabled()) {
-        clearPending();
-        return;
-      }
-      const anchor =
-        event && event.target && event.target.closest
-          ? event.target.closest('a[href]')
-          : null;
-      clearPending();
-      if (wasLongPress) {
-        return;
-      }
-      if (!anchor || suppressNextClick) {
-        return;
-      }
-      const resolved = resolveHref(anchor);
-      if (!resolved) {
-        return;
-      }
-      scheduleClickFallback(anchor);
-    },
-    { passive: true }
-  );
-  document.addEventListener(
-    'touchcancel',
-    () => {
-      cancelPendingClick();
-      clearPending();
-    },
-    { passive: true }
-  );
-
-   
-
-  window.__flutterResetLinkMenu = resetState;
-   window.__flutterForceClearLinkMenu = () => {
-    try {
-      suppressNextClick = false;
-      suppressedAnchor = null;
-      if (suppressResetTimer !== null) {
-        clearTimeout(suppressResetTimer);
-        suppressResetTimer = null;
-      }
-    } catch (_) {}
-  };
-  window.__flutterSetLinkMenuEnabled = (value) => {
-    const enabled = !!value;
-    window.flutterIosLinkMenuEnabled = enabled;
-    if (enabled) {
-      ensureStyle();
-      resetClickSuppression();
-    } else {
-      removeStyle();
-      resetState();
-    }
-  };
-  document.addEventListener(
-    'click',
-    (event) => {
-      cancelPendingClick();
-
-      if (!isEnabled()) {
-        return;
-      }
-      if (!suppressNextClick) {
-        return;
-      }
-      const anchor = suppressedAnchor;
-      resetClickSuppression();
-      if (anchor && event && event.target) {
-        const target = event.target;
-        const shouldSuppress =
-          target === anchor ||
-          (typeof anchor.contains === 'function' && anchor.contains(target));
-        if (shouldSuppress) {
-          event.preventDefault();
-          event.stopPropagation();
-        }
-      }
-      
-       },
-    { capture: true }
-  );
-  document.addEventListener(
-    'pointerdown',
-    () => {
-       cancelPendingClick();
-       lastInteractionWasLongPress = false;
-       if (!isEnabled()) {
-         return;
-       }
-       resetClickSuppression();
-    
-    },
-    { capture: true }
-  );
-  document.addEventListener(
-    'contextmenu',
-    (event) => {
-      if (!isEnabled()) {
-        return;
-      }
-      const anchor =
-        event && event.target && event.target.closest
-          ? event.target.closest('a[href]')
-          : null;
-      if (anchor) {
-        event.preventDefault();
-      }
-    },
-    { capture: true }
-  );
-  document.addEventListener(
-    'visibilitychange',
-    () => {
-      if (document.visibilityState !== 'visible') {
-        resetClickSuppression();
-      }
-      cancelPendingClick();
-    },
-    { capture: true }
-  );
-  window.addEventListener('pagehide', resetClickSuppression, { capture: true });
-  window.addEventListener('blur', resetClickSuppression, { capture: true });
-})();
-''';
 
   static const String _kVideoDetectorBridge = r'''
 (function () {
@@ -2368,11 +1974,8 @@ const bindVideo = (video) => {
       if (controller == null) continue;
 
       unawaited(_setVideoDetectorEnabled(controller, enabled));
-      if (Platform.isIOS) {
-        if (!enabled) {
-          unawaited(_resetAndReleaseWebViewAfterContextMenu(controller));
-        }
-        unawaited(_setIosLinkContextMenuBridgeEnabled(controller, true));
+      if (Platform.isIOS && !enabled) {
+        unawaited(_resetAndReleaseWebViewAfterContextMenu(controller));
       }
     }
   }
@@ -2602,76 +2205,6 @@ const bindVideo = (video) => {
     }
   }
 
-  Future<void> _injectIosLinkContextMenuBridge(
-    InAppWebViewController controller,
-  ) async {
-    if (!Platform.isIOS) {
-      return;
-    }
-
-    try {
-      await controller.evaluateJavascript(source: _kIosLinkContextMenuJS);
-      _iosLinkMenuBridgeReady = true;
-    } catch (_) {
-      _iosLinkMenuBridgeReady = false;
-    }
-    await _setIosLinkContextMenuBridgeEnabled(controller, true);
-  }
-
-  Future<void> _resetIosLinkContextMenuBridge(
-    InAppWebViewController controller,
-  ) async {
-    if (!Platform.isIOS) {
-      return;
-    }
-    const script = r'''
- (function() {
-        try {
-          if (typeof window !== 'undefined' && window.__flutterResetLinkMenu) {
-            window.__flutterResetLinkMenu();
-            return true;
-          }
-        } catch (_) {}
-        return false;
-      })();
-    ''';
-    var resetSucceeded = false;
-    try {
-      final result = await controller.evaluateJavascript(source: script);
-      resetSucceeded = result == true;
-    } catch (err, _) {
-      if (kDebugMode) {
-        debugPrint('Failed to evaluate iOS link menu reset script: $err');
-      }
-    }
-    if (resetSucceeded) {
-      return;
-    }
-    const fallbackScript = r'''
-      try {
-         if (typeof window === 'undefined') {
-          return;
-        }
-        if (window.__flutterSetLinkMenuEnabled) {
-          const previousEnabled = !!window.flutterIosLinkMenuEnabled;
-          window.__flutterSetLinkMenuEnabled(false);
-          if (previousEnabled) {
-            window.__flutterSetLinkMenuEnabled(true);
-          }
-        } else if (window.__flutterResetLinkMenu) {
-          window.__flutterResetLinkMenu();
-        }
-      } catch (_) {}
-    ''';
-    try {
-      await controller.evaluateJavascript(source: fallbackScript);
-    } catch (err, _) {
-      if (kDebugMode) {
-        debugPrint('Fallback reset for iOS link menu bridge failed: $err');
-      }
-    }
-  }
-
   Future<void> _injectVideoDetector(InAppWebViewController controller) async {
     try {
       await controller.evaluateJavascript(source: _kVideoDetectorBridge);
@@ -2742,46 +2275,6 @@ const bindVideo = (video) => {
           window.__flutterVideoDetectorSetEnabled(${enabled ? 'true' : 'false'});
         } else {
           window.__flutterVideoDetectorEnabled = ${enabled ? 'true' : 'false'};
-        }
-      } catch (_) {}
-    ''';
-    try {
-      await controller.evaluateJavascript(source: script);
-    } catch (_) {}
-  }
-
-  Future<void> _forceClearLinkMenu(InAppWebViewController controller) async {
-    if (!Platform.isIOS) {
-      return;
-    }
-    const script = r'''
-      try {
-        if (typeof window !== 'undefined' && window.__flutterForceClearLinkMenu) {
-          window.__flutterForceClearLinkMenu();
-        }
-        if (typeof window !== 'undefined' && window.__flutterResetLinkMenu) {
-          window.__flutterResetLinkMenu();
-        }
-      } catch (_) {}
-    ''';
-    try {
-      await controller.evaluateJavascript(source: script);
-    } catch (_) {}
-  }
-
-  Future<void> _setIosLinkContextMenuBridgeEnabled(
-    InAppWebViewController controller,
-    bool enabled,
-  ) async {
-    if (!Platform.isIOS) {
-      return;
-    }
-    final script = '''
-      try {
-        if (typeof window !== 'undefined' && window.__flutterSetLinkMenuEnabled) {
-          window.__flutterSetLinkMenuEnabled(${enabled ? 'true' : 'false'});
-        } else if (typeof window !== 'undefined') {
-          window.flutterIosLinkMenuEnabled = ${enabled ? 'true' : 'false'};
         }
       } catch (_) {}
     ''';
@@ -4686,18 +4179,17 @@ const bindVideo = (video) => {
     if (kDebugMode) {
       debugPrint('[Debug][LinkMenu] Resetting web view after context menu.');
     }
-    await _resetIosLinkContextMenuBridge(controller);
+
     await _releaseWebViewAfterContextMenu(controller);
   }
 
   Future<void> _restoreIosLinkInteractions({
     InAppWebViewController? controller,
-    int attemptIndex = 0,
   }) async {
     if (!Platform.isIOS) {
       return;
     }
-    const int maxAttempts = 3;
+
     InAppWebViewController? target = controller;
     if (target == null) {
       if (_tabs.isEmpty || _currentTabIndex < 0) {
@@ -4711,44 +4203,10 @@ const bindVideo = (video) => {
     if (target == null) {
       return;
     }
-    if (kDebugMode) {
-      if (attemptIndex == 0) {
-        debugPrint('[Debug][LinkMenu] Restoring iOS link interactions.');
-      } else {
-        debugPrint(
-          '[Debug][LinkMenu] Retrying iOS link interaction restore '
-          '(attempt ${attemptIndex + 1}/$maxAttempts).',
-        );
-      }
-    }
+
     try {
       await _resetAndReleaseWebViewAfterContextMenu(target);
     } catch (_) {}
-    try {
-      await _setIosLinkContextMenuBridgeEnabled(target, false);
-    } catch (_) {}
-    try {
-      await _setIosLinkContextMenuBridgeEnabled(target, true);
-    } catch (_) {}
-    try {
-      await _forceClearLinkMenu(target);
-    } catch (_) {}
-    if (attemptIndex + 1 >= maxAttempts) {
-      return;
-    }
-    final nextController = target;
-    final delay = Duration(milliseconds: 120 * (attemptIndex + 1));
-    Future.delayed(delay, () {
-      if (!mounted) {
-        return;
-      }
-      unawaited(
-        _restoreIosLinkInteractions(
-          controller: nextController,
-          attemptIndex: attemptIndex + 1,
-        ),
-      );
-    });
   }
 
   bool _flagTruthy(dynamic value) {
@@ -5908,7 +5366,7 @@ const bindVideo = (video) => {
                         contextMenu: ContextMenu(
                           // ignore: deprecated_member_use
                           options: ContextMenuOptions(
-                            hideDefaultSystemContextMenuItems: Platform.isIOS,
+                            hideDefaultSystemContextMenuItems: false,
                           ),
                         ),
                         initialSettings: InAppWebViewSettings(
@@ -6128,8 +5586,7 @@ const bindVideo = (video) => {
                             );
                             return;
                           }
-                          _iosLinkMenuBridgeReady = false;
-                          await _injectIosLinkContextMenuBridge(c);
+
                           await _injectVideoDetector(c);
                           await _injectDebugTapLogger(c);
                           repo.clearPlayingVideos();
@@ -6175,7 +5632,6 @@ const bindVideo = (video) => {
                           }
                         },
                         onLoadStop: (c, u) async {
-                          await _injectIosLinkContextMenuBridge(c);
                           await _injectVideoDetector(c);
                           await _injectDebugTapLogger(c);
                           // 注入嗅探腳本並同步開關
@@ -6404,11 +5860,7 @@ const bindVideo = (video) => {
                             await _resetAndReleaseWebViewAfterContextMenu(c);
                             return;
                           }
-                          if (_iosLinkMenuBridgeReady &&
-                              Platform.isIOS &&
-                              isAnchorHit) {
-                            return;
-                          }
+
                           if (Platform.isIOS &&
                               _lastIosLinkMenuUrl != null &&
                               _lastIosLinkMenuTime != null) {
