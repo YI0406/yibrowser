@@ -17,6 +17,7 @@ import 'package:path/path.dart' as p;
 import 'package:photo_manager/photo_manager.dart';
 import 'package:image_gallery_saver/image_gallery_saver.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:image/image.dart' as img;
 import 'package:local_auth/local_auth.dart';
 import 'dart:typed_data';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -30,6 +31,8 @@ import 'package:video_player/video_player.dart';
 import 'package:flutter_hls_parser/flutter_hls_parser.dart';
 import 'package:firebase_analytics/firebase_analytics.dart';
 import 'notification_service.dart';
+import 'package:background_downloader/background_downloader.dart' as bg;
+import 'package:video_thumbnail/video_thumbnail.dart';
 // NOTE: The `download` package targets Flutter Web (browser-triggered save). It is not
 // applicable to iOS/Android file-system saving. Kept here for web builds if needed.
 import 'package:download/download.dart' as web_download; // unused on mobile
@@ -684,6 +687,44 @@ class _DownloadCancelled implements Exception {
   const _DownloadCancelled();
 }
 
+class SpriteSheetInfo {
+  final String videoPath;
+  final String imagePath;
+  final int columns;
+  final int rows;
+  final int intervalMs;
+  final int frameCount;
+
+  const SpriteSheetInfo({
+    required this.videoPath,
+    required this.imagePath,
+    required this.columns,
+    required this.rows,
+    required this.intervalMs,
+    required this.frameCount,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'videoPath': videoPath,
+    'imagePath': imagePath,
+    'columns': columns,
+    'rows': rows,
+    'intervalMs': intervalMs,
+    'frameCount': frameCount,
+  };
+
+  factory SpriteSheetInfo.fromJson(Map<String, dynamic> json) {
+    return SpriteSheetInfo(
+      videoPath: json['videoPath'] as String? ?? '',
+      imagePath: json['imagePath'] as String,
+      columns: json['columns'] as int? ?? 1,
+      rows: json['rows'] as int? ?? 1,
+      intervalMs: json['intervalMs'] as int? ?? 1000,
+      frameCount: json['frameCount'] as int? ?? 1,
+    );
+  }
+}
+
 /// Represents a user-defined folder that groups download tasks on the media
 /// page. The order of folders in [AppRepo.mediaFolders] determines their
 /// display order.
@@ -834,6 +875,14 @@ class AppRepo extends ChangeNotifier {
   AppRepo._();
 
   final Map<String, int> _resumePositionsMs = {};
+  final Map<String, SpriteSheetInfo> _spriteSheetCache = {};
+  final Map<String, Future<SpriteSheetInfo?>> _spriteSheetPending = {};
+  static const String _bgDownloadGroup = 'yibrowser_file_downloads';
+  final bg.FileDownloader _bgDownloader = bg.FileDownloader();
+  final Map<String, DownloadTask> _bgTasksById = {};
+  final Map<String, bg.DownloadTask> _bgTaskHandles = {};
+  bool _callbacksRegistered = false;
+  bool _initialized = false;
 
   Duration? resumePositionFor(String path) {
     final key = _canonicalPath(path);
@@ -850,6 +899,247 @@ class AppRepo extends ChangeNotifier {
     unawaited(_saveState());
   }
 
+  String? _backgroundTaskIdFor(DownloadTask task) {
+    final raw = task.extra?['bgTaskId'];
+    if (raw is String && raw.isNotEmpty) {
+      return raw;
+    }
+    return null;
+  }
+
+  void _registerBackgroundTaskHandle(
+    DownloadTask task,
+    bg.DownloadTask handle,
+  ) {
+    (task.extra ??= {})['bgTaskId'] = handle.taskId;
+    _bgTasksById[handle.taskId] = task;
+    _bgTaskHandles[handle.taskId] = handle;
+  }
+
+  void _detachBackgroundTask(String taskId) {
+    final task = _bgTasksById.remove(taskId);
+    _bgTaskHandles.remove(taskId);
+    if (task != null) {
+      final extra = task.extra;
+      if (extra != null) {
+        extra.remove('bgTaskId');
+      }
+    }
+  }
+
+  Future<bg.DownloadTask?> _backgroundHandleForTask(DownloadTask task) async {
+    final id = _backgroundTaskIdFor(task);
+    if (id == null) return null;
+    final cached = _bgTaskHandles[id];
+    if (cached != null) return cached;
+    final remote = await _bgDownloader.taskForId(id);
+    if (remote is bg.DownloadTask) {
+      _bgTaskHandles[id] = remote;
+      return remote;
+    }
+    return null;
+  }
+
+  void _handleBackgroundStatusUpdate(bg.TaskStatusUpdate update) {
+    final taskId = update.task.taskId;
+    if (update.task is bg.DownloadTask) {
+      _bgTaskHandles[taskId] = update.task as bg.DownloadTask;
+    }
+    final local = _bgTasksById[taskId];
+    if (local == null) {
+      return;
+    }
+    _applyBackgroundStatus(local, update);
+  }
+
+  void _applyBackgroundStatus(DownloadTask local, bg.TaskStatusUpdate update) {
+    final status = update.status;
+    switch (status) {
+      case bg.TaskStatus.enqueued:
+      case bg.TaskStatus.waitingToRetry:
+        local.state = 'queued';
+        local.paused = false;
+        break;
+      case bg.TaskStatus.running:
+        local.state = 'downloading';
+        local.paused = false;
+        break;
+      case bg.TaskStatus.paused:
+        local.state = 'paused';
+        local.paused = true;
+        break;
+      case bg.TaskStatus.canceled:
+        local.state = 'paused';
+        local.paused = true;
+        _detachBackgroundTask(update.task.taskId);
+        break;
+      case bg.TaskStatus.notFound:
+      case bg.TaskStatus.failed:
+        local.state = 'error';
+        local.paused = false;
+        _detachBackgroundTask(update.task.taskId);
+        break;
+      case bg.TaskStatus.complete:
+        local.state = 'done';
+        local.paused = false;
+        if (update.task is bg.DownloadTask) {
+          final remote = update.task as bg.DownloadTask;
+          unawaited(_onBackgroundTaskComplete(remote, local));
+        } else {
+          _detachBackgroundTask(update.task.taskId);
+        }
+        break;
+    }
+    if (status != bg.TaskStatus.complete) {
+      _notifyDownloadsUpdated();
+      notifyListeners();
+      unawaited(_saveState());
+    }
+  }
+
+  void _handleBackgroundProgressUpdate(bg.TaskProgressUpdate update) {
+    final taskId = update.task.taskId;
+    if (update.task is bg.DownloadTask) {
+      _bgTaskHandles[taskId] = update.task as bg.DownloadTask;
+    }
+    final local = _bgTasksById[taskId];
+    if (local == null) {
+      return;
+    }
+    final expected = update.expectedFileSize;
+    if (expected > 0) {
+      local.total = expected;
+      if (update.progress >= 0) {
+        final received = (update.progress * expected).round();
+        local.received = received.clamp(0, expected);
+      }
+    } else {
+      if (local.total != null && local.total! <= 0) {
+        local.total = null;
+      }
+    }
+    local.state = 'downloading';
+    local.paused = false;
+    _notifyDownloadsUpdated();
+    notifyListeners();
+  }
+
+  Future<void> _onBackgroundTaskComplete(
+    bg.DownloadTask remote,
+    DownloadTask local,
+  ) async {
+    _detachBackgroundTask(remote.taskId);
+    try {
+      final path = await remote.filePath();
+      if (path.isNotEmpty) {
+        final canonical = _canonicalPath(path);
+        if (canonical != local.savePath) {
+          local.savePath = canonical;
+        }
+        final file = File(canonical);
+        if (await file.exists()) {
+          final length = await file.length();
+          local.received = length;
+          local.total = length;
+        }
+      }
+    } catch (_) {}
+    _notifyDownloadsUpdated();
+    notifyListeners();
+    if (autoSave.value) {
+      try {
+        await saveFileToGallery(local.savePath);
+      } catch (_) {}
+    }
+    _maybeNotifyDownloadComplete(local);
+    try {
+      await _generatePreview(local);
+    } catch (_) {}
+    try {
+      await FirebaseAnalytics.instance.logEvent(
+        name: 'download_complete',
+        parameters: {
+          'kind': local.kind,
+          'type': local.type,
+          'bytes': local.received,
+        },
+      );
+    } catch (_) {}
+    unawaited(_saveState());
+  }
+
+  void _applyBackgroundRecord(DownloadTask local, bg.TaskRecord record) {
+    switch (record.status) {
+      case bg.TaskStatus.enqueued:
+      case bg.TaskStatus.waitingToRetry:
+        local.state = 'queued';
+        local.paused = false;
+        break;
+      case bg.TaskStatus.running:
+        local.state = 'downloading';
+        local.paused = false;
+        break;
+      case bg.TaskStatus.paused:
+        local.state = 'paused';
+        local.paused = true;
+        break;
+      case bg.TaskStatus.canceled:
+        local.state = 'paused';
+        local.paused = true;
+        break;
+      case bg.TaskStatus.notFound:
+      case bg.TaskStatus.failed:
+        local.state = 'error';
+        local.paused = false;
+        break;
+      case bg.TaskStatus.complete:
+        local.state = 'done';
+        local.paused = false;
+        break;
+    }
+    final expected = record.expectedFileSize;
+    if (expected > 0) {
+      local.total = expected;
+      if (record.progress >= 0) {
+        local.received =
+            (record.progress * expected).round().clamp(0, expected);
+      }
+    } else if (expected <= 0) {
+      if (local.total != null && local.total! <= 0) {
+        local.total = null;
+      }
+    }
+  }
+
+  Future<void> _rehydrateBackgroundTasks() async {
+    for (final task in downloads.value) {
+      final id = _backgroundTaskIdFor(task);
+      if (id != null) {
+        _bgTasksById[id] = task;
+      }
+    }
+    final records = await _bgDownloader.database.allRecords(
+      group: _bgDownloadGroup,
+    );
+    bool changed = false;
+    for (final record in records) {
+      final taskId = record.taskId;
+      final local = _bgTasksById[taskId];
+      if (local == null) {
+        continue;
+      }
+      if (record.task is bg.DownloadTask) {
+        _bgTaskHandles[taskId] = record.task as bg.DownloadTask;
+      }
+      _applyBackgroundRecord(local, record);
+      changed = true;
+    }
+    if (changed) {
+      _notifyDownloadsUpdated();
+      notifyListeners();
+    }
+  }
+
   /// Tracks the last emitted file size for HLS conversion progress. Used to
   /// throttle UI updates during FFmpeg processing so that the UI remains
   /// responsive without flooding with notifications. The key is the task and
@@ -859,12 +1149,68 @@ class AppRepo extends ChangeNotifier {
   /// Initialise the repository. Must be called before using [AppRepo.I].
   /// It loads previously persisted state from disk and prepares directories.
   Future<void> init() async {
+    if (_initialized) {
+      await syncBackgroundDownloader();
+      return;
+    }
+    _initialized = true;
+
     final dir = await getApplicationDocumentsDirectory();
     // Place the state file in the app documents directory. This directory
     // persists across restarts and appears in the Files app on iOS.
     _stateFilePath = '${dir.path}/app_state.json';
     await _loadState();
     await importExistingFiles();
+    await _bgDownloader.ready;
+    if (!_callbacksRegistered) {
+      _bgDownloader.registerCallbacks(
+        group: _bgDownloadGroup,
+        taskStatusCallback: _handleBackgroundStatusUpdate,
+        taskProgressCallback: _handleBackgroundProgressUpdate,
+      );
+      _callbacksRegistered = true;
+    }
+    unawaited(
+      Future<void>.delayed(const Duration(seconds: 5), () async {
+        try {
+          await _bgDownloader.rescheduleKilledTasks();
+        } catch (_) {}
+      }),
+    );
+    await syncBackgroundDownloader();
+  }
+
+  Future<void> syncBackgroundDownloader() async {
+    try {
+      await _bgDownloader.ready;
+      await _bgDownloader.trackTasksInGroup(_bgDownloadGroup);
+      await _bgDownloader.resumeFromBackground();
+      await _rehydrateBackgroundTasks();
+      await debugPrintBgRecords();
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('syncBackgroundDownloader error: $e');
+      }
+    }
+  }
+
+  Future<void> debugPrintBgRecords({bool force = false}) async {
+    if (!force && !kDebugMode) {
+      return;
+    }
+    try {
+      final records = await _bgDownloader.database.allRecords(
+        group: _bgDownloadGroup,
+      );
+      debugPrint('BD DB has ${records.length} records');
+      for (final record in records) {
+        debugPrint(
+          ' - ${record.taskId} status=${record.status} progress=${record.progress} expected=${record.expectedFileSize}',
+        );
+      }
+    } catch (e) {
+      debugPrint('debugPrintBgRecords error: $e');
+    }
   }
 
   /// Returns the persistent downloads directory inside the app's Documents.
@@ -890,6 +1236,187 @@ class AppRepo extends ChangeNotifier {
       await dir.create(recursive: true);
     }
     return dir;
+  }
+
+  Future<Directory> _spritesDir() async {
+    final docs = await getApplicationDocumentsDirectory();
+    final dir = Directory(p.join(docs.path, '.sprites'));
+    if (!await dir.exists()) {
+      await dir.create(recursive: true);
+    }
+    return dir;
+  }
+
+  Future<SpriteSheetInfo?> ensureSpriteSheet(
+    String videoPath, {
+    Duration? duration,
+  }) async {
+    if (videoPath.isEmpty) return null;
+    final file = File(videoPath);
+    if (!await file.exists()) return null;
+    final canonical = _canonicalPath(videoPath);
+
+    final cached = _spriteSheetCache[canonical];
+    if (cached != null && File(cached.imagePath).existsSync()) {
+      return cached;
+    }
+
+    final pending = _spriteSheetPending[canonical];
+    if (pending != null) {
+      return await pending;
+    }
+
+    final completer = Completer<SpriteSheetInfo?>();
+    _spriteSheetPending[canonical] = completer.future;
+
+    () async {
+      try {
+        final spritesDir = await _spritesDir();
+        final key = sha1.convert(utf8.encode(canonical)).toString();
+        final imagePath = p.join(spritesDir.path, '$key.jpg');
+        final metaPath = p.join(spritesDir.path, '$key.json');
+
+        if (await File(imagePath).exists() && await File(metaPath).exists()) {
+          try {
+            final json =
+                jsonDecode(await File(metaPath).readAsString())
+                    as Map<String, dynamic>;
+            final loaded = SpriteSheetInfo.fromJson(json);
+            final info = SpriteSheetInfo(
+              videoPath: canonical,
+              imagePath: loaded.imagePath,
+              columns: loaded.columns,
+              rows: loaded.rows,
+              intervalMs: loaded.intervalMs,
+              frameCount: loaded.frameCount,
+            );
+            if (File(info.imagePath).existsSync()) {
+              _spriteSheetCache[canonical] = info;
+              completer.complete(info);
+              _spriteSheetPending.remove(canonical);
+              return;
+            }
+          } catch (_) {}
+        }
+
+        final resolvedDuration =
+            duration ?? await _probeVideoDuration(videoPath);
+        if (resolvedDuration == null || resolvedDuration <= Duration.zero) {
+          completer.complete(null);
+          _spriteSheetPending.remove(canonical);
+          return;
+        }
+
+        final totalSeconds = math.max(1, resolvedDuration.inSeconds);
+        const maxThumbs = 100;
+        final intervalSec = math.max(1, (totalSeconds / maxThumbs).ceil());
+        final thumbCount = math.max(1, (totalSeconds / intervalSec).ceil());
+        final columns = math.min(10, thumbCount);
+        final rows = math.max(1, ((thumbCount + columns - 1) / columns).ceil());
+        const thumbWidth = 160;
+
+        final frames = <img.Image>[];
+        img.Image? lastFrame;
+        int? tileWidth;
+        int? tileHeight;
+
+        for (var index = 0; index < thumbCount; index++) {
+          final timeMs =
+              ((resolvedDuration.inMilliseconds * index) / thumbCount).round();
+          Uint8List? data;
+          try {
+            data = await VideoThumbnail.thumbnailData(
+              video: videoPath,
+              timeMs: timeMs,
+              imageFormat: ImageFormat.JPEG,
+              maxWidth: thumbWidth,
+              quality: 60,
+            );
+          } catch (_) {
+            data = null;
+          }
+          img.Image? frame;
+          if (data != null && data.isNotEmpty) {
+            try {
+              frame = img.decodeImage(data);
+            } catch (_) {
+              frame = null;
+            }
+          }
+          frame ??= lastFrame;
+          tileWidth ??= frame?.width;
+          tileHeight ??= frame?.height;
+          tileWidth ??= thumbWidth;
+          tileHeight ??= math.max((thumbWidth * 9 / 16).round(), 1);
+          if (frame == null) {
+            frame = img.Image(
+              width: tileWidth!,
+              height: tileHeight!,
+              numChannels: 3,
+            );
+          } else if (frame.width != tileWidth || frame.height != tileHeight) {
+            frame = img.copyResize(
+              frame,
+              width: tileWidth!,
+              height: tileHeight!,
+              interpolation: img.Interpolation.linear,
+            );
+          }
+          frames.add(frame);
+          lastFrame = frame;
+        }
+
+        if (frames.isEmpty || tileWidth == null || tileHeight == null) {
+          completer.complete(null);
+          _spriteSheetPending.remove(canonical);
+          return;
+        }
+
+        final sheet = img.Image(
+          width: tileWidth! * columns,
+          height: tileHeight! * rows,
+          numChannels: 3,
+        );
+        for (var idx = 0; idx < frames.length; idx++) {
+          final frame = frames[idx];
+          final row = idx ~/ columns;
+          final col = idx % columns;
+          final offsetX = col * tileWidth!;
+          final offsetY = row * tileHeight!;
+          for (var y = 0; y < tileHeight!; y++) {
+            for (var x = 0; x < tileWidth!; x++) {
+              final pixel = frame.getPixel(x, y);
+              sheet.setPixel(offsetX + x, offsetY + y, pixel);
+            }
+          }
+        }
+
+        final encoded = img.encodeJpg(sheet, quality: 80);
+        await File(imagePath).writeAsBytes(encoded, flush: true);
+
+        final info = SpriteSheetInfo(
+          videoPath: canonical,
+          imagePath: imagePath,
+          columns: columns,
+          rows: rows,
+          intervalMs: intervalSec * 1000,
+          frameCount: thumbCount,
+        );
+        try {
+          await File(
+            metaPath,
+          ).writeAsString(jsonEncode(info.toJson())).catchError((_) {});
+        } catch (_) {}
+        _spriteSheetCache[canonical] = info;
+        completer.complete(info);
+      } catch (_) {
+        completer.complete(null);
+      } finally {
+        _spriteSheetPending.remove(canonical);
+      }
+    }();
+
+    return await completer.future;
   }
 
   Future<void> _ensureThumbnailPersistence(DownloadTask t) async {
@@ -931,6 +1458,19 @@ class AppRepo extends ChangeNotifier {
       // If copying fails keep the existing thumbnail path so a later rescan
       // can regenerate it instead of leaving the task without a preview.
     }
+  }
+
+  Future<Duration?> _probeVideoDuration(String path) async {
+    try {
+      final probe = await FFprobeKit.getMediaInformation(path);
+      final info = probe.getMediaInformation();
+      final durationStr = info?.getDuration();
+      final seconds = double.tryParse(durationStr ?? '');
+      if (seconds != null && seconds.isFinite && seconds > 0) {
+        return Duration(milliseconds: (seconds * 1000).round());
+      }
+    } catch (_) {}
+    return null;
   }
 
   /// Copies an externally provided media file (from iOS share extension or
@@ -2386,24 +2926,21 @@ class AppRepo extends ChangeNotifier {
           capturePoint = math.max(durationSeconds - 0.1, 0.0);
         }
       }
+      final int? timeMs =
+          durationSeconds != null
+              ? math.max(0, (durationSeconds * capturePoint * 1000).round())
+              : null;
 
-      final cmd =
-          "-y -loglevel error -ss ${capturePoint.toStringAsFixed(2)} -i '${t.savePath}' "
-          "-frames:v 1 -vf \"scale=320:-1:flags=lanczos\" -q:v 3 '$thumbPath'";
-      final session = await FFmpegKit.execute(cmd);
-      ReturnCode? rc;
-      try {
-        rc = await session.getReturnCode();
-      } on PlatformException catch (err, stack) {
-        if (kDebugMode) {
-          debugPrint(
-            'FFmpegKit session result unavailable: $err\n${stack.toString()}',
-          );
-        }
-      }
-      final thumbFile = File(thumbPath);
-      final thumbExists = thumbFile.existsSync();
-      if ((rc == null || rc.isValueSuccess()) && thumbExists) {
+      final Uint8List? data = await VideoThumbnail.thumbnailData(
+        video: t.savePath,
+        timeMs: timeMs ?? 0,
+        imageFormat: ImageFormat.JPEG,
+        maxWidth: 320,
+        quality: 75,
+      );
+      if (data != null && data.isNotEmpty) {
+        final file = File(thumbPath);
+        await file.writeAsBytes(data, flush: true);
         final previousThumb = t.thumbnailPath;
         t.thumbnailPath = thumbPath;
         if (previousThumb != null && previousThumb != thumbPath) {
@@ -2431,9 +2968,14 @@ class AppRepo extends ChangeNotifier {
     try {
       downloads.value = [...downloads.value];
       notifyListeners();
-      // ignore: unawaited_futures
-      _saveState();
+      unawaited(_saveState());
     } catch (_) {}
+
+    if (t.type == 'video') {
+      try {
+        await ensureSpriteSheet(t.savePath, duration: t.duration);
+      } catch (_) {}
+    }
   }
 
   /// Change the display name of a task. Updates persistent state.
@@ -2596,6 +3138,13 @@ class AppRepo extends ChangeNotifier {
         try {
           cancelToken.cancel('task removed');
         } catch (_) {}
+      }
+      final bgId = _backgroundTaskIdFor(t);
+      if (bgId != null) {
+        try {
+          await _bgDownloader.cancelTaskWithId(bgId);
+        } catch (_) {}
+        _detachBackgroundTask(bgId);
       }
       final ffmpegSessionId = _ffmpegSessions.remove(t);
       if (ffmpegSessionId != null) {
@@ -3221,6 +3770,9 @@ class AppRepo extends ChangeNotifier {
   /// started and tasks that were mid-download will continue from where they
   /// left off when possible.
   Future<void> resumeIncompleteDownloads() async {
+    try {
+      await _bgDownloader.ready;
+    } catch (_) {}
     final tasks = List<DownloadTask>.from(downloads.value);
     for (final task in tasks) {
       if (task.state == 'paused' || task.paused) {
@@ -4043,8 +4595,16 @@ class AppRepo extends ChangeNotifier {
     if (t.state != 'downloading') return;
     try {
       if (t.kind == 'file') {
-        final token = _dioTokens.remove(t);
-        if (token != null && !token.isCancelled) token.cancel('user pause');
+        final handle = await _backgroundHandleForTask(t);
+        if (handle != null) {
+          await _bgDownloader.pause(handle);
+        } else {
+          final bgId = _backgroundTaskIdFor(t);
+          if (bgId != null) {
+            await _bgDownloader.cancelTaskWithId(bgId);
+            _detachBackgroundTask(bgId);
+          }
+        }
         t.paused = true;
         t.state = 'paused';
       } else if (t.kind == 'hls') {
@@ -4090,6 +4650,64 @@ class AppRepo extends ChangeNotifier {
     } else {
       _runTask(t);
     }
+  }
+
+  Future<void> retryTask(DownloadTask t) async {
+    final state = t.state.toLowerCase();
+    if (state == 'downloading' && !t.paused) {
+      await pauseTask(t);
+    }
+
+    final token = _dioTokens.remove(t);
+    if (token != null && !token.isCancelled) {
+      try {
+        token.cancel('retry');
+      } catch (_) {}
+    }
+
+    final bgId = _backgroundTaskIdFor(t);
+    if (bgId != null) {
+      try {
+        await _bgDownloader.cancelTaskWithId(bgId);
+      } catch (_) {}
+      _detachBackgroundTask(bgId);
+    }
+
+    if (t.kind == 'hls') {
+      await _clearHlsManifest(t);
+      await _clearHlsImageResume(t);
+      await _cleanupHlsWorkspace(t);
+      _hlsActiveOutputs.remove(t);
+      _lastHlsSize.remove(t);
+    } else if (t.kind == 'yt-merge') {
+      await _cleanupYtMergeWorkspace(t);
+    }
+
+    if (t.kind == 'hls' || t.kind == 'dash' || t.kind == 'yt-merge') {
+      final ffmpegId = _ffmpegSessions.remove(t);
+      if (ffmpegId != null) {
+        try {
+          await FFmpegKit.cancel(ffmpegId);
+        } catch (_) {}
+      }
+    }
+
+    try {
+      final file = File(t.savePath);
+      if (await file.exists()) {
+        await file.delete();
+      }
+    } catch (_) {}
+
+    t.state = 'queued';
+    t.paused = false;
+    t.received = 0;
+    t.total = null;
+    t.progressUnit = null;
+    _notifyDownloadsUpdated();
+    notifyListeners();
+    await _saveState();
+    unawaited(_runTask(t));
   }
 
   /// Runs the download task. For HLS, uses FFmpeg to remux the m3u8 playlist
@@ -4524,6 +5142,7 @@ class AppRepo extends ChangeNotifier {
             }
           }
           await _saveState();
+          t.extra?.remove('isConverting');
         },
         (log) {
           if (kDebugMode) print('ffmpeg(dash): ${log.getMessage()}');
@@ -5101,6 +5720,10 @@ class AppRepo extends ChangeNotifier {
   }
 
   Future<void> _runTaskHls(DownloadTask t) async {
+    // If an FFmpeg session is already attached to this task, let it finish.
+    if (_ffmpegSessions.containsKey(t)) {
+      return;
+    }
     try {
       // Detect suspicious .jpeg segments and pre-sanitize if needed
       String inputUrl = t.url;
@@ -5269,6 +5892,7 @@ class AppRepo extends ChangeNotifier {
               _notifyDownloadsUpdated();
               notifyListeners();
               await _saveState();
+              t.extra?.remove('isConverting');
               return;
             }
             t.state = 'done';
@@ -5282,6 +5906,7 @@ class AppRepo extends ChangeNotifier {
                 }
               }
             } catch (_) {}
+            t.extra?.remove('isConverting');
             t.progressUnit = null;
             _lastHlsSize.remove(t);
             _normalizeTaskType(t);
@@ -5291,9 +5916,17 @@ class AppRepo extends ChangeNotifier {
             await _generatePreview(t);
             _maybeNotifyDownloadComplete(t);
             try {
+              final analyticsPath = () {
+                final base = p.basename(t.savePath);
+                return base.length <= 100 ? base : base.substring(0, 100);
+              }();
               await FirebaseAnalytics.instance.logEvent(
                 name: 'download_complete',
-                parameters: {'kind': 'hls', 'type': t.type, 'path': t.savePath},
+                parameters: {
+                  'kind': 'hls',
+                  'type': t.type,
+                  'path': analyticsPath,
+                },
               );
             } catch (_) {}
             if (autoSave.value) {
@@ -5306,6 +5939,7 @@ class AppRepo extends ChangeNotifier {
           } else {
             if (t.state == 'paused') {
               await recordPartial();
+              t.extra?.remove('isConverting');
             } else {
               t.state = 'error';
               _notifyDownloadsUpdated();
@@ -5361,6 +5995,7 @@ class AppRepo extends ChangeNotifier {
                           }
                         }
                       } catch (_) {}
+                      t.extra?.remove('isConverting');
                       t.progressUnit = null;
                       _lastHlsSize.remove(t);
                       _normalizeTaskType(t);
@@ -5391,6 +6026,40 @@ class AppRepo extends ChangeNotifier {
             return;
           }
           final activePath = _hlsActiveOutputs[t] ?? t.savePath;
+          bool emittedProgress = false;
+          try {
+            if ((t.progressUnit == 'time-ms') && (t.total ?? 0) > 0) {
+              final raw = stat.getTime();
+              if (raw != null) {
+                final num rawNum = raw;
+                double candidate = rawNum.toDouble();
+                if (!candidate.isFinite) {
+                  candidate = 0;
+                }
+                final int total = t.total!;
+                if (candidate > total * 4 &&
+                    (candidate / 1000).round() <= total) {
+                  candidate /= 1000;
+                } else if (candidate > total * 4 &&
+                    (candidate / 1000).round() > total &&
+                    (candidate / 1000000).round() <= total) {
+                  candidate /= 1000000;
+                }
+                final int ms = math.max(0, candidate.round());
+                final int updated = math.min(total, math.max(0, resumeMs + ms));
+                if (updated > t.received) {
+                  final int previous = t.received;
+                  t.received = updated;
+                  _notifyDownloadsUpdated();
+                  emittedProgress = true;
+                  if (updated - previous >= 1000) {
+                    notifyListeners();
+                  }
+                }
+              }
+            }
+          } catch (_) {}
+
           try {
             final f = File(activePath);
             if (await f.exists()) {
@@ -5399,20 +6068,10 @@ class AppRepo extends ChangeNotifier {
 
               if (len >= last + (16 * 1024)) {
                 _lastHlsSize[t] = len;
-                _notifyDownloadsUpdated();
+                if (!emittedProgress) {
+                  _notifyDownloadsUpdated();
+                }
                 notifyListeners();
-              }
-            }
-          } catch (_) {}
-          try {
-            final ms = stat.getTime();
-            if (ms != null &&
-                (t.progressUnit == 'time-ms') &&
-                (t.total ?? 0) > 0) {
-              final newMs = (resumeMs + ms).clamp(0, t.total!);
-              if (newMs > t.received) {
-                t.received = newMs;
-                _notifyDownloadsUpdated();
               }
             }
           } catch (_) {}
@@ -5423,13 +6082,41 @@ class AppRepo extends ChangeNotifier {
     } on _DownloadCancelled {
       return;
     } catch (e) {
-      if (t.state != 'paused') {
+      if (t.state == 'paused') {
+        return;
+      }
+
+      final alreadyDone = t.state == 'done';
+      bool finalized = false;
+      try {
+        final file = File(t.savePath);
+        if (await file.exists()) {
+          final len = await file.length();
+          if (len > 0) {
+            t.received = len;
+            t.total = len;
+            if (!alreadyDone) {
+              t.state = 'done';
+              _normalizeTaskType(t);
+              _notifyDownloadsUpdated();
+              notifyListeners();
+              await _generatePreview(t);
+              _maybeNotifyDownloadComplete(t);
+            }
+            finalized = true;
+          }
+        }
+      } catch (_) {}
+
+      t.extra?.remove('isConverting');
+
+      if (!finalized && !alreadyDone) {
         t.state = 'error';
         _notifyDownloadsUpdated();
         notifyListeners();
-
-        await _saveState();
       }
+
+      await _saveState();
     }
   }
 
@@ -5598,14 +6285,32 @@ class AppRepo extends ChangeNotifier {
         await _saveHlsImageResume(t, resumeData);
       }
       await _saveHlsImageResume(t, resumeData);
-      t.received = t.total ?? downloadedCount;
-      t.progressUnit = 'hls-converting';
+      // Reset progress to reflect the conversion stage using media duration as the unit.
+      final baseDuration = durations.isNotEmpty ? durations.first : 4.0;
+      final double totalDurationSeconds =
+          durations.isEmpty
+              ? baseDuration * frameNames.length
+              : durations.fold<double>(
+                0.0,
+                (sum, value) => sum + (value > 0 ? value : baseDuration),
+              );
+      final int computedTotalMs =
+          totalDurationSeconds.isFinite
+              ? (totalDurationSeconds * 1000).round()
+              : 0;
+      final int conversionTotalMs =
+          computedTotalMs > 0
+              ? computedTotalMs
+              : math.max(frameNames.length, 1) * 1000;
+      t.progressUnit = 'time-ms';
+      t.total = conversionTotalMs;
+      t.received = 0;
+      (t.extra ??= {})['isConverting'] = true;
       _lastHlsSize[t] = 0;
       _notifyDownloadsUpdated();
       notifyListeners();
       // Determine whether all durations are effectively identical so we can
       // leverage the lightweight image2 demuxer with a constant framerate.
-      final baseDuration = durations.isNotEmpty ? durations.first : 4.0;
       final uniformDuration = durations.every(
         (d) => (d - baseDuration).abs() < 0.001 && d > 0,
       );
@@ -5669,6 +6374,41 @@ class AppRepo extends ChangeNotifier {
               if (t.state != 'downloading') {
                 return;
               }
+
+              bool emittedProgress = false;
+              try {
+                if ((t.progressUnit == 'time-ms') && (t.total ?? 0) > 0) {
+                  final raw = stat.getTime();
+                  if (raw != null) {
+                    final num rawNum = raw;
+                    double candidate = rawNum.toDouble();
+                    if (!candidate.isFinite) {
+                      candidate = 0;
+                    }
+                    final int total = t.total!;
+                    if (candidate > total * 4 &&
+                        (candidate / 1000).round() <= total) {
+                      candidate /= 1000;
+                    } else if (candidate > total * 4 &&
+                        (candidate / 1000).round() > total &&
+                        (candidate / 1000000).round() <= total) {
+                      candidate /= 1000000;
+                    }
+                    final int ms = math.max(0, candidate.round());
+                    final int updated = math.min(total, ms);
+                    if (updated > t.received) {
+                      final int previous = t.received;
+                      t.received = updated;
+                      _notifyDownloadsUpdated();
+                      emittedProgress = true;
+                      if (updated - previous >= 1000) {
+                        notifyListeners();
+                      }
+                    }
+                  }
+                }
+              } catch (_) {}
+
               try {
                 final output = File(t.savePath);
                 if (await output.exists()) {
@@ -5676,8 +6416,9 @@ class AppRepo extends ChangeNotifier {
                   final last = _lastHlsSize[t] ?? 0;
                   if (len > last) {
                     _lastHlsSize[t] = len;
-                    t.received = len;
-                    _notifyDownloadsUpdated();
+                    if (!emittedProgress) {
+                      _notifyDownloadsUpdated();
+                    }
                     if (len - last >= 256 * 1024) {
                       notifyListeners();
                     }
@@ -5810,232 +6551,168 @@ class AppRepo extends ChangeNotifier {
 
   Future<void> _runTaskFile(DownloadTask t, {required bool resume}) async {
     try {
-      var file = File(t.savePath);
-      int start = 0;
-      if (resume && await file.exists()) {
-        try {
-          start = await file.length();
-        } catch (_) {
-          start = 0;
+      if (resume) {
+        final hadBgId = _backgroundTaskIdFor(t) != null;
+        final resumed = await _tryResumeBackgroundDownload(t);
+        if (resumed == null && hadBgId) {
+          // Background downloader metadata not yet available; retry after
+          // the next sync instead of enqueuing a duplicate task.
+          return;
         }
-      } else {
-        // ensure file exists
-        if (!await file.exists()) {
-          await file.create(recursive: true);
-        } else if (!resume) {
-          await file.writeAsBytes(const [], flush: true); // truncate
+        if (resumed == true) {
+          return;
         }
       }
-      final token = CancelToken();
-      _dioTokens[t] = token;
-      final dio = _createDio();
-      // Inject UA/Referer/Cookie headers for direct file download
-      final baseHeaders = await _headersFor(t.url);
-      final hdrs = Map<String, String>.from(baseHeaders);
-      // 若未知總長，先以 HEAD 或 Range:0-0 試探取得總長，供 UI 顯示百分比
-      if (t.total == null || t.total == 0) {
-        try {
-          final head = await dio.head(
-            t.url,
-            options: Options(
-              headers: hdrs,
-              followRedirects: true,
-              validateStatus: (_) => true,
-            ),
-          );
-          final cl = head.headers.value(HttpHeaders.contentLengthHeader);
-          final n = int.tryParse(cl ?? '');
-          if (n != null && n > 0) {
-            t.total = n;
-            _notifyDownloadsUpdated();
-            notifyListeners();
-          } else {
-            // 部分站點不回 Content-Length；改用 Range 試探從 Content-Range 取總長
-            final hdrs2 = Map<String, String>.from(hdrs);
-            hdrs2[HttpHeaders.rangeHeader] = 'bytes=0-0';
-            final probe = await dio.get<ResponseBody>(
-              t.url,
-              options: Options(
-                headers: hdrs2,
-                responseType: ResponseType.stream,
-                followRedirects: true,
-                validateStatus: (_) => true,
-              ),
-            );
-            final cr = probe.headers.value(HttpHeaders.contentRangeHeader);
-            if (cr != null && cr.contains('/')) {
-              final totalStr = cr.split('/').last.trim();
-              final tot = int.tryParse(totalStr);
-              if (tot != null && tot > 0) {
-                t.total = tot;
-                _notifyDownloadsUpdated();
-                notifyListeners();
-              }
-            }
-          }
-        } catch (_) {}
-      }
-      if (start > 0) hdrs[HttpHeaders.rangeHeader] = 'bytes=$start-';
-      final opts = Options(
-        responseType: ResponseType.stream,
-        headers: hdrs,
-        followRedirects: true,
-      );
-      final resp = await dio.get<ResponseBody>(
-        t.url,
-        options: opts,
-        cancelToken: token,
-      );
-      final headers = resp.headers;
-      final contentType = headers.value(HttpHeaders.contentTypeHeader);
-      final contentDisposition = headers.value('content-disposition');
-      final beforeType = t.type;
-      var newType = beforeType;
-      final filename = _filenameFromContentDisposition(contentDisposition);
-      final filenameExt = _extensionFromFilename(filename);
-      final headerType =
-          filenameExt != null ? _typeFromExtension(filenameExt) : null;
-      if (headerType != null && headerType != 'file') {
-        newType = headerType;
-      }
-      if (contentType != null) {
-        final lowerCt = contentType.toLowerCase();
-        if (lowerCt.startsWith('audio/')) {
-          newType = 'audio';
-        } else if (lowerCt.startsWith('image/')) {
-          newType = 'image';
-        } else if (lowerCt.startsWith('video/') &&
-            (newType == beforeType ||
-                (newType != 'audio' && newType != 'image'))) {
-          newType = 'video';
-        }
-      }
-      if (newType != beforeType) {
-        t.type = newType;
-        _normalizeTaskType(t);
-        _notifyDownloadsUpdated();
-        notifyListeners();
-      }
-      if (filename != null && filename.isNotEmpty) {
-        final shouldUpdateName = (t.name == null || t.name!.isEmpty);
-        if (shouldUpdateName) {
-          t.name = filename;
-          _notifyDownloadsUpdated();
-          notifyListeners();
-        }
-      }
-      final suggestedExt =
-          filenameExt ??
-          _extensionFromContentType(contentType) ??
-          _defaultExtensionForType(t.type);
-      final currentExt = p.extension(t.savePath).replaceFirst('.', '');
-      if ((currentExt.isEmpty || currentExt == 'bin') &&
-          suggestedExt.isNotEmpty &&
-          suggestedExt != 'bin') {
-        try {
-          final newPath = p.setExtension(t.savePath, '.$suggestedExt');
-          await file.rename(newPath);
-          final canonical = _canonicalPath(newPath);
-          t.savePath = canonical;
-          file = File(canonical);
-          start = resume && await file.exists() ? await file.length() : start;
-          _normalizeTaskType(t);
-          _notifyDownloadsUpdated();
-          notifyListeners();
-        } catch (_) {}
-      }
-      final sink = file.openWrite(mode: FileMode.append);
-      int receivedSince = 0;
-      final totalHeader = resp.headers.value(HttpHeaders.contentLengthHeader);
-      if (totalHeader != null) {
-        // If server returns remaining length when ranged, total = start + remaining.
-        final remaining = int.tryParse(totalHeader) ?? 0;
-        t.total = remaining > 0 ? start + remaining : t.total;
-      }
-      await for (final chunk in resp.data!.stream) {
-        receivedSince += chunk.length;
-        t.received = start + receivedSince;
-        sink.add(chunk);
-        // propagate progress updates to downloads list
-        _notifyDownloadsUpdated();
-        // still throttle UI updates for performance; notify global listeners occasionally
-        if (t.received % (128 * 1024) == 0) {
-          notifyListeners();
-        }
-        if (token.isCancelled) {
-          break;
-        }
-      }
-      await sink.flush();
-      await sink.close();
-      final detectedExt =
-          _extensionFromContentType(contentType) ??
-          _detectExtensionFromFile(file.path);
-      final currentExtAfter = p.extension(file.path).replaceFirst('.', '');
-      if (detectedExt != null &&
-          detectedExt.isNotEmpty &&
-          detectedExt != 'bin' &&
-          currentExtAfter != detectedExt) {
-        try {
-          final newPath = p.setExtension(file.path, '.$detectedExt');
-          await file.rename(newPath);
-          final canonical = _canonicalPath(newPath);
-          t.savePath = canonical;
-          file = File(canonical);
-          _normalizeTaskType(t);
-          _notifyDownloadsUpdated();
-          notifyListeners();
-        } catch (_) {}
-      }
-      _dioTokens.remove(t);
-      if (token.isCancelled) {
-        // paused by user; keep state as paused
-        return;
-      }
-      t.state = 'done';
-      _normalizeTaskType(t);
-      // final update of downloads list and global listeners
-      _notifyDownloadsUpdated();
-      notifyListeners();
-      await _generatePreview(t);
-      _maybeNotifyDownloadComplete(t);
-      try {
-        await FirebaseAnalytics.instance.logEvent(
-          name: 'download_complete',
-          parameters: {
-            'kind': 'file',
-            'type': t.type,
-            'bytes': await File(t.savePath).length(),
-          },
-        );
-      } catch (_) {}
-      if (autoSave.value) {
-        try {
-          await saveFileToGallery(t.savePath);
-        } catch (e) {
-          if (kDebugMode) print('Failed to save to gallery: $e');
-        }
-      }
-      await _saveState();
-    } catch (e) {
+      await _startBackgroundDownload(t);
+    } catch (_) {
       if (t.state != 'paused') {
         t.state = 'error';
+        t.paused = false;
         _notifyDownloadsUpdated();
         notifyListeners();
-        if (kDebugMode) print('download error(file): $e');
         await _saveState();
-        try {
-          await FirebaseAnalytics.instance.logEvent(
-            name: 'download_error',
-            parameters: {'kind': 'file'},
-          );
-        } catch (_) {}
-        // NOTE: For Flutter Web builds, consider falling back to the `download` package:
-        //   final bytes = await http.readBytes(Uri.parse(t.url));
-        //   web_download.download(bytes, '${p.basename(t.savePath)}');
-        // Mobile (iOS/Android) cannot use `download` for filesystem writes.
       }
     }
+  }
+
+  Future<bool?> _tryResumeBackgroundDownload(DownloadTask task) async {
+    final existingId = _backgroundTaskIdFor(task);
+    if (existingId == null) {
+      return false;
+    }
+    try {
+      await _bgDownloader.ready;
+    } catch (_) {}
+    final handle = await _backgroundHandleForTask(task);
+    if (handle == null) {
+      return null;
+    }
+    _bgTasksById[handle.taskId] = task;
+
+    bg.TaskStatus? status;
+    try {
+      final record = await _bgDownloader.database.recordForId(handle.taskId);
+      if (record != null) {
+        status = record.status;
+        _applyBackgroundRecord(task, record);
+      }
+    } catch (_) {}
+
+    switch (status) {
+      case bg.TaskStatus.enqueued:
+      case bg.TaskStatus.waitingToRetry:
+      case bg.TaskStatus.running:
+        return true;
+      case bg.TaskStatus.complete:
+        if (handle is bg.DownloadTask) {
+          unawaited(_onBackgroundTaskComplete(handle, task));
+        } else {
+          _detachBackgroundTask(handle.taskId);
+        }
+        return true;
+      case bg.TaskStatus.paused:
+        final ok = await _bgDownloader.resume(handle);
+        if (!ok) {
+          _detachBackgroundTask(handle.taskId);
+        }
+        return ok;
+      case bg.TaskStatus.canceled:
+        task.state = 'paused';
+        task.paused = true;
+        _notifyDownloadsUpdated();
+        notifyListeners();
+        _detachBackgroundTask(handle.taskId);
+        return true;
+      case bg.TaskStatus.failed:
+      case bg.TaskStatus.notFound:
+        _detachBackgroundTask(handle.taskId);
+        return false;
+      case null:
+        // If we cannot determine status, assume the native task is still active
+        // to avoid spawning a duplicate download. The periodic sync will update
+        // progress once the downloader reports again.
+        return true;
+    }
+  }
+
+  Future<void> _startBackgroundDownload(DownloadTask task) async {
+    final file = File(task.savePath);
+    final parent = file.parent;
+    if (!await parent.exists()) {
+      await parent.create(recursive: true);
+    }
+    final headers = await _headersFor(task.url);
+    final split = await _backgroundPathComponents(task.savePath);
+    final displayName =
+        task.name?.trim().isNotEmpty == true
+            ? task.name!.trim()
+            : p.basename(task.savePath);
+    final bgTask = bg.DownloadTask(
+      url: task.url,
+      filename: split.$3,
+      directory: split.$2,
+      baseDirectory: split.$1,
+      headers: headers,
+      group: _bgDownloadGroup,
+      updates: bg.Updates.statusAndProgress,
+      allowPause: true,
+      displayName: displayName,
+      metaData: task.savePath,
+    );
+    _registerBackgroundTaskHandle(task, bgTask);
+    final enqueued = await _bgDownloader.enqueue(bgTask);
+    if (!enqueued) {
+      _detachBackgroundTask(bgTask.taskId);
+      throw Exception('enqueue_failed');
+    }
+    task.state = 'queued';
+    task.paused = false;
+    task.received = 0;
+    task.total = null;
+    _notifyDownloadsUpdated();
+    notifyListeners();
+    await _saveState();
+  }
+
+  Future<(bg.BaseDirectory, String, String)> _backgroundPathComponents(
+    String absolutePath,
+  ) async {
+    final normalizedPath = p.normalize(absolutePath);
+    final dirPath = p.dirname(normalizedPath);
+    final fileName = p.basename(normalizedPath);
+
+    try {
+      final docs = await getApplicationDocumentsDirectory();
+      final docsPath = p.normalize(docs.path);
+      if (p.isWithin(docsPath, dirPath) || dirPath == docsPath) {
+        final relative = p.relative(dirPath, from: docsPath);
+        final directory = relative == '.' ? '' : relative;
+        return (bg.BaseDirectory.applicationDocuments, directory, fileName);
+      }
+    } catch (_) {}
+
+    try {
+      final support = await getApplicationSupportDirectory();
+      final supportPath = p.normalize(support.path);
+      if (p.isWithin(supportPath, dirPath) || dirPath == supportPath) {
+        final relative = p.relative(dirPath, from: supportPath);
+        final directory = relative == '.' ? '' : relative;
+        return (bg.BaseDirectory.applicationSupport, directory, fileName);
+      }
+    } catch (_) {}
+
+    try {
+      final temp = await getTemporaryDirectory();
+      final tempPath = p.normalize(temp.path);
+      if (p.isWithin(tempPath, dirPath) || dirPath == tempPath) {
+        final relative = p.relative(dirPath, from: tempPath);
+        final directory = relative == '.' ? '' : relative;
+        return (bg.BaseDirectory.temporary, directory, fileName);
+      }
+    } catch (_) {}
+
+    final directory = dirPath.startsWith('/') ? dirPath.substring(1) : dirPath;
+    return (bg.BaseDirectory.root, directory, fileName);
   }
 }
 

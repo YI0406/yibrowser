@@ -35,9 +35,19 @@ import AVFoundation
                withId: "airplay-route-picker"
              )
            }
+           BackgroundDownloadManager.shared.configure(messenger: controller.binaryMessenger)
     }
     // 提醒（僅註解）：Xcode > Signing & Capabilities 要勾選：
     // Background Modes -> Audio, AirPlay, and Picture in Picture
     return result
+  }
+
+  override func application(
+    _ application: UIApplication,
+    handleEventsForBackgroundURLSession identifier: String,
+    completionHandler: @escaping () -> Void
+  ) {
+    super.application(application, handleEventsForBackgroundURLSession: identifier, completionHandler: completionHandler)
+    BackgroundDownloadManager.shared.handleEventsForBackgroundSession(completion: completionHandler)
   }
 }

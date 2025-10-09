@@ -1603,9 +1603,9 @@ final Map<String, Map<AppLanguage, String>> _translations = {
     AppLanguage.en: 'Play video',
   },
   'browser.context.downloadVideo': {
-    AppLanguage.zhHant: '下載影片',
-    AppLanguage.zhHans: '下载影片',
-    AppLanguage.en: 'Download video',
+    AppLanguage.zhHant: '串流影片',
+    AppLanguage.zhHans: '串流影片',
+    AppLanguage.en: 'Streaming Video',
   },
   'browser.context.downloadImage': {
     AppLanguage.zhHant: '下載圖片',
@@ -1727,6 +1727,11 @@ final Map<String, Map<AppLanguage, String>> _translations = {
     AppLanguage.zhHant: '下載',
     AppLanguage.zhHans: '下载',
     AppLanguage.en: 'Download',
+  },
+  'common.retry': {
+    AppLanguage.zhHant: '重試',
+    AppLanguage.zhHans: '重试',
+    AppLanguage.en: 'Retry',
   },
   'common.resume': {
     AppLanguage.zhHant: '繼續',
@@ -2060,10 +2065,10 @@ final Map<String, Map<AppLanguage, String>> _translations = {
     AppLanguage.en: 'Cleared all resources',
   },
   'browser.dialog.adblocker.bullet1': {
-    AppLanguage.zhHant: '1. 大部分影片長按即可跳出提示視窗，再依照需求操作。',
-    AppLanguage.zhHans: '1. 大部分影片长按即可跳出提示视窗，再依照需求操作。',
+    AppLanguage.zhHant: '1. 播放中的影片可自動偵測，亦可在右上角功能選單中關閉此功能。偵測到的影片，使用者可依照需求進行操作。',
+    AppLanguage.zhHans: '1. 播放中的影片可自动侦测，也可在右上角功能菜单中关闭此功能。侦测到的视频，用户可根据需求进行操作。',
     AppLanguage.en:
-        '1. Long-press most videos to show the action sheet and proceed as needed.',
+        '1. Playing videos can be automatically detected, and this feature can be turned off from the top-right menu. Detected videos can then be managed as needed by the user.',
   },
   'browser.dialog.adblocker.bullet2': {
     AppLanguage.zhHant: '2. 有些網站不能使用 Adblock 否則無法播放影片，或改用其他過濾規則。',
@@ -2072,10 +2077,10 @@ final Map<String, Map<AppLanguage, String>> _translations = {
         '2. Some sites break with Adblock; disable it there or try different filters.',
   },
   'browser.dialog.adblocker.bullet3': {
-    AppLanguage.zhHant: '3. 推特等已安裝的應用程式網站可長按以新分頁開啟正常瀏覽，並視需求開啟阻擋轉跳外部 App 功能。',
-    AppLanguage.zhHans: '3. 推特等已安装的应用程式网站可长按以新分页开启正常浏览，并视需求开启阻挡转跳外部 App 功能。',
+    AppLanguage.zhHant: '3. 已安裝的應用程式網站可長按以新分頁開啟正常瀏覽，並視需求開啟阻擋轉跳外部 App 功能。',
+    AppLanguage.zhHans: '3. 已安装的应用程式网站可长按以新分页开启正常浏览，并视需求开启阻挡转跳外部 App 功能。',
     AppLanguage.en:
-        '3. For installed apps like Twitter, long-press to open in a new tab and enable external-app blocking if needed.',
+        '3. Installed app websites can be long-pressed to open in a new tab for normal browsing, and the “Block external app redirects” feature can be enabled as needed.',
   },
   'browser.dialog.adblocker.bullet4': {
     AppLanguage.zhHant: '4. 請尊重智慧財產權，切勿違法盜取他人資源，用戶行為與本應用無關。',

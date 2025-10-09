@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math';
+import 'dart:typed_data';
 import 'dart:ui';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/gestures.dart';
@@ -264,6 +265,27 @@ class NativePlayerController extends ValueNotifier<NativePlayerValue> {
   Future<void> setPlaybackRate(double rate) async {
     await _playerChannel.invokeMethod('setRate', rate);
     value = value.copyWith(speed: rate);
+  }
+
+  Future<Uint8List?> previewImageAt(
+    Duration position, {
+    double maxWidth = 240,
+  }) async {
+    if (defaultTargetPlatform != TargetPlatform.iOS) return null;
+    if (!value.isInitialized) return null;
+    try {
+      final result = await _playerChannel.invokeMethod<Uint8List>(
+        'previewAt',
+        {
+          'positionMs': position.inMilliseconds,
+          'maxWidth': maxWidth,
+        },
+      );
+      return result;
+    } catch (err, stack) {
+      debugPrint('previewImageAt failed: $err\n$stack');
+      return null;
+    }
   }
 
   Future<void> setVolume(double volume) async {

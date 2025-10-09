@@ -28,6 +28,7 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
       if let airplayRegistrar = flutterVC.registrar(forPlugin: "AirPlayRoutePickerFactory") {
            airplayRegistrar.register(AirPlayRoutePickerFactory(), withId: "airplay-route-picker")
          }
+    BackgroundDownloadManager.shared.configure(messenger: flutterVC.binaryMessenger)
     let channel = FlutterMethodChannel(
       name: "app.quick_actions_bridge",
       binaryMessenger: flutterVC.binaryMessenger

@@ -23,18 +23,12 @@ import 'soure.dart';
 import 'media.dart';
 import 'video_player_page.dart';
 import 'image_preview_page.dart';
+import 'package:pointer_interceptor/pointer_interceptor.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'package:shared_preferences/shared_preferences.dart';
 import 'app_localizations.dart';
 import 'yt.dart';
-
-// --- Top-level helper for measuring instantaneous rates (bytes per second)
-class _RateSnapshot {
-  final int bytes;
-  final DateTime ts;
-  const _RateSnapshot(this.bytes, this.ts);
-}
 
 // Represents one browser tab's state (URL text controller, progress, title, etc.)
 class _TabData {
@@ -111,6 +105,204 @@ class _ExternalNavigationIntent {
     return _ExternalNavigationIntent(
       shouldBlock: shouldBlock || other.shouldBlock,
       isAppLink: isAppLink || other.isAppLink,
+    );
+  }
+}
+
+class _PointerInterceptOverlayFrame extends StatelessWidget {
+  final WidgetBuilder builder;
+  final Alignment alignment;
+  final Color barrierColor;
+  final bool barrierDismissible;
+  final bool enableDragToDismiss;
+  final Animation<Offset>? slideAnimation;
+  final bool useSafeArea;
+
+  const _PointerInterceptOverlayFrame({
+    required this.builder,
+    required this.alignment,
+    required this.barrierColor,
+    required this.barrierDismissible,
+    required this.enableDragToDismiss,
+    required this.useSafeArea,
+    this.slideAnimation,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    Widget content = builder(context);
+    if (useSafeArea) {
+      content = SafeArea(child: content);
+    }
+
+    Widget aligned = Align(alignment: alignment, child: content);
+    if (enableDragToDismiss && alignment == Alignment.bottomCenter) {
+      aligned = _DraggableDismissWrapper(
+        child: aligned,
+        onDismiss: () => Navigator.of(context).maybePop(),
+      );
+    }
+    if (slideAnimation != null) {
+      aligned = SlideTransition(position: slideAnimation!, child: aligned);
+    }
+
+    return PointerInterceptor(
+      child: Material(
+        type: MaterialType.transparency,
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap:
+                    barrierDismissible
+                        ? () => Navigator.of(context).maybePop()
+                        : null,
+                child: ColoredBox(color: barrierColor),
+              ),
+            ),
+            aligned,
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MenuPanelEntry {
+  final _ToolbarMenuAction? action;
+  final IconData? icon;
+  final String? label;
+  final Color? iconColor;
+  final bool isDivider;
+
+  const _MenuPanelEntry.divider()
+    : action = null,
+      icon = null,
+      label = null,
+      iconColor = null,
+      isDivider = true;
+
+  const _MenuPanelEntry.item({
+    required this.action,
+    required this.icon,
+    required this.label,
+    this.iconColor,
+  }) : isDivider = false;
+}
+
+class _DraggableDismissWrapper extends StatefulWidget {
+  final Widget child;
+  final VoidCallback onDismiss;
+
+  const _DraggableDismissWrapper({
+    required this.child,
+    required this.onDismiss,
+  });
+
+  @override
+  State<_DraggableDismissWrapper> createState() =>
+      _DraggableDismissWrapperState();
+}
+
+class _DraggableDismissWrapperState extends State<_DraggableDismissWrapper>
+    with SingleTickerProviderStateMixin {
+  static const double _kDismissThreshold = 140;
+  static const double _kVelocityThreshold = 800;
+
+  double _dragOffset = 0;
+  AnimationController? _controller;
+  Animation<double>? _animation;
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  void _handleDragUpdate(DragUpdateDetails details) {
+    final delta = details.delta.dy;
+    if (delta > 0) {
+      setState(() {
+        _dragOffset += delta;
+      });
+    }
+  }
+
+  void _handleDragEnd(DragEndDetails details) {
+    final velocity = details.primaryVelocity ?? 0;
+    if (_dragOffset > _kDismissThreshold || velocity > _kVelocityThreshold) {
+      widget.onDismiss();
+      return;
+    }
+    _animateBack();
+  }
+
+  void _animateBack() {
+    _controller?.dispose();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 180),
+    );
+    _animation = Tween<double>(begin: _dragOffset, end: 0).animate(
+      CurvedAnimation(parent: _controller!, curve: Curves.easeOutCubic),
+    )..addListener(() {
+      setState(() {
+        _dragOffset = _animation!.value;
+      });
+    });
+    _controller!.forward();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onVerticalDragUpdate: _handleDragUpdate,
+      onVerticalDragEnd: _handleDragEnd,
+      child: Transform.translate(
+        offset: Offset(0, _dragOffset),
+        child: widget.child,
+      ),
+    );
+  }
+}
+
+class _BottomSheetHeader extends StatelessWidget {
+  final String title;
+  final Widget? trailing;
+  final VoidCallback onClose;
+
+  const _BottomSheetHeader({
+    required this.title,
+    required this.onClose,
+    this.trailing,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      child: Row(
+        children: [
+          IconButton(
+            icon: const Icon(Icons.close),
+            tooltip: MaterialLocalizations.of(context).closeButtonTooltip,
+            onPressed: onClose,
+          ),
+          const SizedBox(width: 4),
+          Expanded(
+            child: Text(
+              title,
+              style: theme.textTheme.titleMedium,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          if (trailing != null) trailing!,
+        ],
+      ),
     );
   }
 }
@@ -271,8 +463,9 @@ class _BrowserPageState extends State<BrowserPage>
     );
   }
 
-  /// 關閉 sheet/dialog 後完整重置 WebView 觸控狀態
-  Future<void> _resetWebViewAfterSheet() async {
+  /// Restores the WebView after any overlay has been dismissed so touch
+  /// interactions behave normally again.
+  Future<void> _restoreWebInteractions() async {
     // 立即重置抑制旗標
     _suppressLinkLongPress = false;
 
@@ -302,6 +495,122 @@ class _BrowserPageState extends State<BrowserPage>
     await _setVideoDetectorEnabled(
       controller,
       repo.longPressDetectionEnabled.value,
+    );
+
+    await _restoreIosLinkInteractions(controller);
+  }
+
+  Future<void> _restoreIosLinkInteractions(
+    InAppWebViewController? controller,
+  ) async {
+    if (!Platform.isIOS || controller == null) {
+      return;
+    }
+    const js = r"""
+      (function(){
+        try {
+          if (document.activeElement) document.activeElement.blur();
+          if (window.getSelection && window.getSelection().removeAllRanges) {
+            window.getSelection().removeAllRanges();
+          }
+          document.documentElement.style.pointerEvents = 'auto';
+          document.body.style.pointerEvents = 'auto';
+          const once = () => {};
+          document.documentElement.addEventListener(
+            'click',
+            once,
+            { once: true, capture: true },
+          );
+          return true;
+        } catch(e) { return false; }
+      })();
+    """;
+    try {
+      await controller.evaluateJavascript(source: js);
+      await Future.delayed(const Duration(milliseconds: 60));
+      await controller.evaluateJavascript(source: js);
+    } catch (_) {}
+  }
+
+  /// Wraps a custom overlay widget with a full-screen PointerInterceptor layer
+  /// so taps never reach the underlying WebView. [builder] should return the
+  /// overlay body (e.g. dialog, bottom sheet, popup menu) without the scrim.
+  Future<T?> _showPointerInterceptOverlay<T>({
+    required WidgetBuilder builder,
+    Alignment alignment = Alignment.center,
+    Color? barrierColor,
+    bool barrierDismissible = true,
+    bool enableDragToDismiss = false,
+    Offset? slideOffset,
+    bool useSafeArea = true,
+  }) {
+    final dismissLabel =
+        MaterialLocalizations.of(context).modalBarrierDismissLabel;
+    return showGeneralDialog<T>(
+      context: context,
+      barrierDismissible: barrierDismissible,
+      barrierLabel: dismissLabel,
+      barrierColor: Colors.transparent,
+      transitionDuration: const Duration(milliseconds: 220),
+      pageBuilder: (dialogContext, animation, secondaryAnimation) {
+        final curved = CurvedAnimation(
+          parent: animation,
+          curve: Curves.easeOutCubic,
+          reverseCurve: Curves.easeInCubic,
+        );
+        final slide =
+            slideOffset == null
+                ? null
+                : Tween<Offset>(
+                  begin: slideOffset,
+                  end: Offset.zero,
+                ).animate(curved);
+        return FadeTransition(
+          opacity: curved,
+          child: _PointerInterceptOverlayFrame(
+            builder: builder,
+            alignment: alignment,
+            barrierColor: barrierColor ?? Colors.black54,
+            barrierDismissible: barrierDismissible,
+            enableDragToDismiss: enableDragToDismiss,
+            slideAnimation: slide,
+            useSafeArea: useSafeArea,
+          ),
+        );
+      },
+      transitionBuilder: (_, __, ___, child) => child,
+    );
+  }
+
+  Future<T?> _showPointerInterceptBottomSheet<T>({
+    required WidgetBuilder builder,
+    Color? barrierColor,
+    bool barrierDismissible = true,
+    bool enableDrag = true,
+    bool useSafeArea = true,
+  }) {
+    return _showPointerInterceptOverlay<T>(
+      builder: builder,
+      alignment: Alignment.bottomCenter,
+      barrierColor: barrierColor,
+      barrierDismissible: barrierDismissible,
+      enableDragToDismiss: enableDrag,
+      slideOffset: const Offset(0, 0.1),
+      useSafeArea: useSafeArea,
+    );
+  }
+
+  Future<T?> _showPointerInterceptDialog<T>({
+    required WidgetBuilder builder,
+    Color? barrierColor,
+    bool barrierDismissible = true,
+  }) {
+    return _showPointerInterceptOverlay<T>(
+      builder: builder,
+      alignment: Alignment.center,
+      barrierColor: barrierColor,
+      barrierDismissible: barrierDismissible,
+      slideOffset: const Offset(0, -0.02),
     );
   }
 
@@ -358,8 +667,7 @@ class _BrowserPageState extends State<BrowserPage>
       final thumbUrl =
           'https://img.youtube.com/vi/${resolvedInfo.videoId}/hqdefault.jpg';
 
-      await showDialog<void>(
-        context: context,
+      await _showPointerInterceptDialog<void>(
         builder: (dialogContext) {
           final theme = Theme.of(dialogContext);
           return AlertDialog(
@@ -431,6 +739,7 @@ class _BrowserPageState extends State<BrowserPage>
           );
         },
       );
+      await _restoreWebInteractions();
 
       if (!_ytMenuOpen) {
         _suppressLinkLongPress = false;
@@ -1370,127 +1679,130 @@ const bindVideo = (video) => {
             return Positioned(
               left: dx,
               top: dy,
-              child: Material(
-                color: Colors.transparent,
-                child: GestureDetector(
-                  onPanUpdate: (d) {
-                    setSB(
-                      () =>
-                          _miniPos = Offset(
-                            _miniPos.dx + d.delta.dx,
-                            _miniPos.dy + d.delta.dy,
+              child: PointerInterceptor(
+                child: Material(
+                  color: Colors.transparent,
+                  child: GestureDetector(
+                    onPanUpdate: (d) {
+                      setSB(
+                        () =>
+                            _miniPos = Offset(
+                              _miniPos.dx + d.delta.dx,
+                              _miniPos.dy + d.delta.dy,
+                            ),
+                      );
+                    },
+                    child: Container(
+                      width: 220,
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.surface.withOpacity(0.95),
+                        borderRadius: BorderRadius.circular(12),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.2),
+                            blurRadius: 12,
+                            offset: const Offset(0, 6),
                           ),
-                    );
-                  },
-                  child: Container(
-                    width: 220,
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.surface.withOpacity(0.95),
-                      borderRadius: BorderRadius.circular(12),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.2),
-                          blurRadius: 12,
-                          offset: const Offset(0, 6),
-                        ),
-                      ],
-                    ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        // 標題列 + 關閉鈕
-                        Row(
-                          children: [
-                            const Icon(Icons.smart_display, size: 16),
-                            const SizedBox(width: 6),
-                            Expanded(
-                              child: Text(
-                                _prettyFileName(url),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(fontSize: 12),
+                        ],
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // 標題列 + 關閉鈕
+                          Row(
+                            children: [
+                              const Icon(Icons.smart_display, size: 16),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  _prettyFileName(url),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(fontSize: 12),
+                                ),
                               ),
-                            ),
-                            InkWell(
-                              onTap: () async => await _closeMiniPlayer(),
-                              child: const Padding(
-                                padding: EdgeInsets.all(4.0),
-                                child: Icon(Icons.close, size: 16),
+                              InkWell(
+                                onTap: () async => await _closeMiniPlayer(),
+                                child: const Padding(
+                                  padding: EdgeInsets.all(4.0),
+                                  child: Icon(Icons.close, size: 16),
+                                ),
                               ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 6),
-                        // 迷你預覽（可拿掉，只留控制列也行）
-                        if (_miniCtrl != null && _miniCtrl!.value.isInitialized)
-                          AspectRatio(
-                            aspectRatio: _miniCtrl!.value.aspectRatio,
-                            child: VideoPlayer(_miniCtrl!),
+                            ],
                           ),
-                        const SizedBox(height: 6),
-                        // 控制列：後退15、播放/暫停、快轉15
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            IconButton(
-                              icon: const Icon(Icons.replay_10),
-                              tooltip: context.l10n(
-                                'browser.miniPlayer.tooltip.rewind15',
-                              ),
-                              onPressed: () async {
-                                final v = _miniCtrl;
-                                if (v == null) return;
-                                final cur = await v.position ?? Duration.zero;
-                                final targetMs = (cur.inMilliseconds - 15000)
-                                    .clamp(0, 1 << 31);
-                                await v.seekTo(
-                                  Duration(milliseconds: targetMs),
-                                );
-                              },
+                          const SizedBox(height: 6),
+                          // 迷你預覽（可拿掉，只留控制列也行）
+                          if (_miniCtrl != null &&
+                              _miniCtrl!.value.isInitialized)
+                            AspectRatio(
+                              aspectRatio: _miniCtrl!.value.aspectRatio,
+                              child: VideoPlayer(_miniCtrl!),
                             ),
-                            IconButton(
-                              icon: Icon(
-                                (_miniCtrl?.value.isPlaying ?? false)
-                                    ? Icons.pause
-                                    : Icons.play_arrow,
+                          const SizedBox(height: 6),
+                          // 控制列：後退15、播放/暫停、快轉15
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              IconButton(
+                                icon: const Icon(Icons.replay_10),
+                                tooltip: context.l10n(
+                                  'browser.miniPlayer.tooltip.rewind15',
+                                ),
+                                onPressed: () async {
+                                  final v = _miniCtrl;
+                                  if (v == null) return;
+                                  final cur = await v.position ?? Duration.zero;
+                                  final targetMs = (cur.inMilliseconds - 15000)
+                                      .clamp(0, 1 << 31);
+                                  await v.seekTo(
+                                    Duration(milliseconds: targetMs),
+                                  );
+                                },
                               ),
-                              tooltip: context.l10n(
-                                'browser.miniPlayer.tooltip.playPause',
+                              IconButton(
+                                icon: Icon(
+                                  (_miniCtrl?.value.isPlaying ?? false)
+                                      ? Icons.pause
+                                      : Icons.play_arrow,
+                                ),
+                                tooltip: context.l10n(
+                                  'browser.miniPlayer.tooltip.playPause',
+                                ),
+                                onPressed: () async {
+                                  final v = _miniCtrl;
+                                  if (v == null) return;
+                                  if (v.value.isPlaying) {
+                                    await v.pause();
+                                  } else {
+                                    await v.play();
+                                  }
+                                  setSB(() {}); // 更新按鈕圖示
+                                },
                               ),
-                              onPressed: () async {
-                                final v = _miniCtrl;
-                                if (v == null) return;
-                                if (v.value.isPlaying) {
-                                  await v.pause();
-                                } else {
-                                  await v.play();
-                                }
-                                setSB(() {}); // 更新按鈕圖示
-                              },
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.forward_10),
-                              tooltip: context.l10n(
-                                'browser.miniPlayer.tooltip.forward15',
+                              IconButton(
+                                icon: const Icon(Icons.forward_10),
+                                tooltip: context.l10n(
+                                  'browser.miniPlayer.tooltip.forward15',
+                                ),
+                                onPressed: () async {
+                                  final v = _miniCtrl;
+                                  if (v == null) return;
+                                  final dur = v.value.duration;
+                                  final cur = await v.position ?? Duration.zero;
+                                  var ms = cur.inMilliseconds + 15000;
+                                  if (dur != null) {
+                                    ms = ms.clamp(0, dur.inMilliseconds);
+                                  }
+                                  await v.seekTo(Duration(milliseconds: ms));
+                                },
                               ),
-                              onPressed: () async {
-                                final v = _miniCtrl;
-                                if (v == null) return;
-                                final dur = v.value.duration;
-                                final cur = await v.position ?? Duration.zero;
-                                var ms = cur.inMilliseconds + 15000;
-                                if (dur != null) {
-                                  ms = ms.clamp(0, dur.inMilliseconds);
-                                }
-                                await v.seekTo(Duration(milliseconds: ms));
-                              },
-                            ),
-                          ],
-                        ),
-                      ],
+                            ],
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -1576,39 +1888,41 @@ const bindVideo = (video) => {
     _ytFetchBarrier = OverlayEntry(
       builder: (_) {
         final theme = Theme.of(context);
-        return Stack(
-          children: [
-            ModalBarrier(
-              dismissible: false,
-              color: theme.colorScheme.scrim.withOpacity(0.4),
-            ),
-            Center(
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.surface,
-                  borderRadius: BorderRadius.circular(16),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.18),
-                      blurRadius: 20,
-                      offset: const Offset(0, 12),
-                    ),
-                  ],
-                ),
-                child: const Padding(
-                  padding: EdgeInsets.all(20),
-                  child: CircularProgressIndicator.adaptive(),
+        return PointerInterceptor(
+          child: Stack(
+            children: [
+              ModalBarrier(
+                dismissible: false,
+                color: theme.colorScheme.scrim.withOpacity(0.45),
+              ),
+              Center(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.surface,
+                    borderRadius: BorderRadius.circular(16),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.18),
+                        blurRadius: 20,
+                        offset: const Offset(0, 12),
+                      ),
+                    ],
+                  ),
+                  child: const Padding(
+                    padding: EdgeInsets.all(20),
+                    child: CircularProgressIndicator.adaptive(),
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         );
       },
     );
     overlay.insert(_ytFetchBarrier!);
   }
 
-  void _onYtOptionsChanged() {
+  Future<void> _onYtOptionsChanged() async {
     final opts = repo.ytOptions.value;
     if (opts == null || _ytMenuOpen) return;
     _ytMenuOpen = true;
@@ -1684,134 +1998,154 @@ const bindVideo = (video) => {
     }
 
     _suppressLinkLongPress = true;
-    showModalBottomSheet(
-      context: context,
-      useSafeArea: true,
-      isScrollControlled: true,
-      enableDrag: true,
-      backgroundColor: theme.colorScheme.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-      ),
-      builder: (sheetContext) {
-        final media = MediaQuery.of(sheetContext);
-        final screenHeight = media.size.height;
-        const double minSheetHeight = 180;
-        const double headerHeight = 104;
-        const double itemExtent = 64;
-        final double maxSheetHeight = math.max(
-          minSheetHeight,
-          screenHeight * 0.7,
-        );
-        final double desiredHeight =
-            headerHeight + itemExtent * opts.length.toDouble();
-        final double sheetHeight = desiredHeight.clamp(
-          minSheetHeight,
-          maxSheetHeight,
-        );
+    final controller = Platform.isIOS ? _currentWebViewController : null;
+    if (controller != null) {
+      try {
+        await _setIosLinkContextMenuBridgeEnabled(controller, false);
+      } catch (_) {}
+    }
+    try {
+      await _showPointerInterceptBottomSheet(
+        barrierColor: theme.colorScheme.scrim.withOpacity(0.45),
+        builder: (sheetContext) {
+          final media = MediaQuery.of(sheetContext);
+          final screenHeight = media.size.height;
+          const double minSheetHeight = 180;
+          const double headerHeight = 104;
+          const double itemExtent = 64;
+          final double maxSheetHeight = math.max(
+            minSheetHeight,
+            screenHeight * 0.7,
+          );
+          final double desiredHeight =
+              headerHeight + itemExtent * opts.length.toDouble();
+          final double sheetHeight = desiredHeight.clamp(
+            minSheetHeight,
+            maxSheetHeight,
+          );
+          final bottomInset = media.viewInsets.bottom;
 
-        return SizedBox(
-          height: sheetHeight,
-          child: Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 16, 12, 8),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+          return AnimatedPadding(
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOutCubic,
+            padding: EdgeInsets.only(bottom: bottomInset),
+            child: Material(
+              color: theme.colorScheme.surface,
+              shape: const RoundedRectangleBorder(
+                borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: SizedBox(
+                height: sheetHeight,
+                child: Column(
                   children: [
-                    Expanded(
-                      child: Column(
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 16, 12, 8),
+                      child: Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(
-                            title,
-                            style: theme.textTheme.titleMedium,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  title,
+                                  style: theme.textTheme.titleMedium,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                const SizedBox(height: 6),
+                                Text(
+                                  context.l10n(
+                                    'browser.dialog.downloadQuality.subtitle',
+                                  ),
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: theme.colorScheme.onSurface
+                                        .withOpacity(0.7),
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
-                          const SizedBox(height: 6),
-                          Text(
-                            context.l10n(
-                              'browser.dialog.downloadQuality.subtitle',
-                            ),
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: theme.colorScheme.onSurface.withOpacity(
-                                0.7,
-                              ),
-                            ),
+                          IconButton(
+                            tooltip: context.l10n('common.close'),
+                            onPressed: () => Navigator.of(sheetContext).pop(),
+                            icon: const Icon(Icons.close),
                           ),
                         ],
                       ),
                     ),
-                    IconButton(
-                      tooltip: context.l10n('common.close'),
-                      onPressed: () => Navigator.of(sheetContext).pop(),
-                      icon: const Icon(Icons.close),
+                    const Divider(height: 1),
+                    Expanded(
+                      child: ListView.separated(
+                        physics: const BouncingScrollPhysics(),
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        itemCount: opts.length,
+                        separatorBuilder: (_, __) => const Divider(height: 1),
+                        itemBuilder: (_, i) {
+                          final o = opts[i];
+                          return ListTile(
+                            dense: true,
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 20,
+                              vertical: 6,
+                            ),
+                            leading: Icon(iconFor(o)),
+                            title: Text(
+                              titleFor(o),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            subtitle: Text(
+                              subtitleFor(o),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            trailing: const Icon(Icons.download),
+                            onTap: () async {
+                              Navigator.of(sheetContext).pop();
+                              await AppRepo.I.enqueueYoutubeOption(
+                                o,
+                                sourceUrl: repo.currentPageUrl.value,
+                                titleOverride: repo.ytTitle.value,
+                              );
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    duration: const Duration(seconds: 1),
+                                    content: Text(
+                                      context.l10n(
+                                        'browser.snack.addedDownload',
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              }
+                            },
+                          );
+                        },
+                      ),
                     ),
                   ],
                 ),
               ),
-              const Divider(height: 1),
-              Expanded(
-                child: ListView.separated(
-                  physics: const BouncingScrollPhysics(),
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  itemCount: opts.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1),
-                  itemBuilder: (_, i) {
-                    final o = opts[i];
-                    return ListTile(
-                      dense: true,
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 20,
-                        vertical: 6,
-                      ),
-                      leading: Icon(iconFor(o)),
-                      title: Text(
-                        titleFor(o),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      subtitle: Text(
-                        subtitleFor(o),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      trailing: const Icon(Icons.download),
-                      onTap: () async {
-                        Navigator.of(sheetContext).pop();
-                        await AppRepo.I.enqueueYoutubeOption(
-                          o,
-                          sourceUrl: repo.currentPageUrl.value,
-                          titleOverride: repo.ytTitle.value,
-                        );
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              duration: const Duration(seconds: 1),
-                              content: Text(
-                                context.l10n('browser.snack.addedDownload'),
-                              ),
-                            ),
-                          );
-                        }
-                      },
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    ).whenComplete(() {
+            ),
+          );
+        },
+      );
+    } finally {
       _ytMenuOpen = false;
       // 重置，不要重複彈出
       repo.ytOptions.value = null;
       repo.ytTitle.value = null;
-      unawaited(_resetWebViewAfterSheet());
+      await _restoreWebInteractions();
+      if (controller != null) {
+        try {
+          await _setIosLinkContextMenuBridgeEnabled(controller, true);
+        } catch (_) {}
+      }
       _suppressLinkLongPress = false;
-    });
+    }
   }
 
   void _onUaChanged() {
@@ -1895,6 +2229,37 @@ const bindVideo = (video) => {
     final page = candidate.pageUrl.trim();
     if (page.isNotEmpty) return page;
     return candidate.url.trim();
+  }
+
+  String _canonicalYoutubeWatchUrl(String videoId, {String? sourceHost}) {
+    final host = sourceHost?.toLowerCase() ?? '';
+    if (host.contains('music.youtube.com')) {
+      return 'https://music.youtube.com/watch?v=$videoId';
+    }
+    if (host.startsWith('m.') || host.contains('m.youtube.com')) {
+      return 'https://m.youtube.com/watch?v=$videoId';
+    }
+    return 'https://www.youtube.com/watch?v=$videoId';
+  }
+
+  String? _resolveYoutubeWatchUrl({
+    String? primary,
+    String? secondary,
+    String? fallback,
+  }) {
+    for (final candidate in [primary, secondary, fallback]) {
+      final value = candidate?.trim();
+      if (value == null || value.isEmpty) continue;
+      final id = extractYoutubeVideoId(value);
+      if (id != null) {
+        String? host;
+        try {
+          host = Uri.parse(value).host;
+        } catch (_) {}
+        return _canonicalYoutubeWatchUrl(id, sourceHost: host);
+      }
+    }
+    return null;
   }
 
   String _hostnameFromUrl(String url) {
@@ -2204,22 +2569,40 @@ const bindVideo = (video) => {
     return target >= 0 && target < tab.history.length;
   }
 
-  void _navigateHistoryDelta(int delta) {
+  Future<void> _navigateHistoryDelta(int delta) async {
     if (_tabs.isEmpty) return;
-    _navigateHistoryForTab(_currentTabIndex, delta);
+    await _navigateHistoryForTab(_currentTabIndex, delta);
   }
 
-  void _navigateHistoryForTab(int tabIndex, int delta) {
+  Future<void> _navigateHistoryForTab(int tabIndex, int delta) async {
     if (tabIndex < 0 || tabIndex >= _tabs.length) return;
     final tab = _tabs[tabIndex];
     if (!_canNavigateHistory(tab, delta)) {
       final controller = tab.controller;
       if (controller == null) return;
-      if (delta < 0) {
-        controller.goBack();
-      } else {
-        controller.goForward();
+      await _syncHistoryFromController(tab);
+      if (_canNavigateHistory(tab, delta)) {
+        return _navigateHistoryForTab(tabIndex, delta);
       }
+      if (tab.history.isNotEmpty && tab.historyIndex < 0) {
+        tab.historyIndex = tab.history.length - 1;
+        if (_canNavigateHistory(tab, delta)) {
+          return _navigateHistoryForTab(tabIndex, delta);
+        }
+      }
+      try {
+        if (delta < 0) {
+          final canGoBack = await controller.canGoBack();
+          if (canGoBack) {
+            await controller.goBack();
+          }
+        } else {
+          final canGoForward = await controller.canGoForward();
+          if (canGoForward) {
+            await controller.goForward();
+          }
+        }
+      } catch (_) {}
       return;
     }
     final targetIndex = tab.historyIndex + delta;
@@ -2502,6 +2885,11 @@ const bindVideo = (video) => {
       return;
     }
     _suppressLinkLongPress = true;
+    if (releaseController != null && Platform.isIOS) {
+      try {
+        await _setIosLinkContextMenuBridgeEnabled(releaseController, false);
+      } catch (_) {}
+    }
     try {
       await HapticFeedback.selectionClick();
     } catch (_) {}
@@ -2511,6 +2899,11 @@ const bindVideo = (video) => {
       _suppressLinkLongPress = false;
       if (releaseController != null) {
         await _resetAndReleaseWebViewAfterContextMenu(releaseController);
+        if (Platform.isIOS) {
+          try {
+            await _setIosLinkContextMenuBridgeEnabled(releaseController, true);
+          } catch (_) {}
+        }
       }
     }
   }
@@ -2550,18 +2943,21 @@ const bindVideo = (video) => {
         break;
       case _LinkContextMenuAction.downloadMedia:
         if (isYoutube) {
-          final currentUrl = repo.currentPageUrl.value;
-          final target =
-              (currentUrl != null && currentUrl.isNotEmpty) ? currentUrl : url;
-          if (target.isNotEmpty) {
+          final target = _resolveYoutubeWatchUrl(
+            primary: url,
+            secondary: repo.currentPageUrl.value,
+          );
+          if (target != null) {
             await _showYoutubePreviewDialog(target);
+          } else {
+            _showSnackBar(context.l10n('browser.youtube.error.noStreams'));
           }
         } else {
           await _confirmDownload(url);
         }
         break;
       case _LinkContextMenuAction.downloadLink:
-        await _confirmDownload(url);
+        await _confirmDownload(url, skipPrompt: true);
         break;
       case _LinkContextMenuAction.openInNewTab:
         await _openLinkInNewTab(url);
@@ -2718,15 +3114,22 @@ const bindVideo = (video) => {
     final canAddToHome = addToHomeUrl.isNotEmpty;
     final addToHomeName =
         candidate.title.trim().isNotEmpty ? candidate.title.trim() : null;
-    final youtubeSource =
-        displayUrl.isNotEmpty ? displayUrl : (repo.currentPageUrl.value ?? '');
+    final youtubeWatchUrl =
+        isYoutube
+            ? _resolveYoutubeWatchUrl(
+              primary: displayUrl,
+              secondary: candidate.url,
+              fallback: repo.currentPageUrl.value,
+            )
+            : null;
     final copyUrl =
         isYoutube
-            ? (displayUrl.isNotEmpty ? displayUrl : youtubeSource)
+            ? (youtubeWatchUrl ??
+                (displayUrl.isNotEmpty ? displayUrl : directUrl))
             : (hasDirectUrl ? directUrl : displayUrl);
-    final canDownload = isYoutube ? youtubeSource.isNotEmpty : hasDirectUrl;
+    final canDownload = isYoutube ? youtubeWatchUrl != null : hasDirectUrl;
     final openInNewTabUrl =
-        isYoutube ? youtubeSource : (hasDirectUrl ? directUrl : '');
+        isYoutube ? (youtubeWatchUrl ?? '') : (hasDirectUrl ? directUrl : '');
     final downloadLabel =
         isYoutube
             ? sheetContext.l10n('browser.playingNow.action.stream')
@@ -2786,19 +3189,22 @@ const bindVideo = (video) => {
                           ? () async {
                             navigator.pop();
                             if (isYoutube) {
-                              final target =
-                                  youtubeSource.isNotEmpty
-                                      ? youtubeSource
-                                      : displayUrl;
+                              final target = youtubeWatchUrl ?? displayUrl;
                               if (target.isNotEmpty) {
                                 await _showYoutubePreviewDialog(target);
+                              } else {
+                                _showSnackBar(
+                                  sheetContext.l10n(
+                                    'browser.youtube.error.noStreams',
+                                  ),
+                                );
                               }
+                            } else {
                               await _confirmDownload(
                                 directUrl,
                                 skipPrompt: true,
+                                suggestedName: candidate.title,
                               );
-                            } else {
-                              await _confirmDownload(directUrl);
                             }
                           }
                           : null,
@@ -2880,14 +3286,20 @@ const bindVideo = (video) => {
       return;
     }
     _suppressLinkLongPress = true;
+    final controller = Platform.isIOS ? _currentWebViewController : null;
+    if (controller != null) {
+      try {
+        await _setIosLinkContextMenuBridgeEnabled(controller, false);
+      } catch (_) {}
+    }
     try {
-      await showModalBottomSheet(
-        context: context,
-        isScrollControlled: true,
+      await _showPointerInterceptBottomSheet(
+        barrierColor: Theme.of(context).colorScheme.scrim.withOpacity(0.45),
         builder: (sheetContext) {
-          return FractionallySizedBox(
-            heightFactor: 0.75,
-            child: SafeArea(
+          return Material(
+            color: Theme.of(sheetContext).colorScheme.surface,
+            child: FractionallySizedBox(
+              heightFactor: 0.75,
               child: Column(
                 children: [
                   ListTile(
@@ -2934,7 +3346,12 @@ const bindVideo = (video) => {
         },
       );
     } finally {
-      unawaited(_resetWebViewAfterSheet());
+      await _restoreWebInteractions();
+      if (controller != null) {
+        try {
+          await _setIosLinkContextMenuBridgeEnabled(controller, true);
+        } catch (_) {}
+      }
     }
   }
 
@@ -3047,116 +3464,124 @@ const bindVideo = (video) => {
           list.add(buildItem(icon, label, action));
         }
 
-        return SafeArea(
-          child: Align(
-            alignment: Alignment.centerRight,
-            child: Padding(
-              padding: const EdgeInsets.only(right: 12),
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.18),
-                      blurRadius: 18,
-                      offset: const Offset(0, 8),
-                    ),
-                  ],
-                ),
-                child: Material(
-                  color: colorScheme.surface,
-                  borderRadius: BorderRadius.circular(12),
-                  clipBehavior: Clip.antiAlias,
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 280),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 12,
-                          ),
-                          child: Text(
-                            url,
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: colorScheme.onSurface.withOpacity(0.75),
+        return PointerInterceptor(
+          child: SafeArea(
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: Padding(
+                padding: const EdgeInsets.only(right: 12),
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.18),
+                        blurRadius: 18,
+                        offset: const Offset(0, 8),
+                      ),
+                    ],
+                  ),
+                  child: Material(
+                    color: colorScheme.surface,
+                    borderRadius: BorderRadius.circular(12),
+                    clipBehavior: Clip.antiAlias,
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 280),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 12,
                             ),
-                            maxLines: 3,
-                            overflow: TextOverflow.ellipsis,
+                            child: Text(
+                              url,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: colorScheme.onSurface.withOpacity(0.75),
+                              ),
+                              maxLines: 3,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
-                        ),
-                        const Divider(height: 1),
-                        Builder(
-                          builder: (context) {
-                            final items = <Widget>[];
-                            addEntry(
-                              items,
-                              Icons.copy,
-                              context.l10n('browser.context.copyLink'),
-                              _LinkContextMenuAction.copyLink,
-                            );
-                            switch (kind) {
-                              case _LinkContextKind.image:
-                                addEntry(
-                                  items,
-                                  Icons.download,
-                                  context.l10n('browser.context.downloadImage'),
-                                  _LinkContextMenuAction.downloadImage,
-                                );
-                                break;
-                              case _LinkContextKind.video:
-                              case _LinkContextKind.audio:
-                                if (!isYoutube) {
+                          const Divider(height: 1),
+                          Builder(
+                            builder: (context) {
+                              final items = <Widget>[];
+                              addEntry(
+                                items,
+                                Icons.copy,
+                                context.l10n('browser.context.copyLink'),
+                                _LinkContextMenuAction.copyLink,
+                              );
+                              switch (kind) {
+                                case _LinkContextKind.image:
                                   addEntry(
                                     items,
-                                    Icons.play_arrow,
-                                    context.l10n('browser.context.playVideo'),
-                                    _LinkContextMenuAction.playMedia,
+                                    Icons.download,
+                                    context.l10n(
+                                      'browser.context.downloadImage',
+                                    ),
+                                    _LinkContextMenuAction.downloadImage,
                                   );
-                                }
-                                addEntry(
-                                  items,
-                                  Icons.download,
-                                  context.l10n('browser.context.downloadVideo'),
-                                  _LinkContextMenuAction.downloadMedia,
-                                );
-                                break;
-                              case _LinkContextKind.generic:
-                                addEntry(
-                                  items,
-                                  Icons.download,
-                                  context.l10n('browser.context.downloadLink'),
-                                  _LinkContextMenuAction.downloadLink,
-                                );
-                                break;
-                            }
-                            addEntry(
-                              items,
-                              Icons.open_in_new,
-                              context.l10n('browser.context.openInNewTab'),
-                              _LinkContextMenuAction.openInNewTab,
-                            );
-                            addEntry(
-                              items,
-                              Icons.bookmark_add,
-                              context.l10n('browser.context.addFavorite'),
-                              _LinkContextMenuAction.addFavorite,
-                            );
-                            addEntry(
-                              items,
-                              Icons.home,
-                              context.l10n('browser.context.addHome'),
-                              _LinkContextMenuAction.addHome,
-                            );
-                            return Column(
-                              mainAxisSize: MainAxisSize.min,
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: items,
-                            );
-                          },
-                        ),
-                      ],
+                                  break;
+                                case _LinkContextKind.video:
+                                case _LinkContextKind.audio:
+                                  if (!isYoutube) {
+                                    addEntry(
+                                      items,
+                                      Icons.play_arrow,
+                                      context.l10n('browser.context.playVideo'),
+                                      _LinkContextMenuAction.playMedia,
+                                    );
+                                  }
+                                  addEntry(
+                                    items,
+                                    Icons.download,
+                                    context.l10n(
+                                      'browser.context.downloadVideo',
+                                    ),
+                                    _LinkContextMenuAction.downloadMedia,
+                                  );
+                                  break;
+                                case _LinkContextKind.generic:
+                                  addEntry(
+                                    items,
+                                    Icons.download,
+                                    context.l10n(
+                                      'browser.context.downloadLink',
+                                    ),
+                                    _LinkContextMenuAction.downloadLink,
+                                  );
+                                  break;
+                              }
+                              addEntry(
+                                items,
+                                Icons.open_in_new,
+                                context.l10n('browser.context.openInNewTab'),
+                                _LinkContextMenuAction.openInNewTab,
+                              );
+                              addEntry(
+                                items,
+                                Icons.bookmark_add,
+                                context.l10n('browser.context.addFavorite'),
+                                _LinkContextMenuAction.addFavorite,
+                              );
+                              addEntry(
+                                items,
+                                Icons.home,
+                                context.l10n('browser.context.addHome'),
+                                _LinkContextMenuAction.addHome,
+                              );
+                              return Column(
+                                mainAxisSize: MainAxisSize.min,
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: items,
+                              );
+                            },
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -3748,8 +4173,7 @@ const bindVideo = (video) => {
             : (defaultUrl.isNotEmpty ? _prettyFileName(defaultUrl) : '');
     final nameCtrl = TextEditingController(text: defaultName);
     final urlCtrlLocal = TextEditingController(text: defaultUrl);
-    await showDialog(
-      context: context,
+    await _showPointerInterceptDialog(
       builder: (dialogContext) {
         return AlertDialog(
           title: Text(dialogContext.l10n('browser.shortcuts.addShortcutTitle')),
@@ -3792,6 +4216,7 @@ const bindVideo = (video) => {
         );
       },
     );
+    await _restoreWebInteractions();
   }
 
   @override
@@ -3987,6 +4412,13 @@ const bindVideo = (video) => {
       ),
     );
     setState(() {});
+  }
+
+  InAppWebViewController? get _currentWebViewController {
+    if (_currentTabIndex < 0 || _currentTabIndex >= _tabs.length) {
+      return null;
+    }
+    return _tabs[_currentTabIndex].controller;
   }
 
   _TabData? _tabForController(InAppWebViewController controller) {
@@ -4812,6 +5244,15 @@ const bindVideo = (video) => {
     }
 
     if (action != null) {
+      try {
+        final navType = action.navigationType;
+        if ((navType == NavigationType.RELOAD ||
+                navType == NavigationType.BACK_FORWARD) &&
+            (schemeLooksHttp || rawLooksHttp)) {
+          return null;
+        }
+      } catch (_) {}
+
       final intent = _navigationActionRequestsExternalApp(action);
       if (intent.shouldBlock) {
         shouldBlock = true;
@@ -4906,6 +5347,17 @@ const bindVideo = (video) => {
     }
 
     final normalizedEffectiveScheme = effectiveScheme?.toLowerCase();
+    if (shouldBlock && (schemeLooksHttp || rawLooksHttp)) {
+      final currentUrl = requestingTab?.currentUrl;
+      if (currentUrl != null && currentUrl.isNotEmpty) {
+        final currentHost = Uri.tryParse(currentUrl)?.host?.toLowerCase();
+        if (currentHost != null &&
+            normalizedHost != null &&
+            currentHost == normalizedHost) {
+          return null;
+        }
+      }
+    }
     final canBypassInWebView =
         dueToAppLink && _isHttpScheme(normalizedEffectiveScheme);
     if (Platform.isIOS && dueToAppLink && canBypassInWebView) {
@@ -5515,16 +5967,18 @@ const bindVideo = (video) => {
             'browser.playingNow.button',
             params: {'count': '${candidates.length}'},
           );
-          return FloatingActionButton.extended(
-            onPressed: _showPlayingVideosSheet,
-            icon: const Icon(Icons.playlist_play),
-            label: Text(label),
+          return PointerInterceptor(
+            child: FloatingActionButton.extended(
+              onPressed: _showPlayingVideosSheet,
+              icon: const Icon(Icons.playlist_play),
+              label: Text(label),
+            ),
           );
         },
       ),
       body: Column(
         children: [
-          _toolbar(),
+          PointerInterceptor(child: _toolbar()),
           Expanded(
             child: IndexedStack(
               index: _currentTabIndex,
@@ -5537,7 +5991,7 @@ const bindVideo = (video) => {
                         contextMenu: ContextMenu(
                           // ignore: deprecated_member_use
                           options: ContextMenuOptions(
-                            hideDefaultSystemContextMenuItems: Platform.isIOS,
+                            hideDefaultSystemContextMenuItems: false,
                           ),
                         ),
                         initialSettings: InAppWebViewSettings(
@@ -5999,23 +6453,6 @@ const bindVideo = (video) => {
                           );
                         },
                       ),
-                      Positioned.fill(
-                        child: Row(
-                          children: [
-                            _buildEdgeSwipeArea(
-                              isLeft: true,
-                              tabIndex: tabIndex,
-                            ),
-                            const Expanded(
-                              child: IgnorePointer(child: SizedBox.expand()),
-                            ),
-                            _buildEdgeSwipeArea(
-                              isLeft: false,
-                              tabIndex: tabIndex,
-                            ),
-                          ],
-                        ),
-                      ),
                     ],
                   ),
               ],
@@ -6111,24 +6548,24 @@ const bindVideo = (video) => {
 
           // Right side controls (all aligned right): Sniffer, Resources, Downloads
           final rightSideButtons = <Widget>[
-            pad(
-              // 在 AppBar 的 actions 中添加臨時測試按鈕
-              IconButton(
-                icon: Icon(Icons.refresh),
-                onPressed: () async {
-                  _suppressLinkLongPress = false;
-                  final controller = _tabs[_currentTabIndex].controller;
-                  if (controller != null) {
-                    await controller.evaluateJavascript(
-                      source: '''
-          document.body.style.pointerEvents = 'auto';
-          document.documentElement.style.pointerEvents = 'auto';
-        ''',
-                    );
-                  }
-                },
-              ),
-            ),
+            //   pad(
+            // 在 AppBar 的 actions 中添加臨時測試按鈕
+            //    IconButton(
+            //   icon: Icon(Icons.refresh),
+            //    onPressed: () async {
+            //      _suppressLinkLongPress = false;
+            //      final controller = _tabs[_currentTabIndex].controller;
+            //      if (controller != null) {
+            //        await controller.evaluateJavascript(
+            //          source: '''
+            //   document.body.style.pointerEvents = 'auto';
+            //      document.documentElement.style.pointerEvents = 'auto';
+            //    ''',
+            //             );
+            //           }
+            //         },
+            //     ),
+            //    ),
             // Sniffer toggle (eye icon)
             pad(
               ValueListenableBuilder<bool>(
@@ -6402,26 +6839,82 @@ const bindVideo = (video) => {
     final mediaDetectionOn = repo.longPressDetectionEnabled.value;
 
     final selectedProfiles = repo.adBlockFilterSets.value;
-
-    PopupMenuItem<_ToolbarMenuAction> buildItem(
-      _ToolbarMenuAction action,
-      IconData icon,
-      String label, {
-      Color? iconColor,
-    }) {
-      return PopupMenuItem<_ToolbarMenuAction>(
-        value: action,
-        child: Row(
-          children: [
-            Icon(icon, color: iconColor),
-            const SizedBox(width: 12),
-            Expanded(child: Text(label)),
-          ],
-        ),
-      );
-    }
-
     final colorScheme = Theme.of(context).colorScheme;
+
+    final menuEntries = <_MenuPanelEntry>[
+      _MenuPanelEntry.item(
+        action: _ToolbarMenuAction.openFavorites,
+        icon: Icons.favorite,
+        label:
+            favoriteCount > 0
+                ? context.l10n(
+                  'browser.menu.favoritesWithCount',
+                  params: {'count': favoriteCount.toString()},
+                )
+                : context.l10n('browser.menu.favorites'),
+        iconColor: favoriteCount > 0 ? Colors.redAccent : null,
+      ),
+      _MenuPanelEntry.item(
+        action: _ToolbarMenuAction.openHistory,
+        icon: Icons.history,
+        label:
+            historyCount > 0
+                ? context.l10n(
+                  'browser.menu.historyWithCount',
+                  params: {'count': historyCount.toString()},
+                )
+                : context.l10n('browser.menu.history'),
+        iconColor: historyCount > 0 ? colorScheme.primary : null,
+      ),
+      _MenuPanelEntry.item(
+        action: _ToolbarMenuAction.clearBrowsingData,
+        icon: Icons.cleaning_services,
+        label: context.l10n('browser.menu.clearBrowsingData'),
+        iconColor: colorScheme.error,
+      ),
+      const _MenuPanelEntry.divider(),
+      _MenuPanelEntry.item(
+        action: _ToolbarMenuAction.toggleAdBlocker,
+        icon: adBlockOn ? Icons.toggle_on : Icons.toggle_off,
+        label: _adBlockerMenuLabel(adBlockOn, selectedProfiles),
+        iconColor: adBlockOn ? colorScheme.primary : null,
+      ),
+      _MenuPanelEntry.item(
+        action: _ToolbarMenuAction.toggleBlockPopup,
+        icon: blockPopupOn ? Icons.toggle_on : Icons.toggle_off,
+        label: context.l10n('browser.menu.blockPopups'),
+        iconColor: blockPopupOn ? Colors.redAccent : null,
+      ),
+      _MenuPanelEntry.item(
+        action: _ToolbarMenuAction.blockExternalApp,
+        icon: _blockExternalApp ? Icons.toggle_on : Icons.toggle_off,
+        label: context.l10n('browser.menu.blockExternalApps'),
+        iconColor: _blockExternalApp ? colorScheme.primary : null,
+      ),
+      _MenuPanelEntry.item(
+        action: _ToolbarMenuAction.toggleMediaDetection,
+        icon: mediaDetectionOn ? Icons.toggle_on : Icons.toggle_off,
+        label: context.l10n('browser.menu.mediaDetection'),
+        iconColor: mediaDetectionOn ? colorScheme.primary : null,
+      ),
+      const _MenuPanelEntry.divider(),
+      _MenuPanelEntry.item(
+        action: _ToolbarMenuAction.addHome,
+        icon: Icons.add,
+        label: context.l10n('browser.context.addHome'),
+      ),
+      _MenuPanelEntry.item(
+        action: _ToolbarMenuAction.goHome,
+        icon: Icons.home,
+        label: context.l10n('browser.menu.home'),
+      ),
+      _MenuPanelEntry.item(
+        action: _ToolbarMenuAction.help,
+        icon: Icons.help_outline,
+        label: context.l10n('browser.menu.help'),
+      ),
+    ];
+
     final topLeft = renderObject.localToGlobal(
       Offset.zero,
       ancestor: overlayBox,
@@ -6430,91 +6923,107 @@ const bindVideo = (video) => {
       renderObject.size.bottomRight(Offset.zero),
       ancestor: overlayBox,
     );
-    final position = RelativeRect.fromRect(
-      Rect.fromPoints(topLeft, bottomRight),
-      Offset.zero & overlayBox.size,
-    ).shift(const Offset(0, 8));
+    final buttonRect = Rect.fromPoints(topLeft, bottomRight);
+    final overlaySize = overlayBox.size;
 
-    final entries = <PopupMenuEntry<_ToolbarMenuAction>>[
-      buildItem(
-        _ToolbarMenuAction.openFavorites,
-        Icons.favorite,
-        favoriteCount > 0
-            ? context.l10n(
-              'browser.menu.favoritesWithCount',
-              params: {'count': favoriteCount.toString()},
-            )
-            : context.l10n('browser.menu.favorites'),
-        iconColor: favoriteCount > 0 ? Colors.redAccent : null,
-      ),
-      buildItem(
-        _ToolbarMenuAction.openHistory,
-        Icons.history,
-        historyCount > 0
-            ? context.l10n(
-              'browser.menu.historyWithCount',
-              params: {'count': historyCount.toString()},
-            )
-            : context.l10n('browser.menu.history'),
-        iconColor: historyCount > 0 ? colorScheme.primary : null,
-      ),
-      buildItem(
-        _ToolbarMenuAction.clearBrowsingData,
-        Icons.cleaning_services,
-        context.l10n('browser.menu.clearBrowsingData'),
-        iconColor: colorScheme.error,
-      ),
-      const PopupMenuDivider(),
-      buildItem(
-        _ToolbarMenuAction.toggleAdBlocker,
-        adBlockOn ? Icons.toggle_on : Icons.toggle_off,
+    const menuWidth = 280.0;
+    const margin = 8.0;
+    double left = buttonRect.left;
+    if (left + menuWidth + margin > overlaySize.width) {
+      left = overlaySize.width - menuWidth - margin;
+    }
+    if (left < margin) {
+      left = margin;
+    }
+    double top = buttonRect.bottom + 8;
+    if (top + margin > overlaySize.height) {
+      top = overlaySize.height - margin - 1;
+    }
+    final maxHeight = math.max(160.0, overlaySize.height - top - margin);
 
-        _adBlockerMenuLabel(adBlockOn, selectedProfiles),
-        iconColor: adBlockOn ? colorScheme.primary : null,
-      ),
-      buildItem(
-        _ToolbarMenuAction.toggleBlockPopup,
-        blockPopupOn ? Icons.toggle_on : Icons.toggle_off,
-        context.l10n('browser.menu.blockPopups'),
-        iconColor: blockPopupOn ? Colors.redAccent : null,
-      ),
-      buildItem(
-        _ToolbarMenuAction.blockExternalApp,
-        _blockExternalApp ? Icons.toggle_on : Icons.toggle_off,
-        context.l10n('browser.menu.blockExternalApps'),
-        iconColor:
-            _blockExternalApp ? Theme.of(context).colorScheme.primary : null,
-      ),
-      buildItem(
-        _ToolbarMenuAction.toggleMediaDetection,
-        mediaDetectionOn ? Icons.toggle_on : Icons.toggle_off,
-        context.l10n('browser.menu.mediaDetection'),
-        iconColor: mediaDetectionOn ? colorScheme.primary : null,
-      ),
-      const PopupMenuDivider(),
-      buildItem(
-        _ToolbarMenuAction.addHome,
-        Icons.add,
-        context.l10n('browser.context.addHome'),
-      ),
-      buildItem(
-        _ToolbarMenuAction.goHome,
-        Icons.home,
-        context.l10n('browser.menu.home'),
-      ),
-      buildItem(
-        _ToolbarMenuAction.help,
-        Icons.help_outline,
-        context.l10n('browser.menu.help'),
-      ),
-    ];
+    final controller = Platform.isIOS ? _currentWebViewController : null;
+    if (controller != null) {
+      try {
+        await _setIosLinkContextMenuBridgeEnabled(controller, false);
+      } catch (_) {}
+    }
 
-    final selected = await showMenu<_ToolbarMenuAction>(
-      context: context,
-      position: position,
-      items: entries,
+    final selected = await _showPointerInterceptOverlay<_ToolbarMenuAction?>(
+      alignment: Alignment.topLeft,
+      barrierColor: Colors.transparent,
+      barrierDismissible: true,
+      useSafeArea: false,
+      builder: (overlayContext) {
+        final theme = Theme.of(overlayContext);
+        return SizedBox.expand(
+          child: Stack(
+            children: [
+              Positioned(
+                left: left,
+                top: top,
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: menuWidth,
+                    maxHeight: maxHeight,
+                  ),
+                  child: Material(
+                    elevation: 8,
+                    color: theme.colorScheme.surface,
+                    borderRadius: BorderRadius.circular(12),
+                    clipBehavior: Clip.antiAlias,
+                    child: ListView(
+                      padding: EdgeInsets.zero,
+                      shrinkWrap: true,
+                      children: [
+                        for (final entry in menuEntries)
+                          entry.isDivider
+                              ? const Divider(height: 1)
+                              : InkWell(
+                                onTap:
+                                    () => Navigator.of(
+                                      overlayContext,
+                                    ).pop(entry.action),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 12,
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Icon(
+                                        entry.icon,
+                                        color:
+                                            entry.iconColor ??
+                                            theme.iconTheme.color,
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: Text(
+                                          entry.label ?? '',
+                                          style: theme.textTheme.bodyMedium,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
-    await _resetWebViewAfterSheet();
+
+    await _restoreWebInteractions();
+    if (controller != null) {
+      try {
+        await _setIosLinkContextMenuBridgeEnabled(controller, true);
+      } catch (_) {}
+    }
 
     if (!mounted || selected == null) {
       return;
@@ -6870,69 +7379,71 @@ const bindVideo = (video) => {
             }
 
             final canConfirm = !enabled || tempSelection.isNotEmpty;
-            return AlertDialog(
-              title: Text(context.l10n('browser.dialog.adblocker.title')),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SwitchListTile(
-                      value: enabled,
-                      onChanged: (value) {
-                        setState(() {
-                          enabled = value;
-                        });
-                      },
-                      title: Text(
-                        context.l10n('browser.dialog.adblocker.enableTitle'),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      context.l10n('browser.dialog.adblocker.enableSubtitle'),
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                    checkbox('lite'),
-                    checkbox('plus'),
-                    checkbox('privacy'),
-                    if (enabled && tempSelection.isEmpty)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 8),
-                        child: Text(
-                          context.l10n(
-                            'browser.dialog.adblocker.selectAtLeastOne',
-                          ),
-                          style: Theme.of(
-                            context,
-                          ).textTheme.bodySmall?.copyWith(
-                            color: Theme.of(context).colorScheme.error,
-                          ),
+            return PointerInterceptor(
+              child: AlertDialog(
+                title: Text(context.l10n('browser.dialog.adblocker.title')),
+                content: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SwitchListTile(
+                        value: enabled,
+                        onChanged: (value) {
+                          setState(() {
+                            enabled = value;
+                          });
+                        },
+                        title: Text(
+                          context.l10n('browser.dialog.adblocker.enableTitle'),
                         ),
                       ),
-                  ],
+                      const SizedBox(height: 8),
+                      Text(
+                        context.l10n('browser.dialog.adblocker.enableSubtitle'),
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                      checkbox('lite'),
+                      checkbox('plus'),
+                      checkbox('privacy'),
+                      if (enabled && tempSelection.isEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 8),
+                          child: Text(
+                            context.l10n(
+                              'browser.dialog.adblocker.selectAtLeastOne',
+                            ),
+                            style: Theme.of(
+                              context,
+                            ).textTheme.bodySmall?.copyWith(
+                              color: Theme.of(context).colorScheme.error,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: Text(context.l10n('common.cancel')),
+                  ),
+                  FilledButton(
+                    onPressed:
+                        canConfirm
+                            ? () {
+                              Navigator.of(context).pop(
+                                _AdBlockerDialogResult(
+                                  enabled: enabled,
+                                  selectedProfiles: tempSelection.toSet(),
+                                ),
+                              );
+                            }
+                            : null,
+                    child: Text(context.l10n('common.apply')),
+                  ),
+                ],
               ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: Text(context.l10n('common.cancel')),
-                ),
-                FilledButton(
-                  onPressed:
-                      canConfirm
-                          ? () {
-                            Navigator.of(context).pop(
-                              _AdBlockerDialogResult(
-                                enabled: enabled,
-                                selectedProfiles: tempSelection.toSet(),
-                              ),
-                            );
-                          }
-                          : null,
-                  child: Text(context.l10n('common.apply')),
-                ),
-              ],
             );
           },
         );
@@ -7048,84 +7559,90 @@ const bindVideo = (video) => {
                 : colorScheme.surfaceVariant;
         return PopScope(
           canPop: !requireAcknowledgement,
-          child: Dialog(
-            backgroundColor: Colors.transparent,
-            insetPadding: const EdgeInsets.symmetric(
-              horizontal: 24,
-              vertical: 24,
-            ),
-            child: Container(
-              decoration: BoxDecoration(
-                color: surface,
-                borderRadius: BorderRadius.circular(20),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.18),
-                    blurRadius: 20,
-                    offset: const Offset(0, 12),
-                  ),
-                ],
+          child: PointerInterceptor(
+            child: Dialog(
+              backgroundColor: Colors.transparent,
+              insetPadding: const EdgeInsets.symmetric(
+                horizontal: 24,
+                vertical: 24,
               ),
-              padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Icon(Icons.info_outline, color: accent, size: 28),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              context.l10n('common.help'),
-                              style: textTheme.titleLarge?.copyWith(
-                                fontWeight: FontWeight.w600,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: surface,
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.18),
+                      blurRadius: 20,
+                      offset: const Offset(0, 12),
+                    ),
+                  ],
+                ),
+                padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(Icons.info_outline, color: accent, size: 28),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                context.l10n('common.help'),
+                                style: textTheme.titleLarge?.copyWith(
+                                  fontWeight: FontWeight.w600,
+                                ),
                               ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              context.l10n(
-                                'browser.dialog.adblocker.helpSubtitle',
+                              const SizedBox(height: 4),
+                              Text(
+                                context.l10n(
+                                  'browser.dialog.adblocker.helpSubtitle',
+                                ),
+                                style: textTheme.bodySmall?.copyWith(
+                                  color:
+                                      textTheme.bodySmall?.color?.withOpacity(
+                                        0.75,
+                                      ) ??
+                                      Colors.black54,
+                                ),
                               ),
-                              style: textTheme.bodySmall?.copyWith(
-                                color:
-                                    textTheme.bodySmall?.color?.withOpacity(
-                                      0.75,
-                                    ) ??
-                                    Colors.black54,
-                              ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
+                      ],
+                    ),
+                    const SizedBox(height: 20),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
                       ),
-                    ],
-                  ),
-                  const SizedBox(height: 20),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 12,
+                      decoration: BoxDecoration(
+                        color: colorScheme.surface.withOpacity(0.6),
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: _buildHelpDialogContent(
+                        context,
+                        textTheme,
+                        accent,
+                      ),
                     ),
-                    decoration: BoxDecoration(
-                      color: colorScheme.surface.withOpacity(0.6),
-                      borderRadius: BorderRadius.circular(16),
+                    const SizedBox(height: 20),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: FilledButton(
+                        onPressed: () => Navigator.of(context).pop(true),
+                        child: Text(context.l10n('common.gotIt')),
+                      ),
                     ),
-                    child: _buildHelpDialogContent(context, textTheme, accent),
-                  ),
-                  const SizedBox(height: 20),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: FilledButton(
-                      onPressed: () => Navigator.of(context).pop(true),
-                      child: Text(context.l10n('common.gotIt')),
-                    ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
@@ -7164,7 +7681,11 @@ const bindVideo = (video) => {
   }
 
   /// Prompts the user to confirm downloading the given URL. If confirmed, enqueues the download.
-  Future<void> _confirmDownload(String url, {bool skipPrompt = false}) async {
+  Future<void> _confirmDownload(
+    String url, {
+    bool skipPrompt = false,
+    String? suggestedName,
+  }) async {
     bool ok = true;
     if (!skipPrompt) {
       ok =
@@ -7195,7 +7716,11 @@ const bindVideo = (video) => {
           false;
     }
     if (!ok) return;
-    await AppRepo.I.enqueueDownload(url, skipYoutubeHandling: true);
+    await AppRepo.I.enqueueDownload(
+      url,
+      skipYoutubeHandling: true,
+      suggestedName: suggestedName,
+    );
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -7335,11 +7860,16 @@ const bindVideo = (video) => {
     }
 
     if (!mounted) return;
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      builder:
-          (_) => SafeArea(
+    await _showPointerInterceptBottomSheet(
+      barrierColor: Theme.of(context).colorScheme.scrim.withOpacity(0.45),
+      builder: (sheetContext) {
+        final bottomInset = MediaQuery.of(sheetContext).viewInsets.bottom;
+        return AnimatedPadding(
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+          padding: EdgeInsets.only(bottom: bottomInset),
+          child: Material(
+            color: Theme.of(sheetContext).colorScheme.surface,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -7360,8 +7890,7 @@ const bindVideo = (video) => {
                       icon: const Icon(Icons.play_arrow),
                       label: Text(context.l10n('common.play')),
                       onPressed: () {
-                        Navigator.pop(context);
-                        // 使用內建播放器播放（支援 iOS 子母畫面 PiP）。
+                        Navigator.of(sheetContext).pop();
                         _playMedia(h.url);
                       },
                     ),
@@ -7370,7 +7899,7 @@ const bindVideo = (video) => {
                       icon: const Icon(Icons.download),
                       label: Text(context.l10n('common.download')),
                       onPressed: () {
-                        Navigator.pop(context);
+                        Navigator.of(sheetContext).pop();
                         _confirmDownload(h.url);
                       },
                     ),
@@ -7381,7 +7910,10 @@ const bindVideo = (video) => {
               ],
             ),
           ),
+        );
+      },
     );
+    await _restoreWebInteractions();
   }
 
   /// Shows a bottom sheet listing all detected media resources with download buttons.
@@ -7393,287 +7925,78 @@ const bindVideo = (video) => {
     if (!ok) {
       return;
     }
-    await showModalBottomSheet(
-      context: context,
-      builder: (_) {
-        return SafeArea(
-          child: ValueListenableBuilder(
-            valueListenable: repo.hits,
-            builder: (_, list, __) {
-              if (list.isEmpty) {
-                return Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Text(
-                    context.l10n('browser.mediaDetection.emptyState'),
-                  ),
-                );
-              }
-              return Column(
-                children: [
-                  ListTile(
-                    title: Text(
-                      context.l10n(
-                        'browser.mediaDetection.titleWithCount',
-                        params: {'count': list.length.toString()},
-                      ),
-                    ),
-                    trailing: TextButton.icon(
-                      icon: const Icon(Icons.delete_sweep),
-                      label: Text(context.l10n('common.clearAll')),
-                      onPressed: () {
-                        repo.hits.value = [];
-                        Navigator.pop(context);
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              duration: const Duration(seconds: 1),
-                              content: Text(
-                                context.l10n('browser.snack.mediaCleared'),
+    final controller = Platform.isIOS ? _currentWebViewController : null;
+    if (controller != null) {
+      try {
+        await _setIosLinkContextMenuBridgeEnabled(controller, false);
+      } catch (_) {}
+    }
+    try {
+      await _showPointerInterceptBottomSheet(
+        barrierColor: Theme.of(context).colorScheme.scrim.withOpacity(0.5),
+        builder: (sheetContext) {
+          final theme = Theme.of(sheetContext);
+          return Align(
+            alignment: Alignment.bottomCenter,
+            child: FractionallySizedBox(
+              heightFactor: 0.75,
+              widthFactor: 1,
+              child: ClipRRect(
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(20),
+                ),
+                child: Material(
+                  color: theme.colorScheme.surface,
+                  child: SafeArea(
+                    top: false,
+                    child: ValueListenableBuilder<List<MediaHit>>(
+                      valueListenable: repo.hits,
+                      builder: (_, list, __) {
+                        final nav = Navigator.of(sheetContext);
+                        if (list.isEmpty) {
+                          return Column(
+                            children: [
+                              _BottomSheetHeader(
+                                title: sheetContext.l10n(
+                                  'browser.mediaDetection.titleWithCount',
+                                  params: {'count': '0'},
+                                ),
+                                onClose: () => nav.pop(),
                               ),
-                            ),
+                              Expanded(
+                                child: Center(
+                                  child: Text(
+                                    sheetContext.l10n(
+                                      'browser.mediaDetection.emptyState',
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
                           );
                         }
-                      },
-                    ),
-                  ),
-                  const Divider(height: 1),
-                  Expanded(
-                    child: ListView.separated(
-                      itemCount: list.length,
-                      separatorBuilder: (_, __) => const Divider(height: 1),
-                      itemBuilder: (_, i) {
-                        final h = list[i];
-                        return ListTile(
-                          leading: SizedBox(
-                            width: 56,
-                            height: 56,
-                            child: () {
-                              if (h.type == 'image') {
-                                return ClipRRect(
-                                  borderRadius: BorderRadius.circular(6),
-                                  child: Image.network(
-                                    h.url,
-                                    fit: BoxFit.cover,
-                                    errorBuilder:
-                                        (_, __, ___) => const Icon(Icons.image),
-                                  ),
-                                );
-                              } else if (h.type == 'video') {
-                                return FutureBuilder<String?>(
-                                  future: _ensureVideoThumb(h.url),
-                                  builder: (_, snap) {
-                                    Widget base;
-                                    if (snap.connectionState ==
-                                        ConnectionState.waiting) {
-                                      base = Container(
-                                        decoration: BoxDecoration(
-                                          color: Colors.black12,
-                                          borderRadius: BorderRadius.circular(
-                                            6,
-                                          ),
-                                        ),
-                                        alignment: Alignment.center,
-                                        child: const SizedBox(
-                                          width: 18,
-                                          height: 18,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                          ),
-                                        ),
-                                      );
-                                    } else if (snap.hasData &&
-                                        snap.data != null) {
-                                      base = ClipRRect(
-                                        borderRadius: BorderRadius.circular(6),
-                                        child: Image.file(
-                                          File(snap.data!),
-                                          fit: BoxFit.cover,
-                                        ),
-                                      );
-                                    } else {
-                                      base = Container(
-                                        decoration: BoxDecoration(
-                                          color: Colors.black12,
-                                          borderRadius: BorderRadius.circular(
-                                            6,
-                                          ),
-                                        ),
-                                        alignment: Alignment.center,
-                                        child: const Icon(Icons.ondemand_video),
-                                      );
-                                    }
-                                    // overlay duration if available
-                                    return Stack(
-                                      children: [
-                                        Positioned.fill(child: base),
-                                        if (h.durationSeconds != null)
-                                          Positioned(
-                                            right: 4,
-                                            bottom: 4,
-                                            child: Container(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                    horizontal: 4,
-                                                    vertical: 2,
-                                                  ),
-                                              decoration: BoxDecoration(
-                                                color: Colors.black.withOpacity(
-                                                  0.6,
-                                                ),
-                                                borderRadius:
-                                                    BorderRadius.circular(4),
-                                              ),
-                                              child: Text(
-                                                _fmtDur(h.durationSeconds!),
-                                                style: const TextStyle(
-                                                  fontSize: 10,
-                                                  color: Colors.white,
-                                                ),
-                                              ),
-                                            ),
-                                          ),
-                                        if (h.durationSeconds == null &&
-                                            snap.connectionState ==
-                                                ConnectionState.waiting)
-                                          Positioned(
-                                            right: 4,
-                                            bottom: 4,
-                                            child: Container(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                    horizontal: 4,
-                                                    vertical: 2,
-                                                  ),
-                                              decoration: BoxDecoration(
-                                                color: Colors.black.withOpacity(
-                                                  0.4,
-                                                ),
-                                                borderRadius:
-                                                    BorderRadius.circular(4),
-                                              ),
-                                              child: Text(
-                                                context.l10n(
-                                                  'browser.media.statusResolving',
-                                                ),
-                                                style: const TextStyle(
-                                                  fontSize: 10,
-                                                  color: Colors.white,
-                                                ),
-                                              ),
-                                            ),
-                                          ),
-                                      ],
-                                    );
-                                  },
-                                );
-                              } else {
-                                return Container(
-                                  decoration: BoxDecoration(
-                                    borderRadius: BorderRadius.circular(6),
-                                    color: Colors.black12,
-                                  ),
-                                  alignment: Alignment.center,
-                                  child: const Icon(Icons.audiotrack),
-                                );
-                              }
-                            }(),
-                          ),
-                          title: Text(
-                            _prettyFileName(h.url),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          subtitle: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 6,
-                                      vertical: 2,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: (h.type == 'image'
-                                              ? Colors.blueGrey
-                                              : (h.type == 'audio'
-                                                  ? Colors.teal
-                                                  : Colors.deepPurple))
-                                          .withOpacity(0.15),
-                                      borderRadius: BorderRadius.circular(6),
-                                    ),
-                                    child: Text(
-                                      h.type.isNotEmpty
-                                          ? h.type
-                                          : (h.contentType.isNotEmpty
-                                              ? h.contentType.split('/').first
-                                              : ''),
-                                      style: const TextStyle(fontSize: 12),
-                                    ),
-                                  ),
-                                  if (h.contentType.isNotEmpty) ...[
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: Text(
-                                        h.contentType,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(fontSize: 12),
-                                      ),
-                                    ),
-                                  ],
-                                ],
+                        return Column(
+                          children: [
+                            _BottomSheetHeader(
+                              title: sheetContext.l10n(
+                                'browser.mediaDetection.titleWithCount',
+                                params: {'count': list.length.toString()},
                               ),
-                              const SizedBox(height: 2),
-                              Text(
-                                h.url,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontSize: 12,
-                                  color: Colors.grey,
+                              trailing: TextButton.icon(
+                                icon: const Icon(Icons.delete_sweep),
+                                label: Text(
+                                  sheetContext.l10n('common.clearAll'),
                                 ),
-                              ),
-                              if (h.type != 'image')
-                                Text(
-                                  h.durationSeconds != null
-                                      ? context.l10n(
-                                        'browser.media.durationLabel',
-                                        params: {
-                                          'duration': _fmtDur(
-                                            h.durationSeconds!,
-                                          ),
-                                        },
-                                      )
-                                      : context.l10n(
-                                        'browser.media.durationResolving',
-                                      ),
-                                  style: const TextStyle(fontSize: 12),
-                                ),
-                            ],
-                          ),
-                          onLongPress: () async {
-                            await _previewHit(h);
-                          },
-                          trailing: Wrap(
-                            spacing: 4,
-                            children: [
-                              IconButton(
-                                icon: const Icon(Icons.link),
-                                tooltip: context.l10n(
-                                  'browser.context.copyLink',
-                                ),
-                                onPressed: () async {
-                                  await Clipboard.setData(
-                                    ClipboardData(text: h.url),
-                                  );
+                                onPressed: () {
+                                  repo.hits.value = [];
+                                  nav.pop();
                                   if (mounted) {
                                     ScaffoldMessenger.of(context).showSnackBar(
                                       SnackBar(
                                         duration: const Duration(seconds: 1),
                                         content: Text(
                                           context.l10n(
-                                            'browser.snack.copiedLink',
+                                            'browser.snack.mediaCleared',
                                           ),
                                         ),
                                       ),
@@ -7681,88 +8004,329 @@ const bindVideo = (video) => {
                                   }
                                 },
                               ),
-                              IconButton(
-                                icon: const Icon(Icons.download),
-                                tooltip: context.l10n('common.download'),
-                                onPressed: () {
-                                  Navigator.pop(context);
-                                  _confirmDownload(h.url);
+                              onClose: () => nav.pop(),
+                            ),
+                            const Divider(height: 1),
+                            Expanded(
+                              child: ListView.separated(
+                                itemCount: list.length,
+                                separatorBuilder:
+                                    (_, __) => const Divider(height: 1),
+                                itemBuilder: (_, i) {
+                                  final h = list[i];
+                                  return ListTile(
+                                    leading: SizedBox(
+                                      width: 56,
+                                      height: 56,
+                                      child: () {
+                                        if (h.type == 'image') {
+                                          return ClipRRect(
+                                            borderRadius: BorderRadius.circular(
+                                              6,
+                                            ),
+                                            child: Image.network(
+                                              h.url,
+                                              fit: BoxFit.cover,
+                                              errorBuilder:
+                                                  (_, __, ___) =>
+                                                      const Icon(Icons.image),
+                                            ),
+                                          );
+                                        } else if (h.type == 'video') {
+                                          return FutureBuilder<String?>(
+                                            future: _ensureVideoThumb(h.url),
+                                            builder: (_, snap) {
+                                              Widget base;
+                                              if (snap.connectionState ==
+                                                  ConnectionState.waiting) {
+                                                base = Container(
+                                                  decoration: BoxDecoration(
+                                                    color: Colors.black12,
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                          6,
+                                                        ),
+                                                  ),
+                                                  alignment: Alignment.center,
+                                                  child: const SizedBox(
+                                                    width: 18,
+                                                    height: 18,
+                                                    child:
+                                                        CircularProgressIndicator(
+                                                          strokeWidth: 2,
+                                                        ),
+                                                  ),
+                                                );
+                                              } else if (snap.hasData &&
+                                                  snap.data != null) {
+                                                base = ClipRRect(
+                                                  borderRadius:
+                                                      BorderRadius.circular(6),
+                                                  child: Image.file(
+                                                    File(snap.data!),
+                                                    fit: BoxFit.cover,
+                                                  ),
+                                                );
+                                              } else {
+                                                base = Container(
+                                                  decoration: BoxDecoration(
+                                                    color: Colors.black12,
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                          6,
+                                                        ),
+                                                  ),
+                                                  alignment: Alignment.center,
+                                                  child: const Icon(
+                                                    Icons.ondemand_video,
+                                                  ),
+                                                );
+                                              }
+                                              // overlay duration if available
+                                              return Stack(
+                                                children: [
+                                                  Positioned.fill(child: base),
+                                                  if (h.durationSeconds != null)
+                                                    Positioned(
+                                                      right: 4,
+                                                      bottom: 4,
+                                                      child: Container(
+                                                        padding:
+                                                            const EdgeInsets.symmetric(
+                                                              horizontal: 4,
+                                                              vertical: 2,
+                                                            ),
+                                                        decoration: BoxDecoration(
+                                                          color: Colors.black
+                                                              .withOpacity(0.6),
+                                                          borderRadius:
+                                                              BorderRadius.circular(
+                                                                4,
+                                                              ),
+                                                        ),
+                                                        child: Text(
+                                                          _fmtDur(
+                                                            h.durationSeconds!,
+                                                          ),
+                                                          style:
+                                                              const TextStyle(
+                                                                fontSize: 10,
+                                                                color:
+                                                                    Colors
+                                                                        .white,
+                                                              ),
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  if (h.durationSeconds ==
+                                                          null &&
+                                                      snap.connectionState ==
+                                                          ConnectionState
+                                                              .waiting)
+                                                    Positioned(
+                                                      right: 4,
+                                                      bottom: 4,
+                                                      child: Container(
+                                                        padding:
+                                                            const EdgeInsets.symmetric(
+                                                              horizontal: 4,
+                                                              vertical: 2,
+                                                            ),
+                                                        decoration: BoxDecoration(
+                                                          color: Colors.black
+                                                              .withOpacity(0.4),
+                                                          borderRadius:
+                                                              BorderRadius.circular(
+                                                                4,
+                                                              ),
+                                                        ),
+                                                        child: Text(
+                                                          context.l10n(
+                                                            'browser.media.statusResolving',
+                                                          ),
+                                                          style:
+                                                              const TextStyle(
+                                                                fontSize: 10,
+                                                                color:
+                                                                    Colors
+                                                                        .white,
+                                                              ),
+                                                        ),
+                                                      ),
+                                                    ),
+                                                ],
+                                              );
+                                            },
+                                          );
+                                        } else {
+                                          return Container(
+                                            decoration: BoxDecoration(
+                                              borderRadius:
+                                                  BorderRadius.circular(6),
+                                              color: Colors.black12,
+                                            ),
+                                            alignment: Alignment.center,
+                                            child: const Icon(Icons.audiotrack),
+                                          );
+                                        }
+                                      }(),
+                                    ),
+                                    title: Text(
+                                      _prettyFileName(h.url),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                    subtitle: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Row(
+                                          children: [
+                                            Container(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                    horizontal: 6,
+                                                    vertical: 2,
+                                                  ),
+                                              decoration: BoxDecoration(
+                                                color: (h.type == 'image'
+                                                        ? Colors.blueGrey
+                                                        : (h.type == 'audio'
+                                                            ? Colors.teal
+                                                            : Colors
+                                                                .deepPurple))
+                                                    .withOpacity(0.15),
+                                                borderRadius:
+                                                    BorderRadius.circular(6),
+                                              ),
+                                              child: Text(
+                                                h.type.isNotEmpty
+                                                    ? h.type
+                                                    : (h.contentType.isNotEmpty
+                                                        ? h.contentType
+                                                            .split('/')
+                                                            .first
+                                                        : ''),
+                                                style: const TextStyle(
+                                                  fontSize: 12,
+                                                ),
+                                              ),
+                                            ),
+                                            if (h.contentType.isNotEmpty) ...[
+                                              const SizedBox(width: 8),
+                                              Expanded(
+                                                child: Text(
+                                                  h.contentType,
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                  style: const TextStyle(
+                                                    fontSize: 12,
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
+                                          ],
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          h.url,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                            fontSize: 12,
+                                            color: Colors.grey,
+                                          ),
+                                        ),
+                                        if (h.type != 'image')
+                                          Text(
+                                            h.durationSeconds != null
+                                                ? context.l10n(
+                                                  'browser.media.durationLabel',
+                                                  params: {
+                                                    'duration': _fmtDur(
+                                                      h.durationSeconds!,
+                                                    ),
+                                                  },
+                                                )
+                                                : context.l10n(
+                                                  'browser.media.durationResolving',
+                                                ),
+                                            style: const TextStyle(
+                                              fontSize: 12,
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                    onLongPress: () async {
+                                      await _previewHit(h);
+                                    },
+                                    trailing: Wrap(
+                                      spacing: 4,
+                                      children: [
+                                        IconButton(
+                                          icon: const Icon(Icons.link),
+                                          tooltip: context.l10n(
+                                            'browser.context.copyLink',
+                                          ),
+                                          onPressed: () async {
+                                            await Clipboard.setData(
+                                              ClipboardData(text: h.url),
+                                            );
+                                            if (mounted) {
+                                              ScaffoldMessenger.of(
+                                                context,
+                                              ).showSnackBar(
+                                                SnackBar(
+                                                  duration: const Duration(
+                                                    seconds: 1,
+                                                  ),
+                                                  content: Text(
+                                                    context.l10n(
+                                                      'browser.snack.copiedLink',
+                                                    ),
+                                                  ),
+                                                ),
+                                              );
+                                            }
+                                          },
+                                        ),
+                                        IconButton(
+                                          icon: const Icon(Icons.download),
+                                          tooltip: context.l10n(
+                                            'common.download',
+                                          ),
+                                          onPressed: () {
+                                            nav.pop();
+                                            _confirmDownload(h.url);
+                                          },
+                                        ),
+                                      ],
+                                    ),
+                                  );
                                 },
                               ),
-                            ],
-                          ),
+                            ),
+                          ],
                         );
                       },
                     ),
                   ),
-                ],
-              );
-            },
-          ),
-        );
-      },
-    ).whenComplete(() {
-      unawaited(_resetWebViewAfterSheet());
-    });
-  }
-
-  /// --- Download speed helpers ---
-
-  /// key => snapshot (key can be url or savePath+phase)
-  final Map<String, _RateSnapshot> _rateSnaps = {};
-
-  /// Cache the most recent non-null speed so the UI can keep showing a value
-  /// while the next sample is still being gathered.
-  final Map<String, double> _lastSpeeds = {};
-  void _clearSpeedSnapshotsForTask(String savePath) {
-    final prefix = '$savePath|';
-    _rateSnaps.removeWhere((key, _) => key.startsWith(prefix));
-    _lastSpeeds.removeWhere((key, _) => key.startsWith(prefix));
-  }
-
-  void _resetAllSpeedTracking({bool clearCachedSpeeds = true}) {
-    _rateSnaps.clear();
-    if (clearCachedSpeeds) {
-      _lastSpeeds.clear();
-    }
-  }
-
-  String _fmtSpeed(num bps) {
-    // bytes per second to human friendly string without specifying colors
-    const units = ['B/s', 'KB/s', 'MB/s', 'GB/s', 'TB/s'];
-    double v = bps.toDouble();
-    int i = 0;
-    while (v >= 1024.0 && i < units.length - 1) {
-      v /= 1024.0;
-      i++;
-    }
-    return '${v.toStringAsFixed(v >= 100 ? 0 : (v >= 10 ? 1 : 2))} ${units[i]}';
-  }
-
-  _RateSnapshot _snapNow(int bytes) => _RateSnapshot(bytes, DateTime.now());
-
-  /// Computes speed in B/s based on previous snapshot.
-  /// Returns null if not enough data yet.
-  double? _computeSpeed(String key, int bytesNow) {
-    final prev = _rateSnaps[key];
-    final now = DateTime.now();
-    _rateSnaps[key] = _snapNow(bytesNow);
-    if (prev == null) return null;
-    final elapsedMs = now.difference(prev.ts).inMilliseconds;
-    if (elapsedMs <= 0) {
-      return null;
-    }
-    final db = bytesNow - prev.bytes;
-    if (db <= 0) {
-      if (elapsedMs > 1200) {
-        _lastSpeeds.remove(key);
+                ),
+              ),
+            ),
+          );
+        },
+      );
+    } finally {
+      await _restoreWebInteractions();
+      if (controller != null) {
+        try {
+          await _setIosLinkContextMenuBridgeEnabled(controller, true);
+        } catch (_) {}
       }
-      return null;
     }
-    return db / (elapsedMs / 1000.0);
   }
-
-  /// --- end helpers ---
 
   /// Shows a bottom sheet listing all current download tasks. Each entry
   /// displays its name (or URL), status, timestamp, and progress. This
@@ -7770,103 +8334,145 @@ const bindVideo = (video) => {
   /// navigating away from the browser tab.
   void _openDownloadsSheet() {
     _suppressLinkLongPress = true;
-    _resetAllSpeedTracking(clearCachedSpeeds: false);
-    showModalBottomSheet(
-      context: context,
-      builder: (_) {
-        return SafeArea(
-          child: AnimatedBuilder(
-            animation: AppRepo.I,
-            builder: (_, __) {
-              final list = repo.downloads.value;
+    final controller = Platform.isIOS ? _currentWebViewController : null;
+    Future<void> openSheet() async {
+      if (controller != null) {
+        try {
+          await _setIosLinkContextMenuBridgeEnabled(controller, false);
+        } catch (_) {}
+      }
+      try {
+        await _showPointerInterceptBottomSheet(
+          barrierColor: Theme.of(context).colorScheme.scrim.withOpacity(0.5),
+          builder: (sheetContext) {
+            final theme = Theme.of(sheetContext);
+            return Align(
+              alignment: Alignment.bottomCenter,
+              child: FractionallySizedBox(
+                heightFactor: 0.8,
+                widthFactor: 1,
+                child: ClipRRect(
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(20),
+                  ),
+                  child: Material(
+                    color: theme.colorScheme.surface,
+                    child: SafeArea(
+                      top: false,
+                      child: AnimatedBuilder(
+                        animation: AppRepo.I,
+                        builder: (_, __) {
+                          final nav = Navigator.of(sheetContext);
+                          final list = repo.downloads.value;
 
-              // 只顯示真實的下載任務（排除匯入/本機項目），完成項目仍會保留在清單中。
-              final tasks =
-                  list.where(_isDownloadTaskEntry).toList()
-                    ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
-              // 檢查並補齊缺失縮圖（重啟後快取丟失時自動重建）
-              for (final t in tasks) {
-                if (AppRepo.I.resolvedTaskType(t) != 'video') continue;
-                final p = t.thumbnailPath;
-                if (p == null || p.isEmpty || !File(p).existsSync()) {
-                  _regenThumbAsync(t); // 背景抽圖，完成會 setState + 持久化
-                }
-              }
+                          final tasks =
+                              list.where(_isDownloadTaskEntry).toList()..sort(
+                                (a, b) => b.timestamp.compareTo(a.timestamp),
+                              );
+                          for (final t in tasks) {
+                            if (AppRepo.I.resolvedTaskType(t) != 'video')
+                              continue;
+                            final p = t.thumbnailPath;
+                            if (p == null ||
+                                p.isEmpty ||
+                                !File(p).existsSync()) {
+                              _regenThumbAsync(t);
+                            }
+                          }
 
-              if (tasks.isEmpty) {
-                return Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Text(context.l10n('browser.downloadList.empty')),
-                );
-              }
-              return Column(
-                children: [
-                  ListTile(
-                    title: Text(
-                      context.l10n(
-                        'browser.downloadList.titleWithCount',
-                        params: {'count': tasks.length.toString()},
-                      ),
-                    ),
-                    trailing: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        IconButton(
-                          icon: const Icon(Icons.delete_sweep),
-                          tooltip: context.l10n(
-                            'browser.downloadList.clearTooltip',
-                          ),
-                          onPressed: () async {
-                            final cleared =
-                                await AppRepo.I.retainOnlyCompletedDownloads();
-                            if (!mounted) return;
-                            Navigator.pop(context);
-                            if (!cleared) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  duration: const Duration(seconds: 1),
-                                  content: Text(
-                                    context.l10n(
-                                      'browser.snack.noTasksToClear',
+                          if (tasks.isEmpty) {
+                            return Column(
+                              children: [
+                                _BottomSheetHeader(
+                                  title: sheetContext.l10n(
+                                    'browser.downloadList.titleWithCount',
+                                    params: {'count': '0'},
+                                  ),
+                                  onClose: () => nav.pop(),
+                                ),
+                                Expanded(
+                                  child: Center(
+                                    child: Text(
+                                      context.l10n(
+                                        'browser.downloadList.empty',
+                                      ),
                                     ),
                                   ),
                                 ),
-                              );
-                            } else {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  duration: const Duration(seconds: 1),
-                                  content: Text(
-                                    context.l10n('browser.snack.tasksCleared'),
-                                  ),
+                              ],
+                            );
+                          }
+
+                          return Column(
+                            children: [
+                              _BottomSheetHeader(
+                                title: sheetContext.l10n(
+                                  'browser.downloadList.titleWithCount',
+                                  params: {'count': tasks.length.toString()},
                                 ),
-                              );
-                            }
-                          },
-                        ),
-                      ],
+                                onClose: () => nav.pop(),
+                                trailing: IconButton(
+                                  icon: const Icon(Icons.delete_sweep),
+                                  tooltip: context.l10n(
+                                    'browser.downloadList.clearTooltip',
+                                  ),
+                                  onPressed: () async {
+                                    final cleared =
+                                        await AppRepo.I
+                                            .retainOnlyCompletedDownloads();
+                                    if (!mounted) return;
+                                    nav.pop();
+                                    final message =
+                                        cleared
+                                            ? context.l10n(
+                                              'browser.snack.tasksCleared',
+                                            )
+                                            : context.l10n(
+                                              'browser.snack.noTasksToClear',
+                                            );
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        duration: const Duration(seconds: 1),
+                                        content: Text(message),
+                                      ),
+                                    );
+                                  },
+                                ),
+                              ),
+                              const Divider(height: 1),
+                              Expanded(
+                                child: ListView.separated(
+                                  itemCount: tasks.length,
+                                  separatorBuilder:
+                                      (_, __) => const Divider(height: 1),
+                                  itemBuilder: (_, i) {
+                                    final t = tasks[i];
+                                    return _buildDownloadTile(t);
+                                  },
+                                ),
+                              ),
+                            ],
+                          );
+                        },
+                      ),
                     ),
                   ),
-                  const Divider(height: 1),
-                  Expanded(
-                    child: ListView.separated(
-                      itemCount: tasks.length,
-                      separatorBuilder: (_, __) => const Divider(height: 1),
-                      itemBuilder: (_, i) {
-                        final t = tasks[i];
-                        return _buildDownloadTile(t);
-                      },
-                    ),
-                  ),
-                ],
-              );
-            },
-          ),
+                ),
+              ),
+            );
+          },
         );
-      },
-    ).whenComplete(() {
-      unawaited(_resetWebViewAfterSheet());
-    });
+      } finally {
+        await _restoreWebInteractions();
+        if (controller != null) {
+          try {
+            await _setIosLinkContextMenuBridgeEnabled(controller, true);
+          } catch (_) {}
+        }
+      }
+    }
+
+    unawaited(openSheet());
   }
 
   /// Build a ListTile for a given download task. This encapsulates all the logic
@@ -7903,38 +8509,39 @@ const bindVideo = (video) => {
     ];
     final currentKey = currentId ?? _kFolderSheetDefaultKey;
 
-    final result = await showModalBottomSheet<String>(
+    return showModalBottomSheet<String>(
       context: context,
       builder: (context) {
-        return SafeArea(
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                ListTile(
-                  title: Text(context.l10n('browser.dialog.selectFolder')),
-                ),
-                for (var i = 0; i < ids.length; i++)
+        return PointerInterceptor(
+          child: SafeArea(
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
                   ListTile(
-                    leading: const Icon(Icons.folder),
-                    title: Text(names[i]),
-                    trailing:
-                        (ids[i] ?? _kFolderSheetDefaultKey) == currentKey
-                            ? const Icon(Icons.check, color: Colors.green)
-                            : null,
-                    onTap: () {
-                      final key = ids[i] ?? _kFolderSheetDefaultKey;
-                      Navigator.of(context).pop(key);
-                    },
+                    title: Text(context.l10n('browser.dialog.selectFolder')),
                   ),
-                const SizedBox(height: 12),
-              ],
+                  for (var i = 0; i < ids.length; i++)
+                    ListTile(
+                      leading: const Icon(Icons.folder),
+                      title: Text(names[i]),
+                      trailing:
+                          (ids[i] ?? _kFolderSheetDefaultKey) == currentKey
+                              ? const Icon(Icons.check, color: Colors.green)
+                              : null,
+                      onTap: () {
+                        final key = ids[i] ?? _kFolderSheetDefaultKey;
+                        Navigator.of(context).pop(key);
+                      },
+                    ),
+                  const SizedBox(height: 12),
+                ],
+              ),
             ),
           ),
         );
       },
     );
-    return result;
   }
 
   Future<void> _moveTaskToFolder(DownloadTask task) async {
@@ -7961,381 +8568,93 @@ const bindVideo = (video) => {
   }
 
   Widget _buildDownloadTile(DownloadTask t) {
-    // Determine if this task is an HLS playlist. HLS tasks use the segment
-    // count to track progress rather than bytes until conversion begins.
-    final bool isHls = t.kind == 'hls';
-    // A HLS task is considered converting when all segments have been
-    // downloaded but the state is still downloading. During this phase the
-    // output file grows in size but total segment count does not change.
-    final bool isConverting =
-        isHls &&
-        t.state == 'downloading' &&
-        ((t.total != null && t.received >= t.total!) ||
-            t.progressUnit == 'hls-converting');
-    // HLS tasks actively downloading segments have received fewer segments
-    // than the total and are still marked as downloading.
-    final bool isDownloadingSegments =
-        isHls &&
-        t.state == 'downloading' &&
-        (t.total != null && t.received < t.total!);
     final repo = AppRepo.I;
     final resolvedType = repo.resolvedTaskType(t);
-    if (t.state != 'downloading' || t.paused) {
-      _clearSpeedSnapshotsForTask(t.savePath);
-    }
-    final activeHlsPath = repo.activeHlsOutputFor(t) ?? t.savePath;
-    final int? activeHlsBytes =
-        isHls
-            ? (_fileLengthIfExists(activeHlsPath) ??
-                _fileLengthIfExists(t.savePath))
-            : null;
+    final displayName = (t.name?.trim().isNotEmpty ?? false)
+        ? t.name!.trim()
+        : path.basename(t.savePath);
+    final state = t.state.toLowerCase();
+    final bool isDownloading = state == 'downloading';
+    final bool isQueued = state == 'queued';
+    final bool isPaused = state == 'paused';
+    final bool isDone = state == 'done';
+    final bool isError = state == 'error';
+    final bool isConverting = (t.extra?['isConverting'] == true);
 
-    // --- Speed calculation setup ---
-
-    String speedKeyPhase = 'dl';
-    int? speedBytesNow;
-
-    // Compute progress percentage. For HLS segment downloads, this is the
-    // fraction of segments downloaded. For file downloads, it is the
-    // fraction of bytes downloaded. When progress cannot be determined, it
-    // remains null and the UI will show an indeterminate progress bar.
+    final bool showProgress = isDownloading || isQueued || isPaused;
     double? progressPercent;
-    if (isDownloadingSegments) {
-      final int totalSegs = t.total ?? 0;
-      if (totalSegs > 0) {
-        progressPercent = t.received / totalSegs;
-      }
-    } else if (isHls &&
-        t.progressUnit == 'time-ms' &&
-        t.total != null &&
-        t.total! > 0) {
-      progressPercent = t.received / (t.total!.toDouble());
-    } else if (!isHls &&
-        t.state == 'downloading' &&
-        t.total != null &&
-        t.total! > 0) {
-      progressPercent = t.received / (t.total!.toDouble());
+    if (showProgress && (t.total ?? 0) > 0) {
+      progressPercent = (t.received / t.total!).clamp(0.0, 1.0);
     }
 
-    // Decide which byte counter to use for speed:
-    // - 非 HLS：使用 t.received（bytes）
-    // - HLS：使用目前輸出檔案大小（無論片段下載或轉檔階段）
-    if (!isHls && t.state == 'downloading') {
-      speedBytesNow = t.received;
-      speedKeyPhase = 'dl';
-    } else if (isHls && t.state == 'downloading' && activeHlsBytes != null) {
-      speedBytesNow = activeHlsBytes;
-      speedKeyPhase = isConverting ? 'conv' : 'hls';
+    String? percentText;
+    if (progressPercent != null) {
+      final double value = (progressPercent * 100).clamp(0, 100);
+      percentText = value >= 1
+          ? '${value.toStringAsFixed(value >= 100 ? 0 : 1)}%'
+          : '${value.toStringAsFixed(1)}%';
     }
 
-    List<Widget> buildSubtitleWidgets() {
-      // Build the subtitle lines dynamically. Use a list to collect lines and
-      // later spread them into the Column.
-      final List<Widget> subtitleWidgets = [];
-      bool addedSize = false;
+    String? progressLabel;
+    if (isConverting) {
+      progressLabel = context.l10n('media.state.converting');
+    } else if (isDownloading) {
+      progressLabel = context.l10n('media.state.downloading');
+    } else if (isQueued) {
+      progressLabel = context.l10n('media.state.queued');
+    } else if (isPaused) {
+      progressLabel = context.l10n('media.state.paused');
+    }
 
-      // First line: the URL (truncated)
-      subtitleWidgets.add(
-        Text(
-          t.url,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontSize: 12, color: Colors.grey),
-        ),
-      );
-      // Second line: status (show '轉換中' during conversion)
-      final String statusText =
-          isConverting
-              ? context.l10n('browser.download.status.converting')
-              : t.state;
-      subtitleWidgets.add(
-        Text(
-          context.l10n(
-            'browser.download.statusLabel',
-            params: {'status': statusText},
-          ),
-          style: const TextStyle(fontSize: 12),
-        ),
-      );
-      // For non-HLS tasks, display the timestamp when the download was added. HLS
-      // tasks omit this to reduce clutter.
-      if (!isHls) {
-        subtitleWidgets.add(
-          Text(
-            context.l10n(
-              'browser.download.timeLabel',
-              params: {
-                'time': t.timestamp.toLocal().toString().split('.').first,
-              },
-            ),
-            style: const TextStyle(fontSize: 12),
-          ),
-        );
-      }
-      // If downloading HLS segments, show the segment count and progress.
-      if (isDownloadingSegments) {
-        subtitleWidgets.add(
-          Text(
-            context.l10n(
-              'browser.download.segmentLabel',
-              params: {'progress': '${t.received}/${t.total}'},
-            ),
-            style: const TextStyle(fontSize: 12),
-          ),
-        );
-        final int totalSegs = t.total ?? 0;
-        if (totalSegs > 0) {
-          final double pct = t.received / totalSegs * 100.0;
-          subtitleWidgets.add(
-            Text(
-              context.l10n(
-                'browser.download.progressLabel',
-                params: {
-                  'progress':
-                      '${t.received}/${t.total} (${pct.toStringAsFixed(1)}%)',
-                },
-              ),
-              style: const TextStyle(fontSize: 12),
-            ),
-          );
-        }
-        // 以「片段/秒」顯示近似速度（HLS 片段階段無可靠 byte 計數）
-        final segKey = '${t.savePath}|seg';
-        final segRate = _computeSpeed(
-          segKey,
-          t.received,
-        ); // delta segments per second
-        if (segRate != null) {
-          subtitleWidgets.add(
-            Text(
-              context.l10n(
-                'browser.download.speedLabel',
-                params: {
-                  'speed':
-                      '${segRate.toStringAsFixed(2)} ${context.l10n('browser.download.segmentsPerSecond')}',
-                },
-              ),
-              style: const TextStyle(fontSize: 12),
-            ),
-          );
-        } else {
-          _rateSnaps[segKey] = _snapNow(t.received);
-          subtitleWidgets.add(
-            Text(
-              context.l10n('browser.download.speedMeasuring'),
-              style: const TextStyle(fontSize: 12),
-            ),
-          );
-        }
-      } else if (isHls &&
-          t.progressUnit == 'time-ms' &&
-          t.total != null &&
-          t.total! > 0) {
-        final cur = Duration(milliseconds: t.received);
-        final tot = Duration(milliseconds: t.total!);
-        final percent = progressPercent ?? 0.0;
-        final percentText = (percent * 100).toStringAsFixed(1);
-        String progressText;
-        final bytes = activeHlsBytes;
-        if (bytes != null && bytes > 0) {
-          int? estimatedTotalBytes;
-          if (percent >= 0.01) {
-            estimatedTotalBytes = (bytes / percent).round();
-          }
-          final timePart =
-              '${_fmtDur(cur.inSeconds.toDouble())}/${_fmtDur(tot.inSeconds.toDouble())}';
-          final sizePart =
-              (estimatedTotalBytes != null && estimatedTotalBytes > 0)
-                  ? '${_fmtSize(bytes)} / ${_fmtSize(estimatedTotalBytes)} ($percentText%)'
-                  : '${_fmtSize(bytes)} ($percentText%)';
-          progressText = '$sizePart • $timePart';
-          addedSize = true;
-        } else {
-          progressText =
-              '${_fmtDur(cur.inSeconds.toDouble())}/${_fmtDur(tot.inSeconds.toDouble())} ($percentText%)';
-        }
-        subtitleWidgets.add(
-          Text(
-            context.l10n(
-              'browser.download.progressLabel',
-              params: {'progress': progressText},
-            ),
-            style: const TextStyle(fontSize: 12),
-          ),
-        );
-        if (bytes == null) {
-          try {
-            final f = File(t.savePath);
-            if (f.existsSync() && !addedSize) {
-              subtitleWidgets.add(
+    final subtitleChildren = <Widget>[];
+    if (showProgress) {
+      subtitleChildren.add(LinearProgressIndicator(value: progressPercent));
+      subtitleChildren.add(
+        Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: Row(
+            mainAxisAlignment: (progressLabel != null && percentText != null)
+                ? MainAxisAlignment.spaceBetween
+                : (progressLabel != null
+                    ? MainAxisAlignment.start
+                    : MainAxisAlignment.end),
+            children: [
+              if (progressLabel != null)
                 Text(
-                  context.l10n(
-                    'browser.download.sizeLabel',
-                    params: {'size': _fmtSize(f.lengthSync())},
-                  ),
+                  progressLabel,
                   style: const TextStyle(fontSize: 12),
                 ),
-              );
-              addedSize = true;
-            }
-          } catch (_) {}
-        }
-      }
-      // During conversion of an HLS task, show the current output file size to
-      // provide some sense of progress. Since FFmpeg does not expose a
-      // percentage, we rely on the file growing over time.
-      if (isConverting) {
-        try {
-          final f = File(t.savePath);
-          if (f.existsSync() && !addedSize) {
-            subtitleWidgets.add(
-              Text(
-                context.l10n(
-                  'browser.download.sizeLabel',
-                  params: {'size': _fmtSize(f.lengthSync())},
-                ),
-                style: const TextStyle(fontSize: 12),
-              ),
-            );
-            addedSize = true;
-          } else if (!f.existsSync()) {
-            subtitleWidgets.add(
-              Text(
-                context.l10n('browser.download.sizeConverting'),
-                style: const TextStyle(fontSize: 12),
-              ),
-            );
-          }
-        } catch (_) {
-          subtitleWidgets.add(
-            Text(
-              context.l10n('browser.download.sizeConverting'),
-              style: const TextStyle(fontSize: 12),
-            ),
-          );
-        }
-      }
-      // For non-HLS downloads: show the downloaded size while downloading and the
-      // final size when finished or errored.
-      if (!isHls) {
-        if (t.state == 'downloading') {
-          final hasTotal = t.total != null && t.total! > 0;
-          final sizeValue =
-              hasTotal
-                  ? '${_fmtSize(t.received)} / ${_fmtSize(t.total!)}'
-                  : _fmtSize(t.received);
-          subtitleWidgets.add(
-            Text(
-              context.l10n(
-                'browser.download.sizeLabel',
-                params: {'size': sizeValue},
-              ),
-              style: const TextStyle(fontSize: 12),
-            ),
-          );
-          if (progressPercent != null) {
-            subtitleWidgets.add(
-              Text(
-                context.l10n(
-                  'browser.download.progressLabel',
-                  params: {
-                    'progress':
-                        '${(progressPercent * 100).toStringAsFixed(1)}%',
-                  },
-                ),
-                style: const TextStyle(fontSize: 12),
-              ),
-            );
-          }
-        } else if (t.state == 'done' || t.state == 'error') {
-          try {
-            final f = File(t.savePath);
-            if (f.existsSync() && !addedSize) {
-              subtitleWidgets.add(
+              if (percentText != null)
                 Text(
-                  context.l10n(
-                    'browser.download.sizeLabel',
-                    params: {'size': _fmtSize(f.lengthSync())},
-                  ),
+                  percentText,
                   style: const TextStyle(fontSize: 12),
                 ),
-              );
-              addedSize = true;
-            }
-          } catch (_) {}
-        }
-      } else if (isHls && t.state == 'done') {
-        // HLS tasks that have completed conversion: show final size.
-        try {
-          final f = File(t.savePath);
-          if (f.existsSync() && !addedSize) {
-            subtitleWidgets.add(
-              Text(
-                context.l10n(
-                  'browser.download.sizeLabel',
-                  params: {'size': _fmtSize(f.lengthSync())},
-                ),
-                style: const TextStyle(fontSize: 12),
-              ),
-            );
-            addedSize = true;
-          }
-        } catch (_) {}
-      }
-      // 任何 downloading 狀態下的通用「目前檔案大小」顯示（若前面尚未加入大小）
-      if (t.state == 'downloading' && !addedSize) {
-        final bytes =
-            isHls ? activeHlsBytes : _fileLengthIfExists(activeHlsPath);
-        if (bytes != null) {
-          subtitleWidgets.add(
-            Text(
-              context.l10n(
-                'browser.download.sizeLabel',
-                params: {'size': _fmtSize(bytes)},
-              ),
-              style: const TextStyle(fontSize: 12),
+            ],
+          ),
+        ),
+      );
+    } else if (isError) {
+      subtitleChildren.add(
+        Text(
+          context.l10n('media.state.error'),
+          style: const TextStyle(fontSize: 12, color: Colors.redAccent),
+        ),
+      );
+    } else if (isDone) {
+      final int? fileSize = _fileLengthIfExists(t.savePath);
+      if (fileSize != null) {
+        subtitleChildren.add(
+          Text(
+            context.l10n(
+              'browser.download.sizeLabel',
+              params: {'size': _fmtSize(fileSize)},
             ),
-          );
-          addedSize = true;
-        }
+            style: const TextStyle(fontSize: 12),
+          ),
+        );
       }
-      // 顯示即時下載/轉換速度
-      if (speedBytesNow != null) {
-        final key = '${t.savePath}|$speedKeyPhase';
-        final sp = _computeSpeed(key, speedBytesNow!);
-        if (sp != null) {
-          _lastSpeeds[key] = sp;
-          subtitleWidgets.add(
-            Text(
-              context.l10n(
-                'browser.download.speedLabel',
-                params: {'speed': _fmtSpeed(sp)},
-              ),
-              style: const TextStyle(fontSize: 12),
-            ),
-          );
-        } else {
-          // 首次建立快照時先不顯示數值（避免顯示 0）
-          _rateSnaps.putIfAbsent(key, () => _snapNow(speedBytesNow!));
-          final cached = _lastSpeeds[key];
-          subtitleWidgets.add(
-            Text(
-              cached != null
-                  ? context.l10n(
-                    'browser.download.speedLabel',
-                    params: {'speed': _fmtSpeed(cached)},
-                  )
-                  : context.l10n('browser.download.speedMeasuring'),
-              style: const TextStyle(fontSize: 12),
-            ),
-          );
-        }
-      }
-
-      // Append duration information when available. If unavailable and the
-      // media is audio/video, show a placeholder.
       if (t.duration != null) {
-        subtitleWidgets.add(
+        subtitleChildren.add(
           Text(
             context.l10n(
               'browser.media.durationLabel',
@@ -8344,157 +8663,108 @@ const bindVideo = (video) => {
             style: const TextStyle(fontSize: 12),
           ),
         );
-      } else if (resolvedType == 'video' || resolvedType == 'audio') {
-        subtitleWidgets.add(
-          Text(
-            context.l10n('browser.media.durationResolving'),
-            style: const TextStyle(fontSize: 12),
-          ),
-        );
       }
-      return subtitleWidgets;
+    } else {
+      subtitleChildren.add(
+        Text(
+          context.l10n(
+            'browser.download.statusLabel',
+            params: {'status': t.state},
+          ),
+          style: const TextStyle(fontSize: 12),
+        ),
+      );
     }
 
-    // 對於 HLS 轉換中或下載中，使用小型 ticker 讓速度/大小文字即時刷新
-    final needsTicker = isConverting || t.state == 'downloading';
-
-    Widget buildTile() {
-      final subtitleWidgets = buildSubtitleWidgets();
-      // Build and return the ListTile. Action buttons for pause/resume/delete
-      // remain unchanged. Progress indicators adapt based on the computed
-      // progressPercent.
-      return ListTile(
-        isThreeLine: true,
-        dense: false,
-        minVerticalPadding: 8,
-        leading: SizedBox(width: 64, height: 64, child: _buildThumb(t)),
-        title: Text(
-          t.name ?? path.basename(t.savePath),
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-        ),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            ...subtitleWidgets,
-            if (t.state == 'downloading')
-              (progressPercent == null)
-                  ? const LinearProgressIndicator()
-                  : LinearProgressIndicator(value: progressPercent),
-          ],
-        ),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (t.state == 'downloading' && !t.paused && !isConverting)
-              IconButton(
-                icon: const Icon(Icons.pause),
-                tooltip: context.l10n('common.pause'),
-                onPressed: () {
-                  AppRepo.I.pauseTask(t);
-                },
-              ),
-            if (t.state == 'paused' || t.paused)
-              IconButton(
-                icon: const Icon(Icons.play_arrow),
-                tooltip: context.l10n('common.resume'),
-                onPressed: () {
-                  AppRepo.I.resumeTask(t);
-                },
-              ),
+    return ListTile(
+      isThreeLine: subtitleChildren.length > 1,
+      dense: false,
+      minVerticalPadding: 8,
+      leading: SizedBox(width: 64, height: 64, child: _buildThumb(t)),
+      title: Text(
+        displayName,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+      ),
+      subtitle: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: subtitleChildren,
+      ),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (!isDone)
             IconButton(
-              icon: const Icon(Icons.folder_open),
-              tooltip: context.l10n('browser.download.moveToFolder'),
+              icon: const Icon(Icons.refresh),
+              tooltip: context.l10n('common.retry'),
               onPressed: () {
-                _moveTaskToFolder(t);
+                AppRepo.I.retryTask(t);
               },
             ),
-            IconButton(
-              icon: const Icon(Icons.delete_outline),
-              tooltip: context.l10n('common.delete'),
-              onPressed: () async {
-                final state = t.state.toLowerCase();
-                final isCompleted = state == 'done';
-                final shouldDeleteFile = !isCompleted;
-                if (!isCompleted && state == 'downloading') {
-                  await AppRepo.I.pauseTask(t);
-                }
-                await AppRepo.I.removeTasks([t], deleteFiles: shouldDeleteFile);
-                await AppRepo.I.rescanDownloadsFolder();
-                if (!mounted) return;
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    duration: const Duration(seconds: 1),
-                    content: Text(
-                      context.l10n(
-                        shouldDeleteFile
-                            ? 'browser.snack.downloadRemovedDeletedFile'
-                            : 'browser.snack.downloadRemovedKeepFile',
-                      ),
-                    ),
-                  ),
-                );
-              },
-            ),
-          ],
-        ),
-        onTap: () async {
-          if ((t.state).toString().toLowerCase() != 'done') return;
-          String? filePath = t.savePath.isNotEmpty ? t.savePath : null;
-          if (filePath != null && !File(filePath).existsSync()) {
-            filePath = null;
-          }
-          if (resolvedType == 'video' || resolvedType == 'audio') {
-            final target = filePath ?? t.url;
-            _playMedia(target);
-            return;
-          }
-          if (resolvedType == 'image') {
-            if (filePath != null) {
-              final ok = await PurchaseService().ensurePremium(
-                context: context,
-                featureName: context.l10n('feature.export'),
-              );
-              if (!ok) return;
-              final imagePath = filePath;
+          IconButton(
+            icon: const Icon(Icons.folder_open),
+            tooltip: context.l10n('browser.download.moveToFolder'),
+            onPressed: () {
+              _moveTaskToFolder(t);
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.delete_outline),
+            tooltip: context.l10n('common.delete'),
+            onPressed: () async {
+              final isCompleted = isDone;
+              final shouldDeleteFile = !isCompleted;
+              if (!isCompleted && isDownloading) {
+                await AppRepo.I.pauseTask(t);
+              }
+              await AppRepo.I.removeTasks([t], deleteFiles: shouldDeleteFile);
+              await AppRepo.I.rescanDownloadsFolder();
               if (!mounted) return;
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder:
-                      (_) => ImagePreviewPage(
-                        filePath: imagePath,
-                        title: t.name ?? path.basename(imagePath),
-                      ),
-                ),
-              );
-            } else if (mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
                   duration: const Duration(seconds: 1),
-                  content: Text(context.l10n('browser.snack.fileMissing')),
-                ),
-              );
-            }
-            return;
-          }
-          if (filePath != null) {
-            try {
-              await AppRepo.I.sharePaths([filePath]);
-            } catch (e) {
-              if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    duration: const Duration(seconds: 1),
-                    content: Text(
-                      context.l10n(
-                        'browser.snack.exportFailed',
-                        params: {'error': '$e'},
-                      ),
+                  content: Text(
+                    context.l10n(
+                      shouldDeleteFile
+                          ? 'browser.snack.downloadRemovedDeletedFile'
+                          : 'browser.snack.downloadRemovedKeepFile',
                     ),
                   ),
-                );
-              }
-            }
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+      onTap: () async {
+        if (!isDone) return;
+        String? filePath = t.savePath.isNotEmpty ? t.savePath : null;
+        if (filePath != null && !File(filePath).existsSync()) {
+          filePath = null;
+        }
+        if (resolvedType == 'video' || resolvedType == 'audio') {
+          final target = filePath ?? t.url;
+          _playMedia(target);
+          return;
+        }
+        if (resolvedType == 'image') {
+          if (filePath != null) {
+            final ok = await PurchaseService().ensurePremium(
+              context: context,
+              featureName: context.l10n('feature.export'),
+            );
+            if (!ok) return;
+            final imagePath = filePath;
+            if (!mounted) return;
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => ImagePreviewPage(
+                  filePath: imagePath,
+                  title: t.name ?? path.basename(imagePath),
+                ),
+              ),
+            );
           } else if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
@@ -8503,18 +8773,38 @@ const bindVideo = (video) => {
               ),
             );
           }
-        },
-      );
-    }
-
-    if (!needsTicker) {
-      return buildTile();
-    }
-    return StreamBuilder<int>(
-      stream: Stream.periodic(const Duration(milliseconds: 800), (i) => i),
-      builder: (_, __) => buildTile(),
+          return;
+        }
+        if (filePath != null) {
+          try {
+            await AppRepo.I.sharePaths([filePath]);
+          } catch (e) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  duration: const Duration(seconds: 1),
+                  content: Text(
+                    context.l10n(
+                      'browser.snack.exportFailed',
+                      params: {'error': '$e'},
+                    ),
+                  ),
+                ),
+              );
+            }
+          }
+        } else if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              duration: const Duration(seconds: 1),
+              content: Text(context.l10n('browser.snack.fileMissing')),
+            ),
+          );
+        }
+      },
     );
   }
+
 }
 
 class FavoritesPage extends StatelessWidget {

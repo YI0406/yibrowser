@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:ui';
+import 'dart:math' as math;
+import 'dart:ui' as ui;
 import 'package:path/path.dart' as p;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -64,6 +65,14 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   bool _isVolumeGesture = false;
   bool _showSeekOverlay = false;
   bool _showVolumeOverlay = false;
+  Uint8List? _seekPreviewImage;
+  Duration? _lastSeekPreviewRequest;
+  int _seekPreviewRequestId = 0;
+  SpriteSheetInfo? _spriteSheet;
+  ui.Image? _spriteImage;
+  ui.Rect? _spriteSourceRect;
+  Size? _spriteDisplaySize;
+  final Map<int, Uint8List> _seekPreviewCache = {};
   double _volumeGestureBase = 0.0;
   double _volumePreview = 0.0;
   bool _speedBoostActive = false;
@@ -108,6 +117,11 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
 
   Future<void> _initializePlayer() async {
     await _player.setSource(_currentPath);
+    _seekPreviewCache.clear();
+    _spriteSheet = null;
+    _spriteImage = null;
+    _spriteSourceRect = null;
+    _spriteDisplaySize = null;
     final initial = _pendingStartAt;
     if (initial != null && initial > Duration.zero) {
       _dragTarget = initial;
@@ -144,6 +158,27 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     });
   }
 
+  Future<void> _prepareSpriteSheet(Duration duration) async {
+    final info = await AppRepo.I.ensureSpriteSheet(
+      _currentPath,
+      duration: duration,
+    );
+    if (!mounted || info == null) return;
+    try {
+      final file = File(info.imagePath);
+      if (!await file.exists()) return;
+      final bytes = await file.readAsBytes();
+      final image = await decodeImageFromList(bytes);
+      if (!mounted) return;
+      setState(() {
+        _spriteSheet = info;
+        _spriteImage = image;
+        _spriteSourceRect = null;
+        _spriteDisplaySize = null;
+      });
+    } catch (_) {}
+  }
+
   void _handlePlayerValue() {
     final previous = _latestValue;
     final value = _player.value;
@@ -168,6 +203,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
         unawaited(_player.play());
       }
       _scheduleHideControls();
+      unawaited(_prepareSpriteSheet(value.duration));
     }
     if (value.isCompleted && !previous.isCompleted) {
       _handlePlaybackCompleted();
@@ -395,6 +431,80 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     _showSeekOverlay = false;
     _showVolumeOverlay = false;
     _hideTimer?.cancel();
+    unawaited(_requestSeekPreview(_seekPreviewPosition));
+  }
+
+  Future<void> _requestSeekPreview(Duration target) async {
+    if (_spriteSheet != null && _spriteImage != null) {
+      final info = _spriteSheet!;
+      final image = _spriteImage!;
+      final interval = info.intervalMs <= 0 ? 1000 : info.intervalMs;
+      int index = target.inMilliseconds ~/ interval;
+      if (index >= info.frameCount) index = info.frameCount - 1;
+      if (index < 0) index = 0;
+      final columns = math.max(1, info.columns);
+      final rows = math.max(1, info.rows);
+      final cellWidth = image.width / columns;
+      final cellHeight = image.height / rows;
+      final col = index % columns;
+      final row = index ~/ columns;
+      final srcRect = ui.Rect.fromLTWH(
+        col * cellWidth,
+        row * cellHeight,
+        cellWidth,
+        cellHeight,
+      );
+      final displayWidth = 220.0;
+      final displayHeight = displayWidth * (cellHeight / cellWidth);
+      setState(() {
+        _spriteSourceRect = srcRect;
+        _spriteDisplaySize = Size(displayWidth, displayHeight);
+        _seekPreviewImage = null;
+      });
+      return;
+    }
+
+    if (defaultTargetPlatform != TargetPlatform.iOS) return;
+    if (!_latestValue.isInitialized) return;
+    final last = _lastSeekPreviewRequest;
+    if (last != null &&
+        (target - last).abs() < const Duration(milliseconds: 80)) {
+      return;
+    }
+    _lastSeekPreviewRequest = target;
+    final requestId = ++_seekPreviewRequestId;
+    final targetWidth =
+        _videoSurfaceSize.width > 0
+            ? _videoSurfaceSize.width.clamp(120.0, 320.0)
+            : 240.0;
+    final cacheBucket = target.inMilliseconds ~/ 500;
+    final cached = _seekPreviewCache[cacheBucket];
+    if (cached != null && mounted) {
+      setState(() {
+        _seekPreviewImage = cached;
+      });
+    }
+    try {
+      final preview = await _player.previewImageAt(
+        target,
+        maxWidth: targetWidth,
+      );
+      if (!mounted || requestId != _seekPreviewRequestId) return;
+      setState(() {
+        _seekPreviewImage = preview;
+      });
+      if (preview != null) {
+        _seekPreviewCache[cacheBucket] = preview;
+        if (_seekPreviewCache.length > 40) {
+          _seekPreviewCache.remove(_seekPreviewCache.keys.first);
+        }
+      }
+    } catch (_) {
+      if (!mounted || requestId != _seekPreviewRequestId) return;
+      setState(() {
+        _seekPreviewImage = null;
+      });
+    }
   }
 
   void _handlePanUpdate(DragUpdateDetails details) {
@@ -429,6 +539,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
             (_seekGestureBase.inMilliseconds + (fraction * durationMs)).round();
         final clampedMs = targetMs.clamp(0, durationMs).toInt();
         _seekPreviewPosition = Duration(milliseconds: clampedMs);
+        unawaited(_requestSeekPreview(_seekPreviewPosition));
         setState(() {});
       }
     } else if (_isVolumeGesture) {
@@ -474,11 +585,19 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
       setState(() {
         _showSeekOverlay = false;
         _showVolumeOverlay = false;
+        _seekPreviewImage = null;
+        _spriteSourceRect = null;
+        _spriteDisplaySize = null;
       });
     } else {
       _showSeekOverlay = false;
       _showVolumeOverlay = false;
+      _seekPreviewImage = null;
+      _spriteSourceRect = null;
+      _spriteDisplaySize = null;
     }
+    _lastSeekPreviewRequest = null;
+    _seekPreviewRequestId++;
     _scheduleHideControls();
   }
 
@@ -561,28 +680,35 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                     ),
                   ),
                   if (_showSpeedOverlay)
-                    Positioned.fill(
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: mediaPadding.bottom + 24,
                       child: IgnorePointer(
-                        child: Center(
-                          child: _buildOverlayContainer(
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: const [
-                                Icon(
-                                  Icons.speed,
-                                  color: Colors.white,
-                                  size: 28,
-                                ),
-                                SizedBox(width: 8),
-                                Text(
-                                  '4x',
-                                  style: TextStyle(
+                        child: Opacity(
+                          opacity: 0.6,
+                          child: Align(
+                            alignment: Alignment.bottomCenter,
+                            child: _buildOverlayContainer(
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: const [
+                                  Icon(
+                                    Icons.speed,
                                     color: Colors.white,
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold,
+                                    size: 28,
                                   ),
-                                ),
-                              ],
+                                  SizedBox(width: 8),
+                                  Text(
+                                    '4x',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
                         ),
@@ -596,6 +722,35 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                             Column(
                               mainAxisSize: MainAxisSize.min,
                               children: [
+                                if (_spriteImage != null &&
+                                    _spriteSourceRect != null &&
+                                    _spriteDisplaySize != null) ...[
+                                  ClipRRect(
+                                    borderRadius: BorderRadius.circular(8),
+                                    child: SizedBox(
+                                      width: _spriteDisplaySize!.width,
+                                      height: _spriteDisplaySize!.height,
+                                      child: CustomPaint(
+                                        painter: _SpritePreviewPainter(
+                                          _spriteImage!,
+                                          _spriteSourceRect!,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                ] else if (_seekPreviewImage != null) ...[
+                                  ClipRRect(
+                                    borderRadius: BorderRadius.circular(8),
+                                    child: Image.memory(
+                                      _seekPreviewImage!,
+                                      width: 200,
+                                      height: 112,
+                                      fit: BoxFit.cover,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                ],
                                 Icon(
                                   _seekPreviewPosition >= _seekGestureBase
                                       ? Icons.fast_forward
@@ -888,5 +1043,24 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
         ),
       ),
     );
+  }
+}
+
+class _SpritePreviewPainter extends CustomPainter {
+  final ui.Image image;
+  final ui.Rect source;
+
+  _SpritePreviewPainter(this.image, this.source);
+
+  @override
+  void paint(ui.Canvas canvas, Size size) {
+    final paint = ui.Paint();
+    final dst = ui.Rect.fromLTWH(0, 0, size.width, size.height);
+    canvas.drawImageRect(image, source, dst, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _SpritePreviewPainter oldDelegate) {
+    return oldDelegate.image != image || oldDelegate.source != source;
   }
 }

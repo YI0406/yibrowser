@@ -21,6 +21,7 @@ import 'package:app_tracking_transparency/app_tracking_transparency.dart';
 import 'package:quick_actions/quick_actions.dart';
 import 'package:flutter/services.dart';
 import 'package:share_handler/share_handler.dart';
+import 'package:background_downloader/background_downloader.dart' as bg;
 import 'app_localizations.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'notification_service.dart';
@@ -43,6 +44,16 @@ Future<void> _requestATTIfNeeded() async {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  try {
+    await bg.FileDownloader().configure(
+      iOSConfig: [
+        (bg.Config.resourceTimeout, const Duration(hours: 6)),
+      ],
+    );
+  } catch (e) {
+    debugPrint('Background downloader configure failed: $e');
+  }
 
   // Initialize Firebase (uses GoogleService-Info.plist on iOS when no options provided).
   try {
@@ -188,6 +199,7 @@ class _RootNavState extends State<RootNav>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
     if (state == AppLifecycleState.resumed) {
+      unawaited(AppRepo.I.syncBackgroundDownloader());
       unawaited(AppRepo.I.resumeIncompleteDownloads());
     }
   }

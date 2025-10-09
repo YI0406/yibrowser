@@ -2,6 +2,7 @@ import AVFoundation
 import AVKit
 import Flutter
 import VideoToolbox
+import UIKit
 
 
 /// Centralized video player engine that owns a single AVPlayer instance and exposes
@@ -85,7 +86,7 @@ final class PlayerEngine: NSObject, FlutterStreamHandler, AVPictureInPictureCont
 
   // MARK: - Method channel handling -----------------------------------------------------
 
-  private func handle(call: FlutterMethodCall, result: FlutterResult) {
+  private func handle(call: FlutterMethodCall, result: @escaping FlutterResult) {
     switch call.method {
     case "setSource":
       guard let urlString = call.arguments as? String else {
@@ -154,6 +155,50 @@ final class PlayerEngine: NSObject, FlutterStreamHandler, AVPictureInPictureCont
       } else {
         result(FlutterError(code: "invalid_args", message: "updateViewport expects {x,y,width,height}", details: nil))
       }
+    case "previewAt":
+      guard let args = call.arguments as? [String: Any],
+            let item = player.currentItem else {
+        result(nil)
+        return
+      }
+      let positionMs: Double
+      if let ms = args["positionMs"] as? Double {
+        positionMs = ms
+      } else if let ms = args["positionMs"] as? Int {
+        positionMs = Double(ms)
+      } else {
+        result(nil)
+        return
+      }
+      let msValue = Int64(positionMs.rounded())
+      let targetTime = CMTime(value: CMTimeValue(msValue), timescale: 1000)
+      let generator = AVAssetImageGenerator(asset: item.asset)
+      generator.appliesPreferredTrackTransform = true
+      generator.requestedTimeToleranceBefore = .zero
+      generator.requestedTimeToleranceAfter = .zero
+      if let widthValue = args["maxWidth"] as? Double, widthValue > 0 {
+        let width = CGFloat(widthValue)
+        // Height is loosely capped to preserve aspect ratio without knowing it.
+        generator.maximumSize = CGSize(width: width, height: width * 2.0)
+      }
+      generator.generateCGImagesAsynchronously(forTimes: [NSValue(time: targetTime)]) { _, image, _, status, error in
+        if status == .succeeded, let cgImage = image {
+          let uiImage = UIImage(cgImage: cgImage)
+          let data = uiImage.jpegData(compressionQuality: 0.7) ?? uiImage.pngData()
+          DispatchQueue.main.async {
+            if let data {
+              result(FlutterStandardTypedData(bytes: data))
+            } else {
+              result(nil)
+            }
+          }
+        } else {
+          DispatchQueue.main.async {
+            result(nil)
+          }
+        }
+      }
+      return
     default:
       result(FlutterMethodNotImplemented)
     }
