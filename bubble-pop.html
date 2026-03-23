@@ -1,0 +1,684 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bubble Pop Match - 消泡泡！</title>
+  <meta name="description" content="Bubble Pop Match: a cute bubble-matching adventure packed with combos, special bubbles, tools, and 120 colorful stages.">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root {
+      --sky-top: #fef4ff;
+      --sky-mid: #eaf5ff;
+      --sky-bottom: #d6efff;
+      --ink: #28406b;
+      --pink: #ff7aa8;
+      --peach: #ffae7a;
+      --mint: #78e0af;
+      --lemon: #ffd86e;
+      --lavender: #b29cff;
+    }
+
+    body {
+      font-family: "Avenir Next", "Trebuchet MS", "PingFang TC", "Microsoft JhengHei", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(255,255,255,0.95), transparent 30%),
+        radial-gradient(circle at top right, rgba(255,224,245,0.7), transparent 28%),
+        linear-gradient(180deg, var(--sky-top) 0%, var(--sky-mid) 40%, var(--sky-bottom) 100%);
+    }
+
+    .bubble-bg::before,
+    .bubble-bg::after {
+      content: "";
+      position: absolute;
+      inset: auto;
+      border-radius: 999px;
+      pointer-events: none;
+      filter: blur(1px);
+    }
+
+    .bubble-bg::before {
+      width: 20rem;
+      height: 20rem;
+      top: -4rem;
+      right: -6rem;
+      background: radial-gradient(circle, rgba(255,255,255,0.85) 0%, rgba(255,255,255,0) 68%);
+    }
+
+    .bubble-bg::after {
+      width: 16rem;
+      height: 16rem;
+      bottom: -5rem;
+      left: -4rem;
+      background: radial-gradient(circle, rgba(255, 204, 229, 0.55) 0%, rgba(255,255,255,0) 70%);
+    }
+
+    .glass {
+      background: rgba(255, 255, 255, 0.7);
+      backdrop-filter: blur(14px);
+      box-shadow: 0 22px 60px rgba(73, 107, 164, 0.16);
+    }
+
+    .card-pop {
+      transition: transform .2s ease, box-shadow .2s ease;
+      box-shadow: 0 18px 40px rgba(78, 105, 159, 0.12);
+    }
+
+    .card-pop:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 26px 56px rgba(78, 105, 159, 0.18);
+    }
+
+    .bubble-chip {
+      border: 1px solid rgba(255,255,255,0.7);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.75);
+    }
+
+    .phone-shell {
+      background:
+        linear-gradient(180deg, rgba(255,255,255,0.86), rgba(255,255,255,0.68)),
+        linear-gradient(180deg, rgba(255,121,156,0.24), rgba(88,207,255,0.2));
+      box-shadow: 0 34px 80px rgba(84, 110, 164, 0.24);
+    }
+
+    .section-title {
+      letter-spacing: .02em;
+      text-shadow: 0 2px 0 rgba(255,255,255,0.65);
+    }
+
+    .poster img,
+    .gallery-shot img {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+  </style>
+</head>
+<body class="antialiased">
+  <header class="sticky top-0 z-50 border-b border-white/40 bg-white/70 backdrop-blur-xl">
+    <div class="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3">
+      <a href="index.html" class="flex items-center gap-3">
+        <img src="logo_yi.png" alt="Yi Apps Logo" class="h-9 w-9 rounded-xl">
+        <div>
+          <div class="text-sm font-semibold text-slate-900">Yi Apps</div>
+          <div class="text-xs text-slate-500" data-i18n="nav.brand_sub">泡泡冒險新作</div>
+        </div>
+      </a>
+      <nav class="hidden items-center gap-5 text-sm md:flex">
+        <a href="index.html" class="text-slate-600 hover:text-slate-900" data-i18n="nav.home">首頁</a>
+        <a href="spin.html" class="text-slate-600 hover:text-slate-900" data-i18n="nav.spin">轉盤++</a>
+        <a href="gps.html" class="text-slate-600 hover:text-slate-900" data-i18n="nav.gps">GPS時速表</a>
+        <a href="bubble-pop.html" class="font-semibold text-slate-900">Bubble Pop Match</a>
+      </nav>
+      <div class="flex items-center gap-3">
+        <div class="hidden items-center gap-1 rounded-full bg-white/70 px-2 py-1 text-sm ring-1 ring-slate-200 md:flex">
+          <button type="button" onclick="setLang('zh-Hant')" class="rounded-full px-2 py-1 hover:bg-slate-100">繁中</button>
+          <button type="button" onclick="setLang('zh-Hans')" class="rounded-full px-2 py-1 hover:bg-slate-100">简中</button>
+          <button type="button" onclick="setLang('en')" class="rounded-full px-2 py-1 hover:bg-slate-100">EN</button>
+        </div>
+        <a href="https://apps.apple.com/us/app/pop/id6760225909" class="inline-flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white opacity-95" target="_blank" rel="noreferrer">
+          <span data-i18n="download.nav">立即下載</span>
+          <span class="rounded-full bg-white/15 px-2 py-0.5 text-[11px]" data-i18n="download.status">App Store</span>
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="bubble-bg relative overflow-hidden">
+      <div class="mx-auto grid max-w-7xl gap-10 px-4 py-12 md:py-20 lg:grid-cols-[1.08fr_0.92fr] lg:items-center">
+        <div class="relative z-10">
+          <div class="inline-flex items-center gap-2 rounded-full bg-white/75 px-4 py-2 text-sm font-semibold text-slate-700 ring-1 ring-white/80 bubble-chip">
+            <span class="h-2.5 w-2.5 rounded-full bg-pink-400"></span>
+            <span data-i18n="hero.badge">120 關夢幻泡泡挑戰</span>
+          </div>
+          <img src="bubble-pop-title.png" alt="Bubble Pop Match title" class="mt-6 w-full max-w-xl drop-shadow-[0_20px_30px_rgba(76,98,162,0.25)]">
+          <p class="mt-5 text-lg leading-8 text-slate-700 md:max-w-xl" data-i18n="hero.lead">
+            可愛直向泡泡消除冒險，輕鬆上手、越玩越上頭。點按相連同色泡泡打出高分連擊，解鎖炸彈、彩虹與火箭特殊泡泡，突破重重障礙一路清盤。
+          </p>
+          <div class="mt-8 flex flex-wrap gap-3">
+            <a href="#gameplay" class="inline-flex items-center rounded-full bg-[linear-gradient(135deg,#ff8ab3,#ffb36b)] px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-pink-200/70" data-i18n="hero.cta_primary">看玩法亮點</a>
+            <a href="#modes" class="inline-flex items-center rounded-full bg-white/80 px-5 py-3 text-sm font-semibold text-slate-700 ring-1 ring-white/80" data-i18n="hero.cta_secondary">看模式與活動</a>
+            <a href="https://apps.apple.com/us/app/pop/id6760225909" class="inline-flex items-center gap-2 rounded-full bg-slate-900 px-5 py-3 text-sm font-semibold text-white" target="_blank" rel="noreferrer">
+              <span data-i18n="download.hero">立即下載</span>
+              <span class="rounded-full bg-white/15 px-2 py-0.5 text-[11px]" data-i18n="download.status">App Store</span>
+            </a>
+          </div>
+          <div class="mt-8 grid gap-4 sm:grid-cols-3">
+            <div class="card-pop rounded-3xl bg-white/75 p-5 ring-1 ring-white/80">
+              <div class="text-sm font-semibold text-slate-500" data-i18n="hero.stat_levels_label">關卡內容</div>
+              <div class="mt-2 text-3xl font-extrabold text-slate-900">120</div>
+              <div class="mt-1 text-sm text-slate-600" data-i18n="hero.stat_levels_value">從入門到障礙盤型</div>
+            </div>
+            <div class="card-pop rounded-3xl bg-white/75 p-5 ring-1 ring-white/80">
+              <div class="text-sm font-semibold text-slate-500" data-i18n="hero.stat_combo_label">連擊節奏</div>
+              <div class="mt-2 text-3xl font-extrabold text-slate-900">x5+</div>
+              <div class="mt-1 text-sm text-slate-600" data-i18n="hero.stat_combo_value">五連消進入 Combo Rush</div>
+            </div>
+            <div class="card-pop rounded-3xl bg-white/75 p-5 ring-1 ring-white/80">
+              <div class="text-sm font-semibold text-slate-500" data-i18n="hero.stat_special_label">特殊機制</div>
+              <div class="mt-2 text-3xl font-extrabold text-slate-900">3+</div>
+              <div class="mt-1 text-sm text-slate-600" data-i18n="hero.stat_special_value">炸彈、彩虹、火箭連鎖</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="relative z-10">
+          <div class="phone-shell relative mx-auto max-w-md rounded-[2.25rem] p-3 ring-1 ring-white/90">
+            <div class="absolute -left-6 top-10 hidden rounded-full bg-[linear-gradient(135deg,#ffe17c,#ff9fc2)] px-4 py-2 text-sm font-semibold text-slate-800 shadow-lg shadow-pink-200/60 md:block" data-i18n="hero.float_combo">爽快連擊</div>
+            <div class="absolute -right-6 bottom-20 hidden rounded-full bg-[linear-gradient(135deg,#7be0b0,#77d5ff)] px-4 py-2 text-sm font-semibold text-slate-800 shadow-lg shadow-cyan-200/60 md:block" data-i18n="hero.float_tools">道具救場</div>
+            <img src="bubble-pop-promo-gameplay.png" alt="Bubble Pop Match gameplay poster" class="w-full rounded-[1.7rem] object-cover shadow-xl shadow-sky-100/70" data-lang-src-zh-hant="bubble-pop-promo-gameplay.png" data-lang-src-zh-hans="bubble-pop-promo-gameplay.png" data-lang-src-en="bubble-pop-promo-en-combo.png">
+          </div>
+          <div class="mt-5 grid gap-4 sm:grid-cols-2">
+            <div class="glass rounded-[1.75rem] p-4 ring-1 ring-white/80">
+              <div class="text-sm font-semibold text-slate-500" data-i18n="hero.card_modes_label">模式亮點</div>
+              <p class="mt-2 text-sm leading-7 text-slate-700" data-i18n="hero.card_modes_value">步數關、時間挑戰、每日任務與自由遊戲都能切換節奏。</p>
+            </div>
+            <div class="glass rounded-[1.75rem] p-4 ring-1 ring-white/80">
+              <div class="text-sm font-semibold text-slate-500" data-i18n="hero.card_obstacles_label">盤面挑戰</div>
+              <p class="mt-2 text-sm leading-7 text-slate-700" data-i18n="hero.card_obstacles_value">鎖鏈、冰塊、木箱、石塊與傳送帶，逼你重新規劃每一步。</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="gameplay" class="mx-auto max-w-7xl px-4 py-10 md:py-16">
+      <div class="mb-8 max-w-3xl">
+        <div class="text-sm font-bold uppercase tracking-[0.28em] text-pink-500" data-i18n="gameplay.eyebrow">Gameplay</div>
+        <h2 class="section-title mt-3 text-3xl font-extrabold md:text-5xl" data-i18n="gameplay.title">從點一下開始，打出整版連鎖節奏</h2>
+        <p class="mt-4 text-base leading-8 text-slate-700 md:text-lg" data-i18n="gameplay.desc">
+          核心規則很直覺，但越到後期越講究觀察、節奏與判斷。你要在步數或時間用完前完成目標，才能穩穩拿下高星等。
+        </p>
+      </div>
+      <div class="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+        <div class="card-pop rounded-[2rem] bg-white/75 p-4 ring-1 ring-white/90">
+          <div class="overflow-hidden rounded-[1.5rem] bg-slate-900">
+            <video class="w-full" src="bubble-pop-combo-demo.mov" autoplay muted loop playsinline controls></video>
+          </div>
+          <div class="grid gap-4 px-2 pb-2 pt-5 sm:grid-cols-2">
+            <div class="rounded-3xl bg-[linear-gradient(135deg,rgba(255,138,179,0.15),rgba(255,204,122,0.18))] p-4">
+              <div class="text-sm font-semibold text-slate-500" data-i18n="gameplay.video_label">影片重點</div>
+              <p class="mt-2 text-sm leading-7 text-slate-700" data-i18n="gameplay.video_value">短時間內連續消除五次就能啟動 Combo Rush，分數與特殊泡泡一起爆發。</p>
+            </div>
+            <div class="rounded-3xl bg-[linear-gradient(135deg,rgba(123,224,176,0.18),rgba(119,213,255,0.18))] p-4">
+              <div class="text-sm font-semibold text-slate-500" data-i18n="gameplay.goal_label">過關目標</div>
+              <p class="mt-2 text-sm leading-7 text-slate-700" data-i18n="gameplay.goal_value">不只是分數，也可能是指定顏色、連擊條件或障礙清除任務。</p>
+            </div>
+          </div>
+        </div>
+        <div class="space-y-4">
+          <div class="card-pop rounded-[2rem] bg-white/75 p-6 ring-1 ring-white/90">
+            <h3 class="text-xl font-bold" data-i18n="rules.title">五個快速上手重點</h3>
+            <ol class="mt-4 space-y-4 text-sm leading-7 text-slate-700">
+              <li data-i18n="rules.1">1. 點擊 2 顆以上相連的同色泡泡即可消除。</li>
+              <li data-i18n="rules.2">2. 一次消除越多顆，分數越高，還有機會生成特殊泡泡。</li>
+              <li data-i18n="rules.3">3. 在時間內連續消除五次可進入連擊狀態，連擊越高得分越高。</li>
+              <li data-i18n="rules.4">4. 關卡目標可能是分數、指定顏色、連擊或清除障礙物。</li>
+              <li data-i18n="rules.5">5. 在步數或時間用完前完成目標，就能過關並挑戰更高星等。</li>
+            </ol>
+          </div>
+          <div class="grid gap-4 sm:grid-cols-2">
+            <div class="gallery-shot card-pop rounded-[2rem] bg-white/75 p-3 ring-1 ring-white/90">
+              <img src="bubble-pop-screen-main.png" alt="Bubble Pop Match main screen" class="rounded-[1.5rem]">
+            </div>
+            <div class="gallery-shot card-pop rounded-[2rem] bg-white/75 p-3 ring-1 ring-white/90">
+              <img src="bubble-pop-screen-gameplay.png" alt="Bubble Pop Match gameplay screenshot" class="rounded-[1.5rem]">
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="modes" class="mx-auto max-w-7xl px-4 py-10 md:py-16">
+      <div class="mb-8 max-w-3xl">
+        <div class="text-sm font-bold uppercase tracking-[0.28em] text-cyan-500" data-i18n="modes.eyebrow">Modes</div>
+        <h2 class="section-title mt-3 text-3xl font-extrabold md:text-5xl" data-i18n="modes.title">不是只有闖關，還有每日獎勵與衝榜玩法</h2>
+      </div>
+      <div class="grid gap-6 lg:grid-cols-3">
+        <div class="poster card-pop rounded-[2rem] bg-white/75 p-3 ring-1 ring-white/90 lg:col-span-1">
+          <img src="bubble-pop-promo-daily.png" alt="Daily mission poster" class="rounded-[1.5rem]" data-lang-src-zh-hant="bubble-pop-promo-daily.png" data-lang-src-zh-hans="bubble-pop-promo-daily.png" data-lang-src-en="bubble-pop-promo-en-daily.png">
+        </div>
+        <div class="poster card-pop rounded-[2rem] bg-white/75 p-3 ring-1 ring-white/90 lg:col-span-1">
+          <img src="bubble-pop-promo-1min.png" alt="One minute challenge poster" class="rounded-[1.5rem]" data-lang-src-zh-hant="bubble-pop-promo-1min.png" data-lang-src-zh-hans="bubble-pop-promo-1min.png" data-lang-src-en="bubble-pop-promo-en-time-trial.png">
+        </div>
+        <div class="poster card-pop rounded-[2rem] bg-white/75 p-3 ring-1 ring-white/90 lg:col-span-1">
+          <img src="bubble-pop-promo-hand.jpg" alt="Tap to pop poster" class="rounded-[1.5rem]" data-lang-src-zh-hant="bubble-pop-promo-hand.jpg" data-lang-src-zh-hans="bubble-pop-promo-hand.jpg" data-lang-src-en="bubble-pop-promo-en-tap.png">
+        </div>
+      </div>
+    </section>
+
+    <section class="mx-auto max-w-7xl px-4 py-10 md:py-16">
+      <div class="mb-8 max-w-3xl">
+        <div class="text-sm font-bold uppercase tracking-[0.28em] text-amber-500" data-i18n="special.eyebrow">Special Bubbles</div>
+        <h2 class="section-title mt-3 text-3xl font-extrabold md:text-5xl" data-i18n="special.title">一顆引爆全盤的特殊泡泡</h2>
+        <p class="mt-4 text-base leading-8 text-slate-700 md:text-lg" data-i18n="special.desc">
+          大群消除會逐步解鎖炸彈、彩虹與火箭泡泡。它們不只各自強，彼此還能互相觸發，讓盤面瞬間進入爽快清場模式。
+        </p>
+      </div>
+      <div class="grid gap-6 lg:grid-cols-4">
+        <article class="card-pop rounded-[2rem] bg-white/80 p-6 ring-1 ring-white/90">
+          <img src="bubble-pop-bubble-bomb.png" alt="Bomb bubble" class="mx-auto h-28 w-28 object-contain">
+          <h3 class="mt-4 text-center text-xl font-bold" data-i18n="special.bomb_title">炸彈泡泡</h3>
+          <p class="mt-3 text-sm leading-7 text-slate-700" data-i18n="special.bomb_desc">消除較大群泡泡時可生成，炸掉周圍一小片區域，幫你快速打開版面。</p>
+          <div class="mt-5 overflow-hidden rounded-[1.25rem] bg-slate-900">
+            <video class="w-full" src="bubble-pop-effect-bomb.mov" autoplay muted loop playsinline controls></video>
+          </div>
+        </article>
+        <article class="card-pop rounded-[2rem] bg-white/80 p-6 ring-1 ring-white/90">
+          <img src="bubble-pop-bubble-rainbow.png" alt="Rainbow bubble" class="mx-auto h-28 w-28 object-contain">
+          <h3 class="mt-4 text-center text-xl font-bold" data-i18n="special.rainbow_title">彩虹泡泡</h3>
+          <p class="mt-3 text-sm leading-7 text-slate-700" data-i18n="special.rainbow_desc">更大群消除時出現，可一次清掉版面上的主要顏色，直接拉高連鎖機會。</p>
+          <div class="mt-5 overflow-hidden rounded-[1.25rem] bg-slate-900">
+            <video class="w-full" src="bubble-pop-effect-rainbow.mov" autoplay muted loop playsinline controls></video>
+          </div>
+        </article>
+        <article class="card-pop rounded-[2rem] bg-white/80 p-6 ring-1 ring-white/90">
+          <div class="mx-auto flex h-28 w-28 items-center justify-center gap-2">
+            <img src="bubble-pop-bubble-rocket-up.png" alt="Rocket bubble vertical" class="h-24 w-24 object-contain">
+            <img src="bubble-pop-bubble-rocket-left.png" alt="Rocket bubble horizontal" class="h-20 w-20 object-contain">
+          </div>
+          <h3 class="mt-4 text-center text-xl font-bold" data-i18n="special.rocket_title">火箭泡泡</h3>
+          <p class="mt-3 text-sm leading-7 text-slate-700" data-i18n="special.rocket_desc">連擊過程中有機會出現，可一次清除整列或整欄，讓關鍵目標快速完成。</p>
+          <div class="mt-5 overflow-hidden rounded-[1.25rem] bg-slate-900">
+            <video class="w-full" src="bubble-pop-effect-rocket.mov" autoplay muted loop playsinline controls></video>
+          </div>
+        </article>
+        <article class="card-pop rounded-[2rem] bg-[linear-gradient(180deg,rgba(255,255,255,0.9),rgba(244,247,255,0.86))] p-4 ring-1 ring-white/90">
+          <div class="overflow-hidden rounded-[1.5rem] bg-slate-900">
+            <video class="w-full" src="bubble-pop-chain-reaction.mov" autoplay muted loop playsinline controls></video>
+          </div>
+          <h3 class="mt-4 text-center text-xl font-bold" data-i18n="special.chain_title">特殊連鎖</h3>
+          <p class="mt-3 px-2 text-sm leading-7 text-slate-700" data-i18n="special.chain_desc">炸彈和火箭可以互相觸發，把看似卡住的盤面一口氣炸開。</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="mx-auto max-w-7xl px-4 py-10 md:py-16">
+      <div class="grid gap-6 lg:grid-cols-[0.95fr_1.05fr]">
+        <div class="card-pop rounded-[2rem] bg-white/80 p-6 ring-1 ring-white/90">
+          <div class="text-sm font-bold uppercase tracking-[0.28em] text-emerald-500" data-i18n="tools.eyebrow">Tools</div>
+          <h2 class="section-title mt-3 text-3xl font-extrabold md:text-4xl" data-i18n="tools.title">卡關時，給你一手漂亮逆轉</h2>
+          <div class="mt-6 grid gap-4 sm:grid-cols-2">
+            <div class="rounded-3xl bg-[linear-gradient(135deg,rgba(255,210,113,0.18),rgba(255,150,168,0.14))] p-4">
+              <div class="flex items-center gap-3">
+                <img src="bubble-pop-tool-mini-bomb.png" alt="Mini bomb tool" class="h-16 w-16 rounded-3xl object-contain bg-white/80 p-1.5">
+                <div>
+                  <div class="font-bold" data-i18n="tools.bomb_title">小炸彈</div>
+                  <p class="text-sm text-slate-600" data-i18n="tools.bomb_desc">直接炸掉一小塊盤面，幫你打開缺口。</p>
+                </div>
+              </div>
+            </div>
+            <div class="rounded-3xl bg-[linear-gradient(135deg,rgba(123,224,176,0.18),rgba(119,213,255,0.18))] p-4">
+              <div class="flex items-center gap-3">
+                <img src="bubble-pop-tool-refresh.png" alt="Refresh board tool" class="h-16 w-16 rounded-3xl object-contain bg-white/80 p-1.5">
+                <div>
+                  <div class="font-bold" data-i18n="tools.refresh_title">重洗盤面</div>
+                  <p class="text-sm text-slate-600" data-i18n="tools.refresh_desc">盤面不好連時重新洗牌，找回節奏。</p>
+                </div>
+              </div>
+            </div>
+            <div class="rounded-3xl bg-[linear-gradient(135deg,rgba(152,220,113,0.2),rgba(255,255,255,0.2))] p-4">
+              <div class="flex items-center gap-3">
+                <img src="bubble-pop-tool-steps.png" alt="Plus three steps tool" class="h-16 w-16 rounded-3xl object-contain bg-white/80 p-1.5">
+                <div>
+                  <div class="font-bold" data-i18n="tools.steps_title">+3 步</div>
+                  <p class="text-sm text-slate-600" data-i18n="tools.steps_desc">步數制關卡補充額外步數，增加過關空間。</p>
+                </div>
+              </div>
+            </div>
+            <div class="rounded-3xl bg-[linear-gradient(135deg,rgba(176,214,255,0.24),rgba(255,255,255,0.2))] p-4">
+              <div class="flex items-center gap-3">
+                <img src="bubble-pop-tool-freeze.png" alt="Freeze combo tool" class="h-16 w-16 rounded-3xl object-contain bg-white/80 p-1.5">
+                <div>
+                  <div class="font-bold" data-i18n="tools.freeze_title">凍結連擊</div>
+                  <p class="text-sm text-slate-600" data-i18n="tools.freeze_desc">暫時凍結連擊條，讓你更容易把連擊接起來。</p>
+                </div>
+              </div>
+            </div>
+            <div class="rounded-3xl bg-[linear-gradient(135deg,rgba(255,185,128,0.22),rgba(178,255,160,0.16))] p-4 sm:col-span-2">
+              <div class="flex items-center gap-3">
+                <img src="bubble-pop-tool-continue.png" alt="Continue tool" class="h-16 w-16 rounded-3xl object-contain bg-white/80 p-1.5">
+                <div>
+                  <div class="font-bold" data-i18n="tools.continue_title">續玩機會</div>
+                  <p class="text-sm text-slate-600" data-i18n="tools.continue_desc">失敗後補充步數或時間，再拚一次逆轉過關。</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card-pop rounded-[2rem] bg-white/80 p-6 ring-1 ring-white/90">
+          <div class="text-sm font-bold uppercase tracking-[0.28em] text-violet-500" data-i18n="obstacles.eyebrow">Obstacles</div>
+          <h2 class="section-title mt-3 text-3xl font-extrabold md:text-4xl" data-i18n="obstacles.title">後期關卡，會開始逼你重新思考路線</h2>
+          <div class="mt-6 grid gap-4 md:grid-cols-[0.88fr_1.12fr]">
+            <div class="poster rounded-[1.5rem] bg-white/90 p-3 ring-1 ring-slate-100">
+              <img src="bubble-pop-promo-obstacle.png" alt="Obstacle gameplay poster" class="rounded-[1.2rem]" data-lang-src-zh-hant="bubble-pop-promo-obstacle.png" data-lang-src-zh-hans="bubble-pop-promo-obstacle.png" data-lang-src-en="bubble-pop-promo-en-breakthrough.png">
+            </div>
+            <div class="grid gap-3">
+              <div class="rounded-3xl bg-slate-50/90 p-4">
+                <div class="font-bold text-slate-900" data-i18n="obstacles.chain_title">鎖鏈泡泡</div>
+                <p class="mt-1 text-sm leading-7 text-slate-600" data-i18n="obstacles.chain_desc">不能直接自由處理，要先透過鄰近消除解除鎖定。</p>
+              </div>
+              <div class="rounded-3xl bg-slate-50/90 p-4">
+                <div class="font-bold text-slate-900" data-i18n="obstacles.ice_title">冰塊</div>
+                <p class="mt-1 text-sm leading-7 text-slate-600" data-i18n="obstacles.ice_desc">需先打破外層冰塊，才能真正清除被覆蓋的泡泡。</p>
+              </div>
+              <div class="rounded-3xl bg-slate-50/90 p-4">
+                <div class="font-bold text-slate-900" data-i18n="obstacles.crate_title">木箱與石塊</div>
+                <p class="mt-1 text-sm leading-7 text-slate-600" data-i18n="obstacles.crate_desc">木箱要多次打擊，石塊則無法破壞，逼你繞路規劃消除順序。</p>
+              </div>
+              <div class="rounded-3xl bg-slate-50/90 p-4">
+                <div class="font-bold text-slate-900" data-i18n="obstacles.belt_title">傳送帶與特殊盤型</div>
+                <p class="mt-1 text-sm leading-7 text-slate-600" data-i18n="obstacles.belt_desc">部分列會移動，還有缺角、空洞、非滿版盤面，增加判斷難度。</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="mx-auto max-w-7xl px-4 pb-14 pt-10 md:pb-20 md:pt-16">
+      <div class="card-pop overflow-hidden rounded-[2.5rem] bg-[linear-gradient(135deg,rgba(255,132,173,0.95),rgba(255,193,97,0.92),rgba(119,213,255,0.9))] p-[1px]">
+        <div class="grid gap-8 rounded-[2.45rem] bg-white/90 px-6 py-8 md:px-10 md:py-10 lg:grid-cols-[1.15fr_0.85fr] lg:items-center">
+          <div>
+            <div class="text-sm font-bold uppercase tracking-[0.28em] text-pink-500" data-i18n="cta.eyebrow">Cute but Challenging</div>
+            <h2 class="section-title mt-3 text-3xl font-extrabold md:text-5xl" data-i18n="cta.title">Bubble Pop Match，把每一次點按都變成華麗清盤</h2>
+            <p class="mt-4 max-w-2xl text-base leading-8 text-slate-700 md:text-lg" data-i18n="cta.desc">
+              從簡單上手的前期關卡，到充滿障礙與特殊盤面的後期挑戰，這是一款越玩越有節奏感的泡泡消除冒險。
+            </p>
+            <div class="mt-7 flex flex-wrap gap-3">
+              <a href="index.html" class="inline-flex items-center rounded-full bg-slate-900 px-5 py-3 text-sm font-semibold text-white" data-i18n="cta.back">返回產品列表</a>
+              <a href="https://apps.apple.com/us/app/pop/id6760225909" class="inline-flex items-center gap-2 rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-800 ring-1 ring-slate-200" target="_blank" rel="noreferrer">
+                <span data-i18n="download.cta">立即下載</span>
+                <span class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500" data-i18n="download.status">App Store</span>
+              </a>
+            </div>
+          </div>
+          <div class="mx-auto w-full max-w-sm">
+            <div class="poster rounded-[2rem] bg-white/90 p-3 shadow-xl shadow-pink-100/70">
+              <img src="bubble-pop-promo-gameplay.png" alt="Bubble Pop Match poster" class="rounded-[1.5rem]" data-lang-src-zh-hant="bubble-pop-promo-gameplay.png" data-lang-src-zh-hans="bubble-pop-promo-gameplay.png" data-lang-src-en="bubble-pop-promo-en-combo.png">
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="border-t border-white/50 bg-white/50 py-8">
+    <div class="mx-auto flex max-w-7xl flex-col items-center justify-between gap-3 px-4 text-sm text-slate-500 md:flex-row">
+      <div>© 2025 Yi Apps</div>
+      <div>Taichung, Taiwan · <a href="mailto:tzuyichan0406@gmail.com" class="underline">tzuyichan0406@gmail.com</a></div>
+    </div>
+  </footer>
+
+  <script>
+    const translations = {
+      'zh-Hant': {
+        'nav.brand_sub': '泡泡冒險新作',
+        'nav.home': '首頁',
+        'nav.spin': '轉盤++',
+        'nav.gps': 'GPS時速表',
+        'download.nav': '立即下載',
+        'download.hero': '立即下載',
+        'download.cta': '立即下載',
+        'download.status': 'App Store',
+        'hero.badge': '120 關夢幻泡泡挑戰',
+        'hero.lead': '可愛直向泡泡消除冒險，輕鬆上手、越玩越上頭。點按相連同色泡泡打出高分連擊，解鎖炸彈、彩虹與火箭特殊泡泡，突破重重障礙一路清盤。',
+        'hero.cta_primary': '看玩法亮點',
+        'hero.cta_secondary': '看模式與活動',
+        'hero.stat_levels_label': '關卡內容',
+        'hero.stat_levels_value': '從入門到障礙盤型',
+        'hero.stat_combo_label': '連擊節奏',
+        'hero.stat_combo_value': '五連消進入 Combo Rush',
+        'hero.stat_special_label': '特殊機制',
+        'hero.stat_special_value': '炸彈、彩虹、火箭連鎖',
+        'hero.float_combo': '爽快連擊',
+        'hero.float_tools': '道具救場',
+        'hero.card_modes_label': '模式亮點',
+        'hero.card_modes_value': '步數關、時間挑戰、每日任務與自由遊戲都能切換節奏。',
+        'hero.card_obstacles_label': '盤面挑戰',
+        'hero.card_obstacles_value': '鎖鏈、冰塊、木箱、石塊與傳送帶，逼你重新規劃每一步。',
+        'gameplay.eyebrow': 'Gameplay',
+        'gameplay.title': '從點一下開始，打出整版連鎖節奏',
+        'gameplay.desc': '核心規則很直覺，但越到後期越講究觀察、節奏與判斷。你要在步數或時間用完前完成目標，才能穩穩拿下高星等。',
+        'gameplay.video_label': '影片重點',
+        'gameplay.video_value': '短時間內連續消除五次就能啟動 Combo Rush，分數與特殊泡泡一起爆發。',
+        'gameplay.goal_label': '過關目標',
+        'gameplay.goal_value': '不只是分數，也可能是指定顏色、連擊條件或障礙清除任務。',
+        'rules.title': '五個快速上手重點',
+        'rules.1': '1. 點擊 2 顆以上相連的同色泡泡即可消除。',
+        'rules.2': '2. 一次消除越多顆，分數越高，還有機會生成特殊泡泡。',
+        'rules.3': '3. 在時間內連續消除五次可進入連擊狀態，連擊越高得分越高。',
+        'rules.4': '4. 關卡目標可能是分數、指定顏色、連擊或清除障礙物。',
+        'rules.5': '5. 在步數或時間用完前完成目標，就能過關並挑戰更高星等。',
+        'modes.eyebrow': 'Modes',
+        'modes.title': '不是只有闖關，還有每日獎勵與衝榜玩法',
+        'special.eyebrow': 'Special Bubbles',
+        'special.title': '一顆引爆全盤的特殊泡泡',
+        'special.desc': '大群消除會逐步解鎖炸彈、彩虹與火箭泡泡。它們不只各自強，彼此還能互相觸發，讓盤面瞬間進入爽快清場模式。',
+        'special.bomb_title': '炸彈泡泡',
+        'special.bomb_desc': '消除較大群泡泡時可生成，炸掉周圍一小片區域，幫你快速打開版面。',
+        'special.rainbow_title': '彩虹泡泡',
+        'special.rainbow_desc': '更大群消除時出現，可一次清掉版面上的主要顏色，直接拉高連鎖機會。',
+        'special.rocket_title': '火箭泡泡',
+        'special.rocket_desc': '連擊過程中有機會出現，可一次清除整列或整欄，讓關鍵目標快速完成。',
+        'special.chain_title': '特殊連鎖',
+        'special.chain_desc': '炸彈和火箭可以互相觸發，把看似卡住的盤面一口氣炸開。',
+        'tools.eyebrow': 'Tools',
+        'tools.title': '卡關時，給你一手漂亮逆轉',
+        'tools.bomb_title': '小炸彈',
+        'tools.bomb_desc': '直接炸掉一小塊盤面，幫你打開缺口。',
+        'tools.refresh_title': '重洗盤面',
+        'tools.refresh_desc': '盤面不好連時重新洗牌，找回節奏。',
+        'tools.steps_title': '+3 步',
+        'tools.steps_desc': '步數制關卡補充額外步數，增加過關空間。',
+        'tools.freeze_title': '凍結連擊',
+        'tools.freeze_desc': '暫時凍結連擊條，讓你更容易把連擊接起來。',
+        'tools.continue_title': '續玩機會',
+        'tools.continue_desc': '失敗後補充步數或時間，再拚一次逆轉過關。',
+        'obstacles.eyebrow': 'Obstacles',
+        'obstacles.title': '後期關卡，會開始逼你重新思考路線',
+        'obstacles.chain_title': '鎖鏈泡泡',
+        'obstacles.chain_desc': '不能直接自由處理，要先透過鄰近消除解除鎖定。',
+        'obstacles.ice_title': '冰塊',
+        'obstacles.ice_desc': '需先打破外層冰塊，才能真正清除被覆蓋的泡泡。',
+        'obstacles.crate_title': '木箱與石塊',
+        'obstacles.crate_desc': '木箱要多次打擊，石塊則無法破壞，逼你繞路規劃消除順序。',
+        'obstacles.belt_title': '傳送帶與特殊盤型',
+        'obstacles.belt_desc': '部分列會移動，還有缺角、空洞、非滿版盤面，增加判斷難度。',
+        'cta.eyebrow': 'Cute but Challenging',
+        'cta.title': 'Bubble Pop Match，把每一次點按都變成華麗清盤',
+        'cta.desc': '從簡單上手的前期關卡，到充滿障礙與特殊盤面的後期挑戰，這是一款越玩越有節奏感的泡泡消除冒險。',
+        'cta.back': '返回產品列表',
+        'cta.store': '追蹤 App Store'
+      },
+      'zh-Hans': {
+        'nav.brand_sub': '泡泡冒险新作',
+        'nav.home': '首页',
+        'nav.spin': '转盘++',
+        'nav.gps': 'GPS时速表',
+        'download.nav': '立即下载',
+        'download.hero': '立即下载',
+        'download.cta': '立即下载',
+        'download.status': 'App Store',
+        'hero.badge': '120 关梦幻泡泡挑战',
+        'hero.lead': '可爱直向泡泡消除冒险，轻松上手、越玩越上头。点按相连同色泡泡打出高分连击，解锁炸弹、彩虹与火箭特殊泡泡，突破重重障碍一路清盘。',
+        'hero.cta_primary': '看玩法亮点',
+        'hero.cta_secondary': '看模式与活动',
+        'hero.stat_levels_label': '关卡内容',
+        'hero.stat_levels_value': '从入门到障碍盘型',
+        'hero.stat_combo_label': '连击节奏',
+        'hero.stat_combo_value': '五连消进入 Combo Rush',
+        'hero.stat_special_label': '特殊机制',
+        'hero.stat_special_value': '炸弹、彩虹、火箭连锁',
+        'hero.float_combo': '爽快连击',
+        'hero.float_tools': '道具救场',
+        'hero.card_modes_label': '模式亮点',
+        'hero.card_modes_value': '步数关、时间挑战、每日任务与自由游戏都能切换节奏。',
+        'hero.card_obstacles_label': '盘面挑战',
+        'hero.card_obstacles_value': '锁链、冰块、木箱、石块与传送带，逼你重新规划每一步。',
+        'gameplay.eyebrow': 'Gameplay',
+        'gameplay.title': '从点一下开始，打出整版连锁节奏',
+        'gameplay.desc': '核心规则很直觉，但越到后期越讲究观察、节奏与判断。你要在步数或时间用完前完成目标，才能稳稳拿下高星等。',
+        'gameplay.video_label': '影片重点',
+        'gameplay.video_value': '短时间内连续消除五次就能启动 Combo Rush，分数与特殊泡泡一起爆发。',
+        'gameplay.goal_label': '过关目标',
+        'gameplay.goal_value': '不只是分数，也可能是指定颜色、连击条件或障碍清除任务。',
+        'rules.title': '五个快速上手重点',
+        'rules.1': '1. 点击 2 颗以上相连的同色泡泡即可消除。',
+        'rules.2': '2. 一次消除越多颗，分数越高，还有机会生成特殊泡泡。',
+        'rules.3': '3. 在时间内连续消除五次可进入连击状态，连击越高得分越高。',
+        'rules.4': '4. 关卡目标可能是分数、指定颜色、连击或清除障碍物。',
+        'rules.5': '5. 在步数或时间用完前完成目标，就能过关并挑战更高星等。',
+        'modes.eyebrow': 'Modes',
+        'modes.title': '不只有闯关，还有每日奖励与冲榜玩法',
+        'special.eyebrow': 'Special Bubbles',
+        'special.title': '一颗引爆全盘的特殊泡泡',
+        'special.desc': '大群消除会逐步解锁炸弹、彩虹与火箭泡泡。它们不只各自强，彼此还能互相触发，让盘面瞬间进入爽快清场模式。',
+        'special.bomb_title': '炸弹泡泡',
+        'special.bomb_desc': '消除较大群泡泡时可生成，炸掉周围一小片区域，帮你快速打开版面。',
+        'special.rainbow_title': '彩虹泡泡',
+        'special.rainbow_desc': '更大群消除时出现，可一次清掉版面上的主要颜色，直接拉高连锁机会。',
+        'special.rocket_title': '火箭泡泡',
+        'special.rocket_desc': '连击过程中有机会出现，可一次清除整列或整栏，让关键目标快速完成。',
+        'special.chain_title': '特殊连锁',
+        'special.chain_desc': '炸弹和火箭可以互相触发，把看似卡住的盘面一口气炸开。',
+        'tools.eyebrow': 'Tools',
+        'tools.title': '卡关时，给你一手漂亮逆转',
+        'tools.bomb_title': '小炸弹',
+        'tools.bomb_desc': '直接炸掉一小块盘面，帮你打开缺口。',
+        'tools.refresh_title': '重洗盘面',
+        'tools.refresh_desc': '盘面不好连时重新洗牌，找回节奏。',
+        'tools.steps_title': '+3 步',
+        'tools.steps_desc': '步数制关卡补充额外步数，增加过关空间。',
+        'tools.freeze_title': '冻结连击',
+        'tools.freeze_desc': '暂时冻结连击条，让你更容易把连击接起来。',
+        'tools.continue_title': '续玩机会',
+        'tools.continue_desc': '失败后补充步数或时间，再拼一次逆转过关。',
+        'obstacles.eyebrow': 'Obstacles',
+        'obstacles.title': '后期关卡，会开始逼你重新思考路线',
+        'obstacles.chain_title': '锁链泡泡',
+        'obstacles.chain_desc': '不能直接自由处理，要先通过邻近消除解除锁定。',
+        'obstacles.ice_title': '冰块',
+        'obstacles.ice_desc': '需先打破外层冰块，才能真正清除被覆盖的泡泡。',
+        'obstacles.crate_title': '木箱与石块',
+        'obstacles.crate_desc': '木箱要多次打击，石块则无法破坏，逼你绕路规划消除顺序。',
+        'obstacles.belt_title': '传送带与特殊盘型',
+        'obstacles.belt_desc': '部分列会移动，还有缺角、空洞、非满版盘面，增加判断难度。',
+        'cta.eyebrow': 'Cute but Challenging',
+        'cta.title': 'Bubble Pop Match，把每一次点按都变成华丽清盘',
+        'cta.desc': '从简单上手的前期关卡，到充满障碍与特殊盘面的后期挑战，这是一款越玩越有节奏感的泡泡消除冒险。',
+        'cta.back': '返回产品列表',
+        'cta.store': '追踪 App Store'
+      },
+      'en': {
+        'nav.brand_sub': 'A pastel bubble adventure',
+        'nav.home': 'Home',
+        'nav.spin': 'LuckySpin++',
+        'nav.gps': 'GPS Speedometer',
+        'download.nav': 'Download Now',
+        'download.hero': 'Download Now',
+        'download.cta': 'Download Now',
+        'download.status': 'App Store',
+        'hero.badge': '120 dreamy bubble stages',
+        'hero.lead': 'A cute portrait bubble-popping adventure that is easy to pick up and hard to put down. Tap connected bubbles of the same color, build huge combo chains, and unleash bomb, rainbow, and rocket bubbles to break through layered stage gimmicks.',
+        'hero.cta_primary': 'See gameplay highlights',
+        'hero.cta_secondary': 'See modes and events',
+        'hero.stat_levels_label': 'Stage flow',
+        'hero.stat_levels_value': 'From easy starts to tricky board shapes',
+        'hero.stat_combo_label': 'Combo tempo',
+        'hero.stat_combo_value': 'Five quick clears trigger Combo Rush',
+        'hero.stat_special_label': 'Special power',
+        'hero.stat_special_value': 'Bomb, rainbow, and rocket chains',
+        'hero.float_combo': 'Combo rush',
+        'hero.float_tools': 'Tool saves',
+        'hero.card_modes_label': 'Mode highlights',
+        'hero.card_modes_value': 'Switch between stage goals, timed challenges, daily missions, and free-play sessions.',
+        'hero.card_obstacles_label': 'Board pressure',
+        'hero.card_obstacles_value': 'Chains, ice, crates, rocks, and conveyors force smarter route planning.',
+        'gameplay.eyebrow': 'Gameplay',
+        'gameplay.title': 'Start with one tap, finish with a full-board chain reaction',
+        'gameplay.desc': 'The rules are readable in seconds, but later stages reward timing, planning, and pattern recognition. Clear the objective before your moves or time run out to secure a higher star result.',
+        'gameplay.video_label': 'Video focus',
+        'gameplay.video_value': 'String together five clears in quick succession to activate Combo Rush and spike both score and special-bubble generation.',
+        'gameplay.goal_label': 'Stage goals',
+        'gameplay.goal_value': 'Some levels ask for score, some target a specific color, some demand combos, and others are all about clearing obstacles.',
+        'rules.title': 'Five fast onboarding rules',
+        'rules.1': '1. Tap groups of 2 or more connected bubbles of the same color to clear them.',
+        'rules.2': '2. Bigger clears award more points and can generate special bubbles.',
+        'rules.3': '3. Clear bubbles five times in quick succession to enter Combo Rush and multiply your score.',
+        'rules.4': '4. Objectives vary across score targets, color targets, combo goals, and obstacle clearing.',
+        'rules.5': '5. Finish the objective before your moves or time expire to clear the stage and chase a better star rating.',
+        'modes.eyebrow': 'Modes',
+        'modes.title': 'More than a stage map: daily rewards, score rush, and quick sessions',
+        'special.eyebrow': 'Special Bubbles',
+        'special.title': 'Special bubbles that turn one clear into a full-board blast',
+        'special.desc': 'Large clears unlock bomb, rainbow, and rocket bubbles. Each one is strong on its own, but the real fun starts when they trigger one another.',
+        'special.bomb_title': 'Bomb Bubble',
+        'special.bomb_desc': 'Created from larger clears, it explodes a small surrounding area and opens space in a crowded board.',
+        'special.rainbow_title': 'Rainbow Bubble',
+        'special.rainbow_desc': 'Triggered by even bigger clears, it wipes the dominant color from the board and sets up massive follow-up plays.',
+        'special.rocket_title': 'Rocket Bubble',
+        'special.rocket_desc': 'It can appear during combo sequences and clears an entire row or column in one shot.',
+        'special.chain_title': 'Chain Reactions',
+        'special.chain_desc': 'Bombs and rockets can trigger each other, turning a stalled board into a dramatic cascade.',
+        'tools.eyebrow': 'Tools',
+        'tools.title': 'When a board fights back, tools give you a clean comeback path',
+        'tools.bomb_title': 'Mini Bomb',
+        'tools.bomb_desc': 'Blow up a small area instantly when you need to open a gap.',
+        'tools.refresh_title': 'Board Refresh',
+        'tools.refresh_desc': 'Shuffle the board when connections dry up and the pace falls apart.',
+        'tools.steps_title': '+3 Moves',
+        'tools.steps_desc': 'Add extra moves in move-limited stages to keep a run alive.',
+        'tools.freeze_title': 'Combo Freeze',
+        'tools.freeze_desc': 'Pause the combo meter briefly so you can bridge into the next clear more easily.',
+        'tools.continue_title': 'Continue Chance',
+        'tools.continue_desc': 'Add more moves or time after a failure and push for a comeback clear.',
+        'obstacles.eyebrow': 'Obstacles',
+        'obstacles.title': 'Later stages force you to rethink the route, not just tap faster',
+        'obstacles.chain_title': 'Chain-Locked Bubbles',
+        'obstacles.chain_desc': 'You cannot resolve them freely until nearby clears break the lock.',
+        'obstacles.ice_title': 'Ice Layers',
+        'obstacles.ice_desc': 'Break the outer ice first before the covered bubble can actually be removed.',
+        'obstacles.crate_title': 'Crates and Rocks',
+        'obstacles.crate_desc': 'Crates need repeated hits while rocks cannot be broken at all, forcing detours and smarter sequencing.',
+        'obstacles.belt_title': 'Conveyors and Odd Board Shapes',
+        'obstacles.belt_desc': 'Moving rows, corners, gaps, and non-full boards reshape your routes after every turn.',
+        'cta.eyebrow': 'Cute but Challenging',
+        'cta.title': 'Bubble Pop Match turns every tap into a colorful board-clearing payoff',
+        'cta.desc': 'It starts as a relaxing bubble pop game and gradually becomes a layered puzzle about timing, pressure, and clean chain setup.',
+        'cta.back': 'Back to products',
+        'cta.store': 'Follow on App Store'
+      }
+    };
+
+    function applyLanguageAssets(lang) {
+      document.querySelectorAll('[data-lang-src-zh-hant]').forEach((img) => {
+        const key = `data-lang-src-${lang}`;
+        const src = img.getAttribute(key) || img.getAttribute('data-lang-src-zh-hant');
+        if (src) img.setAttribute('src', src);
+      });
+    }
+
+    function setLang(lang) {
+      const trans = translations[lang];
+      if (!trans) return;
+      document.documentElement.setAttribute('lang', lang);
+      document.querySelectorAll('[data-i18n]').forEach((el) => {
+        const key = el.getAttribute('data-i18n');
+        if (trans[key]) el.textContent = trans[key];
+      });
+      applyLanguageAssets(lang);
+      try { localStorage.setItem('yi-apps-lang', lang); } catch (e) {}
+    }
+
+    const savedLang = (() => {
+      try { return localStorage.getItem('yi-apps-lang'); } catch (e) { return null; }
+    })();
+    setLang(savedLang || 'zh-Hant');
+  </script>
+</body>
+</html>
